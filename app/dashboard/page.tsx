@@ -55,7 +55,7 @@ export default async function Dashboard() {
         장기(12년 시점정확) 검증 Calmar ~0.7 — 자세히는 규칙 화면 참고.
       </p>
 
-      <Section title="월별 성과">
+      <Section title="월별 성과" sub="월을 누르면 그 달에 청산된 거래 종목 상세.">
         {monthly.length === 0 ? <Empty>데이터 없음</Empty> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm tnum">
@@ -68,7 +68,9 @@ export default async function Dashboard() {
               <tbody>
                 {monthly.map((m) => (
                   <tr key={m.month} className="border-b border-[var(--color-borderc)] text-right last:border-0">
-                    <td className="py-1.5 text-left font-medium">{m.month}</td>
+                    <td className="py-1.5 text-left font-medium">
+                      <Link href={`/month/${m.month}`} className="text-accent">{m.month}</Link>
+                    </td>
                     <td className={signClass(m.return_pct)}>{pct(m.return_pct)}</td>
                     <td>{m.num_trades}</td>
                     <td>{m.win_rate.toFixed(0)}%</td>

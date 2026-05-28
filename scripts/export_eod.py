@@ -376,16 +376,66 @@ def upsert_supabase(data):
 
 
 def notify_eod(data):
-    le = [e for e in data["executions"] if e["d"] == data["last_date"]]
-    nb = sum(1 for e in le if e["action"] == "buy_new" and not e["blocked_by_leverage"])
-    na = sum(1 for e in le if e["action"] == "buy_add" and not e["blocked_by_leverage"])
-    ns = sum(1 for e in le if e["action"].startswith("sell") or e["action"] in ("stop", "newlow_stop"))
-    blk = sum(1 for e in le if e["blocked_by_leverage"])
+    """마감 결과 + 내일 세팅할 감시주문(실제 가격·수량)을 상세히 전송."""
+    last = data["last_date"]
     nav = data["nav_daily"][-1]
-    lines = [f"✅ <b>[S2] {data['last_date']} 마감 결과</b>",
-             f"신규매수 {nb} · 추가매수 {na} · 매도/손절 {ns}" + (f" · 레버미체결 {blk}" if blk else ""),
-             f"NAV {nav['nav']/1e8:.2f}억 · 보유 {nav['n_positions']}종목",
-             f"내일 세팅 감시주문 {len(data['daily_order_plan'])}건"]
+    ACT = {"buy_new": "신규매수", "buy_add": "추가매수", "sell_1": "1차매도", "sell_2": "2차매도",
+           "sell_3": "3차매도", "stop": "손절", "newlow_stop": "신저가손절"}
+    le = [e for e in data["executions"] if e["d"] == last]
+    filled = [e for e in le if not e["blocked_by_leverage"]]
+    blocked = [e for e in le if e["blocked_by_leverage"]]
+
+    lines = [f"✅ <b>[S2] {last} 마감 결과</b>",
+             f"NAV {nav['nav']/1e8:.2f}억 · 보유 {nav['n_positions']}종목 · 레버 {nav['leverage']:.2f}배"]
+
+    # 오늘 체결
+    def pf(p):  # 포트% 표기
+        return f" (포트 {p:.1f}%)" if p is not None else ""
+    if filled:
+        lines.append(f"\n📌 <b>오늘 체결 {len(filled)}건</b>")
+        for e in filled[:12]:
+            lines.append(f" · {ACT.get(e['action'], e['action'])} {e['name'][:6]} "
+                         f"{e['fill_price']:,}원{pf(e.get('port_pct'))}")
+        if len(filled) > 12:
+            lines.append(f" · … 외 {len(filled)-12}건")
+    else:
+        lines.append("\n📌 오늘 체결 없음")
+    if blocked:
+        lines.append(f"⚠ 레버 한도 미체결 {len(blocked)}건: " + ", ".join(e["name"][:6] for e in blocked[:8]))
+
+    # 보유 요약(평가손익)
+    snaps = [s for s in data["position_snapshots"] if s["d"] == last]
+    if snaps:
+        lines.append(f"\n💼 <b>보유 {len(snaps)}종목</b>")
+        for s in sorted(snaps, key=lambda s: -s["eval_amount"])[:8]:
+            sign = "+" if s["eval_pnl"] >= 0 else ""
+            lines.append(f" · {s['name'][:6]} 평단 {s['avg_buy']:,} → {s['last_close']:,} "
+                         f"({sign}{s['ret_pct']:.1f}%)")
+
+    # 내일 세팅 감시주문 (실제 가격·수량)
+    plan = data["daily_order_plan"]
+    if plan:
+        lines.append(f"\n📋 <b>내일 세팅 감시주문</b>")
+        bytk = {}
+        for o in plan:
+            bytk.setdefault(o["ticker"], []).append(o)
+        for i, (tk, os_) in enumerate(bytk.items()):
+            if i >= 15:
+                lines.append(f" … 외 {len(bytk)-15}종목"); break
+            lines.append(f"<b>{os_[0]['name'][:6]}</b>")
+            for o in [x for x in os_ if x["order_type"] == "buy_add"]:
+                lines.append(f"  · {o['stage']}차 매수 {o['trigger_price']:,}원{pf(o.get('port_pct'))}")
+            sells = sorted([x for x in os_ if x["order_type"] == "sell"], key=lambda x: x["stage"])
+            if sells:
+                lines.append("  · 매도(10/10/80) " + " / ".join(
+                    f"+{[3,5,7][o['stage']-1]}% {o['trigger_price']:,}" for o in sells))
+            for o in [x for x in os_ if x["order_type"] in ("stop", "newlow_stop")]:
+                lab = "손절" if o["order_type"] == "stop" else "신저가손절"
+                lines.append(f"  · {lab} {o['trigger_price']:,}원")
+    else:
+        lines.append("\n📋 내일 감시주문 없음(보유 없음)")
+
+    lines.append("\n🔗 상세: 홈 화면(동시호가 후보·감시주문·보유)")
     telegram_send("\n".join(lines))
 
 
