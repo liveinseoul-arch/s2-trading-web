@@ -6,6 +6,7 @@ const TABS = [
   { href: "/", label: "오늘", match: (p: string) => p === "/" || p.startsWith("/day") },
   { href: "/dashboard", label: "대시보드", match: (p: string) => p.startsWith("/dashboard") },
   { href: "/stocks", label: "종목", match: (p: string) => p.startsWith("/stocks") || p.startsWith("/trades") },
+  { href: "/rs96", label: "RS96+", match: (p: string) => p.startsWith("/rs96") },
   { href: "/rules", label: "규칙", match: (p: string) => p.startsWith("/rules") },
 ];
 

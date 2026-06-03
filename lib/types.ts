@@ -63,3 +63,26 @@ export interface MonthlyStat {
   realized_pnl: number; nav_start: number; nav_end: number;
   return_pct: number; mdd_pct: number;
 }
+
+export type RsMarket = "KR" | "US";
+
+export interface RsTopWeekly {
+  market: RsMarket;
+  week_date: string;
+  ticker: string;
+  name: string | null;
+  rs: number;
+  comp_return: number | null;
+  close: number | null;
+  mktcap_krw: number | null;
+  rank_in_week: number;
+}
+
+export interface RsHistoryWeekly {
+  market: RsMarket;
+  ticker: string;
+  week_date: string;
+  rs: number;
+  comp_return: number | null;
+  close: number | null;
+}
