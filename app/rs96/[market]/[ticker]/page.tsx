@@ -8,8 +8,10 @@ import type { RsHistoryWeekly, RsMarket } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 function parseMarket(v: string): RsMarket | null {
-  return v === "KR" || v === "US" ? v : null;
+  return v === "KR" || v === "US" || v === "JP" ? v : null;
 }
+
+const MARKET_LABEL: Record<RsMarket, string> = { KR: "한국", US: "미국", JP: "일본" };
 
 export async function generateMetadata({
   params,
@@ -20,7 +22,7 @@ export async function generateMetadata({
   const tk = decodeURIComponent(ticker);
   return {
     title: `${tk} 주차별 RS — 마감지기`,
-    description: `${market === "KR" ? "한국" : "미국"} 시장 ${tk}의 최근 주차별 RS 추이.`,
+    description: `${(MARKET_LABEL as Record<string, string>)[market] ?? market} 시장 ${tk}의 최근 주차별 RS 추이.`,
   };
 }
 
@@ -98,7 +100,7 @@ export default async function RsTickerHistory({
           ← RS96+ 목록
         </Link>
         <span>·</span>
-        <span>{market === "KR" ? "한국" : "미국"}</span>
+        <span>{MARKET_LABEL[market]}</span>
       </div>
 
       <h1 className="mb-1 text-xl font-bold">
@@ -168,7 +170,7 @@ export default async function RsTickerHistory({
                             ? "-"
                             : market === "US"
                               ? r.close.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                              : r.close.toLocaleString("ko-KR", { maximumFractionDigits: 0 })}
+                              : r.close.toLocaleString(market === "JP" ? "ja-JP" : "ko-KR", { maximumFractionDigits: 0 })}
                         </td>
                       </tr>
                     );

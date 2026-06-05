@@ -121,11 +121,43 @@ from rs_query import (                                                # noqa: E4
 WEEKS_BACK_DEFAULT = 52
 RS_MIN = 96
 
-# 시장별 시총 필터
-MKTCAP_TOP_PCT  = {"KR": 40,                    "US": 20}       # 시총 백분위 컷오프(%)
-MKTCAP_MIN_NATIVE = {"KR": 500_000_000_000.0,   "US": None}     # 절대 floor — KR 5,000억원
+MARKETS_ALL = ("KR", "US", "JP")
+
+# 시장별 시총 필터. JP 는 shares/시총 데이터 없어 None — 추후 collect_shares_jp 도입 시 변경.
+MKTCAP_TOP_PCT  = {"KR": 40,                    "US": 20,    "JP": None}
+MKTCAP_MIN_NATIVE = {"KR": 500_000_000_000.0,   "US": None,  "JP": None}
 
 US_SHARES_PKL = "_bt_shares_us.pkl"
+JP_WEEKLY_CACHE = "_jp_weekly_cache.pkl"
+JP_TICKER_CACHE = "_jp_ticker_cache.pkl"
+
+
+def _load_pkl(path):
+    import pickle
+    if not path.exists():
+        return None
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
+def load_jp_weekly_cache():
+    d = _load_pkl(Path(QB_SCREEN_DIR) / JP_WEEKLY_CACHE)
+    return d if isinstance(d, dict) else {}
+
+
+def load_jp_ticker_names():
+    """JP _jp_ticker_cache.pkl 의 (list, info, base_str) tuple 에서 yahoo→name 매핑."""
+    raw = _load_pkl(Path(QB_SCREEN_DIR) / JP_TICKER_CACHE)
+    if not isinstance(raw, tuple) or len(raw) < 2 or not isinstance(raw[1], dict):
+        return {}
+    nm = {}
+    for code, meta in raw[1].items():
+        if not isinstance(meta, dict):
+            continue
+        n = meta.get("name", "") or ""
+        y = meta.get("yahoo") or f"{code}.T"
+        nm[y] = n
+    return nm
 
 
 def load_us_shares():
@@ -146,17 +178,22 @@ def make_mktcap_lookup(market, mktcap_cache, us_shares):
 
     KR: collect_mktcap_kr_v2 캐시에서 ref_date 이하 최근 값.
     US: shares × 그 주차 종가.
+    JP: 데이터 없음 — NaN.
     """
     if market == "KR":
         def lookup(tk, ts, close):
             return lookup_mktcap_at(mktcap_cache, tk, ts)
         return lookup
-    # US
+    if market == "US":
+        def lookup(tk, ts, close):
+            sh = us_shares.get(tk)
+            if not sh or sh <= 0 or close is None or np.isnan(close):
+                return np.nan
+            return float(sh) * float(close)
+        return lookup
+    # JP (or any other market without mktcap data)
     def lookup(tk, ts, close):
-        sh = us_shares.get(tk)
-        if not sh or sh <= 0 or close is None or np.isnan(close):
-            return np.nan
-        return float(sh) * float(close)
+        return np.nan
     return lookup
 
 
@@ -254,17 +291,26 @@ def fetch_market(market, weeks_back):
     print(f"\n[{market}] 데이터 로드  (시총 상위 {mktcap_top}%"
           + (f" + 최소 {mktcap_min/1e8:,.0f}억" if mktcap_min and market == 'KR' else "")
           + ")")
-    rs_table = _normalize_rs_table(load_rs_table(market))
-    weekly_cache = _normalize_weekly_cache(load_weekly_cache(market))
-    ticker_names = load_ticker_names(market)
-
-    if market == "KR":
+    if market == "JP":
+        rs_table = pd.DataFrame()                                 # 테이블 없음 — 매 주차 임시 계산
+        weekly_cache = _normalize_weekly_cache(load_jp_weekly_cache())
+        ticker_names = load_jp_ticker_names()
+        mktcap_cache, us_shares = {}, {}
+        print(f"  weekly_cache: {len(weekly_cache):,}개 · RS 테이블 없음(매 주차 임시 계산) · "
+              f"이름 매핑: {len(ticker_names):,}개  (시총 데이터 없음 — 필터 미적용)")
+    elif market == "KR":
+        rs_table = _normalize_rs_table(load_rs_table("KR"))
+        weekly_cache = _normalize_weekly_cache(load_weekly_cache("KR"))
+        ticker_names = load_ticker_names("KR")
         mktcap_cache = load_mktcap_cache("KR")
         us_shares = {}
         print(f"  weekly_cache: {len(weekly_cache):,}개 · RS 테이블: {len(rs_table):,}주 · "
               f"이름 매핑: {len(ticker_names):,}개 · 시총 캐시: {len(mktcap_cache):,}개  "
               f"(인덱스 W-FRI 정규화 완료)")
-    else:
+    else:  # US
+        rs_table = _normalize_rs_table(load_rs_table("US"))
+        weekly_cache = _normalize_weekly_cache(load_weekly_cache("US"))
+        ticker_names = load_ticker_names("US")
         mktcap_cache = {}
         us_shares = load_us_shares()
         print(f"  weekly_cache: {len(weekly_cache):,}개 · RS 테이블: {len(rs_table):,}주 · "
@@ -353,7 +399,7 @@ def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market):
 
 
 def preview(top_rows, hist_rows):
-    for mk in ("KR", "US"):
+    for mk in MARKETS_ALL:
         sub = [r for r in top_rows if r["market"] == mk]
         if not sub:
             continue
@@ -377,7 +423,7 @@ def preview(top_rows, hist_rows):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--market", choices=["KR", "US", "both"], default="both")
+    ap.add_argument("--market", choices=["KR", "US", "JP", "all"], default="all")
     ap.add_argument("--weeks", type=int, default=WEEKS_BACK_DEFAULT,
                     help=f"최근 N주 적재 (기본 {WEEKS_BACK_DEFAULT})")
     ap.add_argument("--dry-run", action="store_true",
@@ -388,12 +434,10 @@ def main():
 
     top_all, hist_all = [], []
     rs96_tickers_by_market = {}
-    if args.market in ("KR", "both"):
-        t, h, tks = fetch_market("KR", args.weeks)
-        top_all.extend(t); hist_all.extend(h); rs96_tickers_by_market["KR"] = tks
-    if args.market in ("US", "both"):
-        t, h, tks = fetch_market("US", args.weeks)
-        top_all.extend(t); hist_all.extend(h); rs96_tickers_by_market["US"] = tks
+    targets = MARKETS_ALL if args.market == "all" else (args.market,)
+    for mk in targets:
+        t, h, tks = fetch_market(mk, args.weeks)
+        top_all.extend(t); hist_all.extend(h); rs96_tickers_by_market[mk] = tks
 
     print(f"\n총 top96 {len(top_all):,}건 · history {len(hist_all):,}건")
 

@@ -15,10 +15,13 @@ export const metadata = {
 const MARKETS: { key: RsMarket; label: string }[] = [
   { key: "KR", label: "한국" },
   { key: "US", label: "미국" },
+  { key: "JP", label: "일본" },
 ];
 
 function parseMarket(v: string | string[] | undefined): RsMarket {
-  return v === "US" ? "US" : "KR";
+  if (v === "US") return "US";
+  if (v === "JP") return "JP";
+  return "KR";
 }
 
 function fmtWeek(d: string) {
@@ -28,17 +31,21 @@ function fmtWeek(d: string) {
 function fmtMktcap(v: number | null, market: RsMarket) {
   if (v == null) return "-";
   if (market === "KR") return `${Math.round(v / 1e8).toLocaleString("ko-KR")}억`;
-  // USD
+  if (market === "JP") return "-";   // JP 시총 데이터 없음
   if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
   return `$${Math.round(v / 1e6).toLocaleString("en-US")}M`;
 }
 
 function fmtPrice(v: number | null, market: RsMarket) {
   if (v == null) return "-";
-  return market === "US"
-    ? v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-    : v.toLocaleString("ko-KR", { maximumFractionDigits: 0 });
+  if (market === "US") {
+    return v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+  // KR/JP: 정수 (원/엔 단위)
+  return v.toLocaleString(market === "JP" ? "ja-JP" : "ko-KR", { maximumFractionDigits: 0 });
 }
+
+const MARKET_LABEL: Record<RsMarket, string> = { KR: "한국", US: "미국", JP: "일본" };
 
 export default async function RsScreen({
   searchParams,
@@ -79,7 +86,8 @@ export default async function RsScreen({
       <h1 className="mb-1 text-lg font-bold">RS96+ 주간 종목</h1>
       <p className="mb-4 text-xs text-muted">
         12·24·36·48주 가중 수익률 백분위 상위 4%(RS 96~99). 한국은 시총 상위 40% AND 5,000억 이상,
-        미국은 시총 상위 20%만(필터로 소형주·noisy 종목 제거). 자세한 규칙은{" "}
+        미국은 시총 상위 20%만, 일본은 시총 데이터 부재로 전 종목 기준(필터 추후 추가 예정).
+        자세한 규칙은{" "}
         <Link href="/rules/rs96" className="text-accent hover:underline">규칙(RS96+)</Link>.
         {lastRun ? <> · 마지막 갱신 {String(lastRun).slice(0, 16).replace("T", " ")}</> : null}
       </p>
@@ -152,7 +160,7 @@ export default async function RsScreen({
           </div>
 
           <Section
-            title={`${market === "KR" ? "한국" : "미국"} · ${selectedWeek} · ${rows.length}종목`}
+            title={`${MARKET_LABEL[market]} · ${selectedWeek} · ${rows.length}종목`}
             sub="종목을 누르면 그 종목의 주차별 RS 추이를 볼 수 있습니다."
           >
             {rows.length === 0 ? (

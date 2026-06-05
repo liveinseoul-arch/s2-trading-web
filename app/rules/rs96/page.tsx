@@ -30,6 +30,10 @@ const RULES: { t: string; d: string }[] = [
     d: "시총 상위 20%. 5,972종목의 발행주식수(yfinance 스냅샷) × 그 주차 종가로 시총 산출. 절대 floor 없음 — 백분위 컷오프만 적용.",
   },
   {
+    t: "일본(JP) 시총 필터 — 부재",
+    d: "현재 일본 종목 발행주식수 캐시가 없어 시총 필터를 적용하지 않습니다. 도쿄거래소 3,667종목 전체 RS96+ 가 표시되며 소형주 노이즈가 다소 섞일 수 있습니다. yfinance JP shares 수집 도입 시 미국과 같은 백분위 필터로 강화 예정.",
+  },
+  {
     t: "RS96+ 의 의미와 한계",
     d: "RS96+ 는 '지난 1년 상승률이 시장 상위 4%' 라는 신호이지, 그 자체로 매수 시점은 아니다. Minervini SEPA 에서는 추가로 추세 템플릿(가격이 200일선 위·200일선 상승·150일선이 200일선 위)과 VCP(Volatility Contraction Pattern) 돌파를 함께 본다.",
   },
@@ -39,11 +43,11 @@ const RULES: { t: string; d: string }[] = [
   },
   {
     t: "데이터 소스",
-    d: "한국: FinanceDataReader (KRX 공식) + collect_mktcap_kr_v2 (pykrx, 28일 간격 시총 이력). 미국: yfinance + FinanceDataReader (NYSE+NASDAQ) + _bt_shares_us.pkl (발행주식수 스냅샷).",
+    d: "한국: FinanceDataReader (KRX 공식) + collect_mktcap_kr_v2 (pykrx, 28일 간격 시총 이력). 미국: yfinance + FinanceDataReader (NYSE+NASDAQ) + _bt_shares_us.pkl (발행주식수 스냅샷). 일본: 15_RS_JP_screen (yfinance, 도쿄거래소 프라임/스탠다드/그로스).",
   },
   {
     t: "갱신 주기",
-    d: "매주 토요일 02:00 자동 작업(S2_rs_weekly): ① KR daily→weekly 재구성 ② 14_RS_KR_pykrx — KR 주간 OHLCV·RS 임계값 ③ 13_RS_US_screen — US 주간 OHLCV·RS 임계값 ④ Supabase 동기화. 최근 52주만 적재.",
+    d: "매주 토요일 02:00 자동 작업(S2_rs_weekly): ① KR daily→weekly 재구성 ② 14_RS_KR_pykrx — KR 주간 OHLCV·RS 임계값 ③ 13_RS_US_screen — US 주간 OHLCV·RS 임계값 ④ 15_RS_JP_screen — JP 주간 OHLCV ⑤ Supabase 동기화. 최근 52주만 적재.",
   },
 ];
 

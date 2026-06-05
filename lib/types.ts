@@ -64,7 +64,7 @@ export interface MonthlyStat {
   return_pct: number; mdd_pct: number;
 }
 
-export type RsMarket = "KR" | "US";
+export type RsMarket = "KR" | "US" | "JP";
 
 export interface RsTopWeekly {
   market: RsMarket;

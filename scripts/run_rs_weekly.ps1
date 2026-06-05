@@ -3,9 +3,10 @@
 # 1) Rebuild_weekly_cache.py  : KR _bt_daily → _kr_weekly 재구성 + 자동 백업
 # 2) 14_RS_KR_pykrx.py         : KR 종목·주간 OHLCV·RS 임계값 테이블 신선화
 # 3) 13_RS_US_screen.py        : US 종목·주간 OHLCV·RS 임계값 테이블 신선화
-# 4) export_rs_weekly.py       : 마감지기 Supabase rs_top_weekly/rs_history_weekly 동기화
+# 4) 15_RS_JP_screen.py        : JP 종목·주간 OHLCV 신선화 (RS 테이블 없음 — export 시 임시 계산)
+# 5) export_rs_weekly.py       : 마감지기 Supabase rs_top_weekly/rs_history_weekly 동기화
 #
-# 13_/14_ 는 input() 사용. PS 5.1 stdin pipe 가 BOM 을 prepend 해 깨지는 문제 회피 위해
+# 13_/14_/15_ 는 input() 사용. PS 5.1 stdin pipe 가 BOM 을 prepend 해 깨지는 문제 회피 위해
 # silent_run.py wrapper 가 builtins.input 을 monkey-patch 한 뒤 모듈 import + main() 호출.
 $ErrorActionPreference = "Continue"
 $root = (Get-Item $PSScriptRoot).Parent.Parent.FullName   # s2_method
@@ -31,9 +32,10 @@ function RunPy($label, [string[]]$pyArgs) {
 
 "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') rs_weekly start =====" | Out-File -Append -Encoding utf8 $log
 
-RunPy "1/4 Rebuild"   @("$qb\Rebuild_weekly_cache.py")
-RunPy "2/4 14_RS_KR"  @($silent, "$qb\14_RS_KR_pykrx.py")
-RunPy "3/4 13_RS_US"  @($silent, "$qb\13_RS_US_screen.py")
-RunPy "4/4 export"    @("s2-trading-web\scripts\export_rs_weekly.py")
+RunPy "1/5 Rebuild"   @("$qb\Rebuild_weekly_cache.py")
+RunPy "2/5 14_RS_KR"  @($silent, "$qb\14_RS_KR_pykrx.py")
+RunPy "3/5 13_RS_US"  @($silent, "$qb\13_RS_US_screen.py")
+RunPy "4/5 15_RS_JP"  @($silent, "$qb\15_RS_JP_screen.py")
+RunPy "5/5 export"    @("s2-trading-web\scripts\export_rs_weekly.py")
 
 Log "===== rs_weekly done ====="
