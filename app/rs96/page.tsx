@@ -31,7 +31,12 @@ function fmtWeek(d: string) {
 function fmtMktcap(v: number | null, market: RsMarket) {
   if (v == null) return "-";
   if (market === "KR") return `${Math.round(v / 1e8).toLocaleString("ko-KR")}억`;
-  if (market === "JP") return "-";   // JP 시총 데이터 없음
+  if (market === "JP") {
+    // 1조엔 이상은 兆, 미만은 億
+    if (v >= 1e12) return `¥${(v / 1e12).toFixed(1)}兆`;
+    return `¥${Math.round(v / 1e8).toLocaleString("ja-JP")}億`;
+  }
+  // US
   if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
   return `$${Math.round(v / 1e6).toLocaleString("en-US")}M`;
 }

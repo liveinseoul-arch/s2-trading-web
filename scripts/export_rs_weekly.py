@@ -123,11 +123,12 @@ RS_MIN = 96
 
 MARKETS_ALL = ("KR", "US", "JP")
 
-# 시장별 시총 필터. JP 는 shares/시총 데이터 없어 None — 추후 collect_shares_jp 도입 시 변경.
-MKTCAP_TOP_PCT  = {"KR": 40,                    "US": 20,    "JP": None}
+# 시장별 시총 필터. KR/US/JP 모두 시총 상위 X% (KR 만 추가 절대 floor).
+MKTCAP_TOP_PCT    = {"KR": 40,                    "US": 20,    "JP": 20}
 MKTCAP_MIN_NATIVE = {"KR": 500_000_000_000.0,   "US": None,  "JP": None}
 
 US_SHARES_PKL = "_bt_shares_us.pkl"
+JP_SHARES_PKL = "_bt_shares_jp.pkl"
 JP_WEEKLY_CACHE = "_jp_weekly_cache.pkl"
 JP_TICKER_CACHE = "_jp_ticker_cache.pkl"
 
@@ -173,27 +174,37 @@ def load_us_shares():
     return d
 
 
-def make_mktcap_lookup(market, mktcap_cache, us_shares):
+def load_jp_shares():
+    """{ticker → shares_outstanding(float)} . _bt_shares_jp.pkl
+    파일 없으면 빈 dict — JP 시총 필터 자동 미적용 (Phase A 동작).
+    """
+    import pickle
+    p = Path(QB_SCREEN_DIR) / JP_SHARES_PKL
+    if not p.exists():
+        print(f"  ⚠ {JP_SHARES_PKL} 없음 → JP 시총 필터 미적용 (Phase A fallback)")
+        return {}
+    with open(p, "rb") as f:
+        d = pickle.load(f)
+    print(f"  JP shares 캐시: {len(d):,}개 종목")
+    return d
+
+
+def make_mktcap_lookup(market, mktcap_cache, shares_map):
     """mktcap_lookup(ticker, week_ts, close_at_week) → float | NaN
 
     KR: collect_mktcap_kr_v2 캐시에서 ref_date 이하 최근 값.
-    US: shares × 그 주차 종가.
-    JP: 데이터 없음 — NaN.
+    US/JP: shares × 그 주차 종가 (shares 캐시 없으면 NaN → 필터 자동 미적용).
     """
     if market == "KR":
         def lookup(tk, ts, close):
             return lookup_mktcap_at(mktcap_cache, tk, ts)
         return lookup
-    if market == "US":
-        def lookup(tk, ts, close):
-            sh = us_shares.get(tk)
-            if not sh or sh <= 0 or close is None or np.isnan(close):
-                return np.nan
-            return float(sh) * float(close)
-        return lookup
-    # JP (or any other market without mktcap data)
+    # US, JP — shares × close
     def lookup(tk, ts, close):
-        return np.nan
+        sh = shares_map.get(tk)
+        if not sh or sh <= 0 or close is None or np.isnan(close):
+            return np.nan
+        return float(sh) * float(close)
     return lookup
 
 
@@ -295,15 +306,23 @@ def fetch_market(market, weeks_back):
         rs_table = pd.DataFrame()                                 # 테이블 없음 — 매 주차 임시 계산
         weekly_cache = _normalize_weekly_cache(load_jp_weekly_cache())
         ticker_names = load_jp_ticker_names()
-        mktcap_cache, us_shares = {}, {}
+        mktcap_cache = {}
+        shares_map = load_jp_shares()
         print(f"  weekly_cache: {len(weekly_cache):,}개 · RS 테이블 없음(매 주차 임시 계산) · "
-              f"이름 매핑: {len(ticker_names):,}개  (시총 데이터 없음 — 필터 미적용)")
+              f"이름 매핑: {len(ticker_names):,}개  (인덱스 W-FRI 정규화 완료)")
+        # 자동 커버리지 안전망: shares 가 weekly 종목의 70% 미만이면 시총 필터 미적용.
+        # yfinance 가 일본 종목 fast_info 를 안정적으로 못 주는 상황이라 강제 적용하면
+        # 도요타·소니 같은 대형주가 누락되어 백분위가 왜곡됨.
+        coverage = len(shares_map) / max(len(weekly_cache), 1)
+        if mktcap_top is not None and coverage < 0.70:
+            print(f"  ⚠ JP shares 커버리지 {coverage*100:.1f}% < 70% — 시총 필터 미적용 (Phase A 동작)")
+            mktcap_top = None
     elif market == "KR":
         rs_table = _normalize_rs_table(load_rs_table("KR"))
         weekly_cache = _normalize_weekly_cache(load_weekly_cache("KR"))
         ticker_names = load_ticker_names("KR")
         mktcap_cache = load_mktcap_cache("KR")
-        us_shares = {}
+        shares_map = {}
         print(f"  weekly_cache: {len(weekly_cache):,}개 · RS 테이블: {len(rs_table):,}주 · "
               f"이름 매핑: {len(ticker_names):,}개 · 시총 캐시: {len(mktcap_cache):,}개  "
               f"(인덱스 W-FRI 정규화 완료)")
@@ -312,11 +331,11 @@ def fetch_market(market, weeks_back):
         weekly_cache = _normalize_weekly_cache(load_weekly_cache("US"))
         ticker_names = load_ticker_names("US")
         mktcap_cache = {}
-        us_shares = load_us_shares()
+        shares_map = load_us_shares()
         print(f"  weekly_cache: {len(weekly_cache):,}개 · RS 테이블: {len(rs_table):,}주 · "
               f"이름 매핑: {len(ticker_names):,}개  (인덱스 W-FRI 정규화 완료)")
 
-    mktcap_lookup = make_mktcap_lookup(market, mktcap_cache, us_shares)
+    mktcap_lookup = make_mktcap_lookup(market, mktcap_cache, shares_map)
 
     all_weeks = set()
     for v in weekly_cache.values():
@@ -408,12 +427,14 @@ def preview(top_rows, hist_rows):
         last_rows = [r for r in sub if r["week_date"] == last]
         print(f"\n[{mk}] {weeks_n}주 · 마지막 주차 {last} 상위 10:")
         for r in last_rows[:10]:
-            if r.get("mktcap"):
+            v = r.get("mktcap")
+            if v:
                 if mk == "KR":
-                    mc = f" · 시총 {r['mktcap']/1e8:,.0f}억"
-                else:
-                    v = r["mktcap"]
-                    mc = (f" · 시총 ${v/1e9:.1f}B" if v >= 1e9 else f" · 시총 ${v/1e6:,.0f}M")
+                    mc = f" · 시총 {v/1e8:,.0f}억"
+                elif mk == "JP":
+                    mc = f" · 시총 ¥{v/1e12:.1f}兆" if v >= 1e12 else f" · 시총 ¥{v/1e8:,.0f}億"
+                else:  # US
+                    mc = f" · 시총 ${v/1e9:.1f}B" if v >= 1e9 else f" · 시총 ${v/1e6:,.0f}M"
             else:
                 mc = ""
             print(f"  {r['rank_in_week']:>3} {r['ticker']:<14} RS{r['rs']} "
