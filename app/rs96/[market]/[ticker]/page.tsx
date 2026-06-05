@@ -164,11 +164,11 @@ export default async function RsTickerHistory({
                             : "-"}
                         </td>
                         <td>
-                          {r.close != null
-                            ? r.close.toLocaleString(market === "KR" ? "ko-KR" : "en-US", {
-                                maximumFractionDigits: 2,
-                              })
-                            : "-"}
+                          {r.close == null
+                            ? "-"
+                            : market === "US"
+                              ? r.close.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                              : r.close.toLocaleString("ko-KR", { maximumFractionDigits: 0 })}
                         </td>
                       </tr>
                     );

@@ -33,6 +33,13 @@ function fmtMktcap(v: number | null, market: RsMarket) {
   return `$${Math.round(v / 1e6).toLocaleString("en-US")}M`;
 }
 
+function fmtPrice(v: number | null, market: RsMarket) {
+  if (v == null) return "-";
+  return market === "US"
+    ? v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : v.toLocaleString("ko-KR", { maximumFractionDigits: 0 });
+}
+
 export default async function RsScreen({
   searchParams,
 }: {
@@ -185,13 +192,7 @@ export default async function RsScreen({
                             ? `${r.comp_return >= 0 ? "+" : ""}${(r.comp_return * 100).toFixed(1)}%`
                             : "-"}
                         </td>
-                        <td>
-                          {r.close != null
-                            ? r.close.toLocaleString(market === "KR" ? "ko-KR" : "en-US", {
-                                maximumFractionDigits: 2,
-                              })
-                            : "-"}
-                        </td>
+                        <td>{fmtPrice(r.close, market)}</td>
                         <td>{fmtMktcap(r.mktcap, market)}</td>
                       </tr>
                     ))}
