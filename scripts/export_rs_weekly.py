@@ -38,22 +38,49 @@ import numpy as np
 import pandas as pd
 
 
-def _normalize_weekly_cache(weekly_cache):
-    """weekly_cache 의 각 close series 인덱스를 그 주의 금요일(W-FRI)로 정규화.
+# 액면병합/분할로 추정되는 인접 주차 점프 임계. 1주에 ratio ≥ 2.5x 또는 ≤ 1/2.5x 면
+# 실제 가격 등락 아닌 corporate action 으로 보고 backward 보정.
+# (단주 +150% 급등은 매우 드물고 그런 종목은 보통 작전·합병 등으로 RS 룰 대상 외)
+CORP_ACTION_RATIO = 2.5
 
-    KR 은 월/금이 섞이고 US 는 월~목이 종목별로 다른 요일에 떨어진다.
-    그대로 union 하면 5/04·5/11 같은 비금요일이 별도 주차로 보임.
-    같은 주의 여러 timestamp 는 dedup keep='last' (시간상 늦은 값 우선).
+
+def adjust_for_corporate_action(close_series):
+    """인접 주차 ratio 가 CORP_ACTION_RATIO 이상/이하면 액면병합·분할로 추정,
+    그 이전 가격을 ratio 로 곱해 backward 정렬. 여러 점프 누적 보정 지원.
+
+    예: 신성이엔지 011930 — 2026-04-17 4,170 → 04-24 39,950 (x9.58, 10:1 액면병합).
+    04-17 이전 모든 가격에 9.58 곱하면 이후와 연속. 52주 comp_return 정상화.
+    """
+    if len(close_series) < 2:
+        return close_series
+    vals = close_series.values.astype("float64").copy()
+    # 뒤에서 앞으로 — 발견된 모든 점프를 누적 보정
+    for i in range(len(vals) - 1, 0, -1):
+        prev, curr = vals[i - 1], vals[i]
+        if prev <= 0 or curr <= 0 or np.isnan(prev) or np.isnan(curr):
+            continue
+        ratio = curr / prev
+        if ratio >= CORP_ACTION_RATIO or ratio <= 1.0 / CORP_ACTION_RATIO:
+            vals[:i] = vals[:i] * ratio
+    return pd.Series(vals, index=close_series.index)
+
+
+def _normalize_weekly_cache(weekly_cache):
+    """weekly_cache 의 각 close series 를:
+    1) 인덱스를 그 주의 금요일(W-FRI)로 정규화 (KR 월/금 섞임, US 월~목 산포 해결)
+    2) corporate action(액면병합·분할) backward 보정
     """
     norm = {}
     for tk, v in weekly_cache.items():
         s = get_close_series(v)
         if s is None or len(s) == 0:
             continue
-        # 그 주의 금요일 = ts + (4 - weekday) 일 (월=0..금=4..일=6)
+        # 1) W-FRI 인덱스 정규화
         new_idx = s.index + pd.to_timedelta(4 - s.index.weekday.values, unit="D")
         s2 = pd.Series(s.values, index=pd.DatetimeIndex(new_idx))
         s2 = s2[~s2.index.duplicated(keep="last")].sort_index()
+        # 2) corporate action 보정
+        s2 = adjust_for_corporate_action(s2)
         norm[tk] = {"close": s2}
     return norm
 
