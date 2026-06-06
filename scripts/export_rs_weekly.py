@@ -125,8 +125,8 @@ MARKETS_ALL = ("KR", "US", "JP")
 
 # 시장별 시총 필터. KR/US/JP 모두 시총 상위 X% (KR 만 추가 절대 floor).
 MKTCAP_TOP_PCT    = {"KR": 40,                    "US": 20,    "JP": 20}
-# JP floor 무효 — 49% 커버의 상위 20% 컷오프가 이미 ~1,174억엔이라 어떤 floor 도 영향 없음.
-MKTCAP_MIN_NATIVE = {"KR": 500_000_000_000.0,   "US": None,  "JP": None}
+# JP: 상위 20% 컷오프 ~1,174억보다 엄격한 1,500억엔 floor 추가 적용.
+MKTCAP_MIN_NATIVE = {"KR": 500_000_000_000.0,   "US": None,  "JP": 150_000_000_000.0}
 
 US_SHARES_PKL = "_bt_shares_us.pkl"
 JP_SHARES_PKL = "_bt_shares_jp.pkl"
