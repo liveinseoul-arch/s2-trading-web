@@ -131,6 +131,7 @@ MKTCAP_MIN_NATIVE = {"KR": 500_000_000_000.0,   "US": None,  "JP": 150_000_000_0
 US_SHARES_PKL = "_bt_shares_us.pkl"
 JP_SHARES_PKL = "_bt_shares_jp.pkl"
 JP_MKTCAP_YAHOO_PKL = "_jp_mktcap_yahoo.pkl"   # finance.yahoo.co.jp 직접 시총(엔). 우선순위 1.
+JP_MKTCAP_GOOGLE_PKL = "_jp_mktcap_google.pkl" # Google Finance 직접 시총(엔). 우선순위 2.
 JP_WEEKLY_CACHE = "_jp_weekly_cache.pkl"
 JP_TICKER_CACHE = "_jp_ticker_cache.pkl"
 JP_NAMES_EN_PKL = "_jp_names_en.pkl"     # yfinance longName (정식 영문, 부분 커버)
@@ -214,17 +215,35 @@ def load_jp_shares():
 
 
 def load_jp_mktcap_yahoo():
-    """{ticker → mktcap_jpy(float)} . finance.yahoo.co.jp 직접 시총.
-    shares × close 근사보다 정확. 부분 커버지만 도요타·소니 등 대형주 포함.
-    """
+    """yahoo Japan 직접 시총."""
     import pickle
     p = Path(QB_SCREEN_DIR) / JP_MKTCAP_YAHOO_PKL
     if not p.exists():
         return {}
     with open(p, "rb") as f:
-        d = pickle.load(f)
-    print(f"  JP yahoo mktcap 캐시: {len(d):,}개 종목 (직접 시총)")
-    return d
+        return pickle.load(f)
+
+
+def load_jp_mktcap_google():
+    """Google Finance 직접 시총."""
+    import pickle
+    p = Path(QB_SCREEN_DIR) / JP_MKTCAP_GOOGLE_PKL
+    if not p.exists():
+        return {}
+    with open(p, "rb") as f:
+        return pickle.load(f)
+
+
+def load_jp_mktcap_combined():
+    """yahoo + google 통합 dict. yahoo 우선 (같은 데이터일 경우)."""
+    y = load_jp_mktcap_yahoo()
+    g = load_jp_mktcap_google()
+    merged = dict(g)            # google 먼저
+    for tk, v in y.items():     # yahoo 가 같은 키면 덮어쓰기 (우선)
+        merged[tk] = v
+    if merged:
+        print(f"  JP 직접 시총: yahoo {len(y):,} + google {len(g):,} → 통합 {len(merged):,}개")
+    return merged
 
 
 def make_mktcap_lookup(market, mktcap_cache, shares_map, yahoo_mktcap=None):
@@ -362,7 +381,7 @@ def fetch_market(market, weeks_back):
         names_en_map = load_jp_localized_names()
         mktcap_cache = {}
         shares_map = load_jp_shares()
-        yahoo_mktcap = load_jp_mktcap_yahoo()
+        yahoo_mktcap = load_jp_mktcap_combined()
         # 통합 커버리지 = yahoo 직접 + shares 추정 (둘 중 하나라도 있으면 시총 산출 가능)
         with_data = set(yahoo_mktcap.keys()) | set(shares_map.keys())
         coverage = len(with_data) / max(len(weekly_cache), 1)
