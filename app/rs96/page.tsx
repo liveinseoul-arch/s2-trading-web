@@ -32,8 +32,7 @@ function fmtMktcap(v: number | null, market: RsMarket) {
   if (v == null) return "-";
   if (market === "KR") return `${Math.round(v / 1e8).toLocaleString("ko-KR")}억`;
   if (market === "JP") {
-    // 1조엔 이상은 兆, 미만은 億
-    if (v >= 1e12) return `¥${(v / 1e12).toFixed(1)}兆`;
+    // 단위 통일: 모두 억엔 표기 (1조엔 = 10,000억엔)
     return `¥${Math.round(v / 1e8).toLocaleString("ja-JP")}億`;
   }
   // US
