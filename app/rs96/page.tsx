@@ -90,7 +90,7 @@ export default async function RsScreen({
       <h1 className="mb-1 text-lg font-bold">RS96+ 주간 종목</h1>
       <p className="mb-4 text-xs text-muted">
         12·24·36·48주 가중 수익률 백분위 상위 4%(RS 96~99). 한국은 시총 상위 40% AND 5,000억 이상,
-        미국은 시총 상위 20%만, 일본은 시총 데이터 부재로 전 종목 기준(필터 추후 추가 예정).
+        미국은 시총 상위 20%만, 일본은 시총 상위 20% AND 600억엔 이상(시총 데이터 49% 커버, 일부 종목 누락 가능).
         자세한 규칙은{" "}
         <Link href="/rules/rs96" className="text-accent hover:underline">규칙(RS96+)</Link>.
         {lastRun ? <> · 마지막 갱신 {String(lastRun).slice(0, 16).replace("T", " ")}</> : null}
