@@ -27,12 +27,12 @@ export async function generateMetadata({
 }
 
 // Sparkline-like 작은 막대 (SVG, recharts 의존성 X)
-// RS 강도에 따라 accent 색의 opacity 4단계로 표현
+// RS 강도에 따라 accent 색의 opacity 단계로 표현
 function rsOpacity(rs: number): number {
   if (rs >= 96) return 1.0;       // RS96+: 진한
-  if (rs >= 90) return 0.55;      // RS90~95: 조금 흐린
-  if (rs >= 87) return 0.30;      // RS87~89: 좀 더 흐린
-  return 0.15;                    // 그 미만: 매우 흐린
+  if (rs >= 90) return 0.55;      // RS90~95: 중간
+  if (rs >= 87) return 0.15;      // RS87~89: 매우 흐림 (사용자 요청, 이전 0.30 에서 낮춤)
+  return 0.15;                    // 그 미만: 매우 흐림
 }
 
 function RsBars({ data }: { data: { week_date: string; rs: number }[] }) {
@@ -151,7 +151,7 @@ export default async function RsTickerHistory({
             <Stat label="RS96+ 주" value={`${top96Weeks}주`} />
           </div>
 
-          <Section title="주차별 RS 추이" sub="막대 색 단계 — RS96+ 진한 · 90~95 중간 · 87~89 흐림 · 그 미만 매우 흐림">
+          <Section title="주차별 RS 추이" sub="막대 색 단계 — RS96+ 진한 · 90~95 중간 · 그 미만 매우 흐림">
             <RsBars data={hist} />
             <div className="mt-2 flex justify-between text-[11px] text-muted">
               <span>{hist[0]?.week_date}</span>
