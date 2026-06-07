@@ -32,10 +32,11 @@ function RunPy($label, [string[]]$pyArgs) {
 
 "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') rs_weekly start =====" | Out-File -Append -Encoding utf8 $log
 
-RunPy "1/5 Rebuild"   @("$qb\Rebuild_weekly_cache.py")
-RunPy "2/5 14_RS_KR"  @($silent, "$qb\14_RS_KR_pykrx.py")
-RunPy "3/5 13_RS_US"  @($silent, "$qb\13_RS_US_screen.py")
-RunPy "4/5 15_RS_JP"  @($silent, "$qb\15_RS_JP_screen.py")
-RunPy "5/5 export"    @("s2-trading-web\scripts\export_rs_weekly.py")
+RunPy "1/6 Rebuild"   @("$qb\Rebuild_weekly_cache.py")
+RunPy "2/6 14_RS_KR"  @($silent, "$qb\14_RS_KR_pykrx.py")
+RunPy "3/6 13_RS_US"  @($silent, "$qb\13_RS_US_screen.py")
+RunPy "4/6 15_RS_JP"  @($silent, "$qb\15_RS_JP_screen.py")
+RunPy "5/6 export"    @("s2-trading-web\scripts\export_rs_weekly.py")
+RunPy "6/6 classify"  @("s2-trading-web\scripts\classify_rs96_gemini.py", "--weeks", "1")
 
 Log "===== rs_weekly done ====="

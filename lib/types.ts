@@ -87,3 +87,18 @@ export interface RsHistoryWeekly {
   comp_return: number | null;
   close: number | null;
 }
+
+export interface RsThemeCategory {
+  big: string;
+  small?: string | null;
+  tickers: string[];
+}
+
+export interface RsThemeWeekly {
+  market: RsMarket;
+  week_date: string;
+  summary: string | null;
+  categories: RsThemeCategory[];
+  model: string | null;
+  generated_at: string;
+}

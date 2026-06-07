@@ -3,7 +3,7 @@ import { supabase, getMeta } from "@/lib/supabase";
 import { Section, Empty } from "@/components/ui";
 import { pct, signClass } from "@/lib/format";
 import type { RsMarket, RsTopWeekly } from "@/lib/types";
-import { JP_CATEGORY_ORDER, jpTheme } from "@/lib/themes/jp";
+import type { RsThemeWeekly } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -52,68 +52,60 @@ function fmtPrice(v: number | null, market: RsMarket) {
 
 const MARKET_LABEL: Record<RsMarket, string> = { KR: "한국", US: "미국", JP: "일본" };
 
-function JpThemePanel({ rows }: { rows: RsTopWeekly[] }) {
-  // 큰 카테고리별로 그룹핑 (그 주의 RS96+ 종목 ∩ 사전 매핑)
-  type Item = RsTopWeekly & { theme_name: string; theme_small?: string };
-  const grouped = new Map<string, Item[]>();
-  for (const r of rows) {
-    const t = jpTheme(r.ticker);
-    if (!t) continue;
-    if (!grouped.has(t.big)) grouped.set(t.big, []);
-    grouped.get(t.big)!.push({ ...r, theme_name: t.name, theme_small: t.small });
-  }
+function ThemePanel({
+  rows, theme, market,
+}: { rows: RsTopWeekly[]; theme: RsThemeWeekly; market: RsMarket }) {
+  // 정보 lookup: ticker → row
+  const rowByTk = new Map(rows.map((r) => [r.ticker, r] as const));
 
-  const ordered = JP_CATEGORY_ORDER
-    .filter((c) => grouped.has(c))
+  // 카테고리별 그룹 — 매핑 안 된(또는 빈) ticker 는 제거
+  const ordered = theme.categories
     .map((c) => ({
-      big: c,
-      items: grouped.get(c)!.sort((a, b) => b.rs - a.rs || a.rank_in_week - b.rank_in_week),
-    }));
-  // 정의 순서에 없는 카테고리는 마지막에
-  for (const [big, items] of grouped) {
-    if (!JP_CATEGORY_ORDER.includes(big)) ordered.push({ big, items });
-  }
+      big: c.big,
+      small: c.small ?? undefined,
+      items: c.tickers
+        .map((tk) => rowByTk.get(tk))
+        .filter((r): r is RsTopWeekly => !!r)
+        .sort((a, b) => b.rs - a.rs || a.rank_in_week - b.rank_in_week),
+    }))
+    .filter((g) => g.items.length > 0);
 
   const matched = ordered.reduce((s, g) => s + g.items.length, 0);
   const unmatched = rows.length - matched;
 
-  if (matched === 0) {
-    return (
-      <div className="rounded-xl border border-[var(--color-borderc)] bg-surface p-4 text-sm text-muted">
-        이 주차 RS96+ 종목 중 사전 매핑된 테마 분류 없음.
-      </div>
-    );
-  }
-
   return (
     <div className="rounded-xl border border-[var(--color-borderc)] bg-surface p-4">
       <h3 className="mb-0.5 text-sm font-bold">테마 분류</h3>
-      <p className="mb-3 text-[11px] leading-relaxed text-muted">
-        AI 인프라 공급망 (반도체 소재·소자·MLCC·광통신·FA 등). 이 주차 RS96+ 중 <b>{matched}개</b> 분류
-        {unmatched > 0 && <> · 미분류 {unmatched}개</>}.
+      {theme.summary && (
+        <p className="mb-2 text-[12px] leading-relaxed text-textc">{theme.summary}</p>
+      )}
+      <p className="mb-3 text-[11px] text-muted">
+        이 주차 RS96+ 중 <b>{matched}개</b> 분류
+        {unmatched > 0 && <> · 미분류 {unmatched}개</>} · Gemini {theme.model?.replace("gemini-", "") ?? ""}
       </p>
       <div className="flex flex-col gap-3">
-        {ordered.map((g) => (
-          <div key={g.big}>
+        {ordered.map((g, gi) => (
+          <div key={`${g.big}-${gi}`}>
             <h4 className="mb-1 text-xs font-semibold text-textc">
-              {g.big} <span className="ml-1 font-normal text-muted">{g.items.length}</span>
+              {g.big}
+              {g.small && <span className="ml-1 text-[10px] font-normal text-muted">· {g.small}</span>}
+              <span className="ml-1 font-normal text-muted">{g.items.length}</span>
             </h4>
             <ul className="space-y-0.5">
-              {g.items.map((it) => (
-                <li key={it.ticker} className="flex items-baseline justify-between gap-2 text-xs">
+              {g.items.map((r) => (
+                <li key={r.ticker} className="flex items-baseline justify-between gap-2 text-xs">
                   <div className="min-w-0 flex-1 truncate">
                     <Link
-                      href={`/rs96/JP/${encodeURIComponent(it.ticker)}`}
+                      href={`/rs96/${market}/${encodeURIComponent(r.ticker)}`}
                       className="text-textc hover:text-accent"
                     >
-                      {it.theme_name}
+                      {r.name_en || r.name || r.ticker}
                     </Link>
-                    {it.theme_small && (
-                      <span className="ml-1 text-[10px] text-muted">· {it.theme_small}</span>
-                    )}
-                    <span className="ml-1 text-[10px] text-muted">{it.ticker.replace(".T", "")}</span>
+                    <span className="ml-1 text-[10px] text-muted">
+                      {market === "JP" ? r.ticker.replace(".T", "") : r.ticker}
+                    </span>
                   </div>
-                  <span className="tnum font-medium text-accent">{it.rs}</span>
+                  <span className="tnum font-medium text-accent">{r.rs}</span>
                 </li>
               ))}
             </ul>
@@ -143,8 +135,9 @@ export default async function RsScreen({
   const weeks = Array.from(new Set(weekRows.map((r) => r.week_date)));
   const selectedWeek = sp.week && weeks.includes(sp.week) ? sp.week : weeks[0];
 
-  // 선택 주차의 종목들
+  // 선택 주차의 종목들 + 그 주차 Gemini 테마 분류
   let rows: RsTopWeekly[] = [];
+  let theme: RsThemeWeekly | null = null;
   if (selectedWeek) {
     const r = await supabase
       .from("rs_top_weekly")
@@ -153,6 +146,15 @@ export default async function RsScreen({
       .eq("week_date", selectedWeek)
       .order("rank_in_week", { ascending: true });
     rows = (r.data as RsTopWeekly[]) ?? [];
+
+    // Gemini 테마 분류 (있으면)
+    const th = await supabase
+      .from("rs_theme_weekly")
+      .select("*")
+      .eq("market", market)
+      .eq("week_date", selectedWeek)
+      .maybeSingle();
+    theme = (th.data as RsThemeWeekly | null) ?? null;
   }
 
   const meta = await getMeta();
@@ -236,7 +238,7 @@ export default async function RsScreen({
             </div>
           </div>
 
-          <div className={market === "JP" ? "lg:grid lg:grid-cols-[1fr_300px] lg:gap-6 lg:items-start" : ""}>
+          <div className={theme && theme.categories.length > 0 ? "lg:grid lg:grid-cols-[1fr_300px] lg:gap-6 lg:items-start" : ""}>
           <div className="min-w-0">
           <Section
             title={`${MARKET_LABEL[market]} · ${selectedWeek} · ${rows.length}종목`}
@@ -299,9 +301,9 @@ export default async function RsScreen({
             분할·액면병합 보정 누락 종목은 극단값이 나올 수 있으니 RS 등급만 기준으로 보세요.
           </p>
           </div>
-          {market === "JP" && rows.length > 0 && (
+          {theme && theme.categories.length > 0 && rows.length > 0 && (
             <aside className="mt-4 lg:mt-0 lg:sticky lg:top-20">
-              <JpThemePanel rows={rows} />
+              <ThemePanel rows={rows} theme={theme} market={market} />
             </aside>
           )}
           </div>
