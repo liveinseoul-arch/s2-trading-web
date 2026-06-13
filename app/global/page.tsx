@@ -46,7 +46,39 @@ function MarketBadge({ m }: { m: RsMarket }) {
   );
 }
 
-function StockTable({ stocks }: { stocks: GlobalThemeStock[] }) {
+function StockRow({ s }: { s: GlobalThemeStock }) {
+  const display = s.name_en || s.name || s.ticker;
+  const subTicker = s.market === "JP" ? s.ticker.replace(".T", "") : s.ticker;
+  return (
+    <tr className="border-b border-[var(--color-borderc)] text-right last:border-0 hover:bg-bg/40">
+      <td className="py-1 text-left">
+        <MarketBadge m={s.market} />
+      </td>
+      <td className="min-w-0 text-left">
+        <Link
+          href={`/rs96/${s.market}/${encodeURIComponent(s.ticker)}`}
+          className="font-medium text-textc hover:text-accent"
+        >
+          {display}
+        </Link>
+        <span className="ml-2 text-[10px] text-muted">{subTicker}</span>
+        {s.small && (
+          <span className="ml-1.5 text-[10px] text-muted">· {s.small}</span>
+        )}
+      </td>
+      <td className="font-semibold text-accent">{s.rs}</td>
+      <td className={signClass(s.comp_return == null ? null : s.comp_return * 100)}>
+        {fmtCompReturn(s.comp_return)}
+      </td>
+    </tr>
+  );
+}
+
+const DEFAULT_LIMIT = 20;
+
+function StockTable({ stocks, limit = DEFAULT_LIMIT }: { stocks: GlobalThemeStock[]; limit?: number }) {
+  const visible = stocks.slice(0, limit);
+  const hidden = stocks.slice(limit);
   return (
     <div className="overflow-x-auto">
       <table className="w-full text-xs tnum">
@@ -59,38 +91,26 @@ function StockTable({ stocks }: { stocks: GlobalThemeStock[] }) {
           </tr>
         </thead>
         <tbody>
-          {stocks.map((s) => {
-            const display = s.name_en || s.name || s.ticker;
-            const subTicker = s.market === "JP" ? s.ticker.replace(".T", "") : s.ticker;
-            return (
-              <tr
-                key={`${s.market}-${s.ticker}`}
-                className="border-b border-[var(--color-borderc)] text-right last:border-0 hover:bg-bg/40"
-              >
-                <td className="py-1 text-left">
-                  <MarketBadge m={s.market} />
-                </td>
-                <td className="min-w-0 text-left">
-                  <Link
-                    href={`/rs96/${s.market}/${encodeURIComponent(s.ticker)}`}
-                    className="font-medium text-textc hover:text-accent"
-                  >
-                    {display}
-                  </Link>
-                  <span className="ml-2 text-[10px] text-muted">{subTicker}</span>
-                  {s.small && (
-                    <span className="ml-1.5 text-[10px] text-muted">· {s.small}</span>
-                  )}
-                </td>
-                <td className="font-semibold text-accent">{s.rs}</td>
-                <td className={signClass(s.comp_return == null ? null : s.comp_return * 100)}>
-                  {fmtCompReturn(s.comp_return)}
-                </td>
-              </tr>
-            );
-          })}
+          {visible.map((s) => (
+            <StockRow key={`${s.market}-${s.ticker}`} s={s} />
+          ))}
         </tbody>
       </table>
+      {hidden.length > 0 && (
+        <details className="group mt-1">
+          <summary className="flex cursor-pointer list-none items-center justify-center gap-1 rounded border border-dashed border-[var(--color-borderc)] py-1.5 text-[11px] text-accent hover:bg-bg/40">
+            <span className="group-open:hidden">+ {hidden.length}개 더 보기</span>
+            <span className="hidden group-open:inline">− 접기</span>
+          </summary>
+          <table className="mt-1 w-full text-xs tnum">
+            <tbody>
+              {hidden.map((s) => (
+                <StockRow key={`${s.market}-${s.ticker}-h`} s={s} />
+              ))}
+            </tbody>
+          </table>
+        </details>
+      )}
     </div>
   );
 }
