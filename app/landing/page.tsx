@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { IS_RS96 } from "@/lib/site";
 
 export const revalidate = 3600;
 
@@ -68,6 +70,7 @@ const FAQ = [
 ];
 
 export default function Landing() {
+  if (IS_RS96) redirect("/landing/rs96");
   return (
     <div className="pb-16 pt-8 lg:pt-12">
       {/* Hero */}

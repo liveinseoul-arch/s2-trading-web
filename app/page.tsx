@@ -1,3 +1,4 @@
+import { redirect } from "next/navigation";
 import { supabase, latestDate, getMeta } from "@/lib/supabase";
 import SummaryBar from "@/components/SummaryBar";
 import CandidateList from "@/components/CandidateList";
@@ -5,10 +6,12 @@ import WatchOrderPlan from "@/components/WatchOrderPlan";
 import ExecutionList from "@/components/ExecutionList";
 import PositionList from "@/components/PositionList";
 import type { NavDaily, OrderPlan, Execution, PositionSnapshot, DailyCandidate } from "@/lib/types";
+import { IS_RS96 } from "@/lib/site";
 
 export const dynamic = "force-dynamic"; // 요청 시 Supabase 읽기(공개 읽기 서비스). 캐싱은 추후 ISR 전환 가능.
 
 export default async function Home() {
+  if (IS_RS96) redirect("/rs96");
   const d = await latestDate();
   const meta = await getMeta();
   if (!d) {
