@@ -115,14 +115,73 @@ def fetch_weeks_with_themes(req, weeks_back):
     return list(dict.fromkeys(r["week_date"] for r in rows))[:weeks_back]
 
 
+def _market_of(tk):
+    if tk.endswith(".KS") or tk.endswith(".KQ"):
+        return "KR"
+    if tk.endswith(".T"):
+        return "JP"
+    return "US"
+
+
+def fetch_unified(req, week):
+    """rs_global_theme_weekly (단일 호출 통합 분류) — 있으면 우선 사용."""
+    path = (f"/rs_global_theme_weekly?week_date=eq.{urllib.parse.quote(week)}"
+            f"&select=categories")
+    try:
+        rows = req("GET", path, prefer="return=representation") or []
+    except SystemExit:
+        return None
+    return rows[0] if rows else None
+
+
 def aggregate_global(req, week):
-    """그 주차의 한미일 테마 머지 결과: {theme_key: {label, stocks: [(ticker, name, rs, market)...]}}."""
-    groups = {}            # key → {label, label_counts, stocks}
-    market_data = {}       # market → rows lookup
+    """그 주차의 한미일 테마 머지 결과: {theme_key: {label, stocks: [(ticker, ...)...]}}.
+
+    rs_global_theme_weekly (통합 단일 호출) 이 있으면 그것을 우선 사용.
+    없으면 per-market rs_theme_weekly 들을 normalizeBig 으로 머지.
+    """
+    groups = {}            # key → {label_counts, stocks}
+    market_data = {}       # market → ticker lookup
     for mk in MARKETS_ALL:
         rows = fetch_top96(req, mk, week)
         market_data[mk] = {r["ticker"]: r for r in rows}
 
+    # 1) 통합 우선
+    unified = fetch_unified(req, week)
+    if unified and unified.get("categories"):
+        for cat in unified["categories"]:
+            big = (cat.get("big") or "").strip()
+            if not big:
+                continue
+            key = normalize_big(big)
+            if not key:
+                continue
+            g = groups.setdefault(key, {"label_counts": {}, "stocks": []})
+            g["label_counts"][big] = g["label_counts"].get(big, 0) + 1
+            for tk in cat.get("tickers", []):
+                mk = _market_of(tk)
+                r = market_data.get(mk, {}).get(tk)
+                if not r:
+                    continue
+                g["stocks"].append({
+                    "market": mk,
+                    "ticker": tk,
+                    "name": r.get("name_en") or r.get("name") or tk,
+                    "name_local": r.get("name"),
+                    "rs": r.get("rs"),
+                    "comp_return": r.get("comp_return"),
+                    "mktcap": r.get("mktcap"),
+                })
+        out = []
+        for key, g in groups.items():
+            if not g["stocks"]:
+                continue
+            label = max(g["label_counts"].items(), key=lambda x: x[1])[0]
+            out.append({"key": key, "label": label, "stocks": g["stocks"], "total": len(g["stocks"])})
+        out.sort(key=lambda x: -x["total"])
+        return out
+
+    # 2) Fallback — per-market merge
     for mk in MARKETS_ALL:
         t = fetch_theme(req, mk, week)
         if not t:
