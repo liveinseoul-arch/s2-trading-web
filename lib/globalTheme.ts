@@ -114,13 +114,36 @@ async function loadUnifiedGroups(
     for (const r of rows) tkLookup.set(r.ticker, { row: r, market });
   }
 
-  const groups: GlobalThemeGroup[] = [];
+  // 같은 big(정규화 키)을 가진 카테고리들을 하나의 그룹으로 머지
+  // — Gemini 가 big='반도체' 안에 small='장비/소재/IDM' 으로 나눠 보낸 경우,
+  // 한 카드(반도체) 안에 small 들이 흩어진 종목으로 보이도록.
+  const groupMap = new Map<string, GlobalThemeGroup>();
+  const labelCount = new Map<string, Map<string, number>>();
+
   for (const cat of unified.categories) {
-    const byMarket: Record<RsMarket, GlobalThemeStock[]> = { KR: [], US: [], JP: [] };
+    const key = normalizeBig(cat.big);
+    if (!key) continue;
+    let g = groupMap.get(key);
+    if (!g) {
+      g = {
+        label: cat.big,
+        key,
+        byMarket: { KR: [], US: [], JP: [] },
+        allStocks: [],
+        total: 0,
+        countByMarket: { KR: 0, US: 0, JP: 0 },
+        isGlobal: false,
+      };
+      groupMap.set(key, g);
+      labelCount.set(key, new Map());
+    }
+    const lc = labelCount.get(key)!;
+    lc.set(cat.big, (lc.get(cat.big) ?? 0) + 1);
+
     for (const tk of cat.tickers) {
       const hit = tkLookup.get(tk);
       if (!hit) continue;
-      byMarket[hit.market].push({
+      g.byMarket[hit.market].push({
         market: hit.market,
         ticker: tk,
         name: hit.row.name,
@@ -131,33 +154,33 @@ async function loadUnifiedGroups(
         small: cat.small ?? undefined,
       });
     }
-    const total = byMarket.KR.length + byMarket.US.length + byMarket.JP.length;
-    if (total === 0) continue;
+  }
 
-    const sortFn = (a: GlobalThemeStock, b: GlobalThemeStock) => {
-      if (b.rs !== a.rs) return b.rs - a.rs;
-      const ar = a.comp_return ?? -Infinity;
-      const br = b.comp_return ?? -Infinity;
-      if (br !== ar) return br - ar;
-      return a.rank_in_week - b.rank_in_week;
-    };
-    for (const m of MARKETS) byMarket[m].sort(sortFn);
-    const allStocks = [...byMarket.KR, ...byMarket.US, ...byMarket.JP].sort(sortFn);
-
-    const countByMarket = {
-      KR: byMarket.KR.length, US: byMarket.US.length, JP: byMarket.JP.length,
-    };
-    const isGlobal = countByMarket.KR > 0 && countByMarket.US > 0 && countByMarket.JP > 0;
-
-    groups.push({
-      label: cat.big,
-      key: normalizeBig(cat.big),  // 같은 정규화 — subdivision 호환용
-      byMarket,
-      allStocks,
-      total,
-      countByMarket,
-      isGlobal,
-    });
+  // 그룹별 마무리 정렬·집계
+  const sortFn = (a: GlobalThemeStock, b: GlobalThemeStock) => {
+    if (b.rs !== a.rs) return b.rs - a.rs;
+    const ar = a.comp_return ?? -Infinity;
+    const br = b.comp_return ?? -Infinity;
+    if (br !== ar) return br - ar;
+    return a.rank_in_week - b.rank_in_week;
+  };
+  const groups: GlobalThemeGroup[] = [];
+  for (const [key, g] of groupMap) {
+    const lc = labelCount.get(key);
+    if (lc) {
+      let best = "", bestN = -1;
+      for (const [lbl, n] of lc) if (n > bestN) { best = lbl; bestN = n; }
+      g.label = best || g.label;
+    }
+    for (const m of MARKETS) {
+      g.byMarket[m].sort(sortFn);
+      g.countByMarket[m] = g.byMarket[m].length;
+    }
+    g.total = g.countByMarket.KR + g.countByMarket.US + g.countByMarket.JP;
+    if (g.total === 0) continue;
+    g.allStocks = [...g.byMarket.KR, ...g.byMarket.US, ...g.byMarket.JP].sort(sortFn);
+    g.isGlobal = g.countByMarket.KR > 0 && g.countByMarket.US > 0 && g.countByMarket.JP > 0;
+    groups.push(g);
   }
 
   groups.sort((a, b) => {
