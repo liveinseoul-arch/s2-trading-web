@@ -278,10 +278,19 @@ def classify_one(req, week):
     return True
 
 
+def fetch_existing_weeks(req):
+    """rs_global_theme_weekly 에 이미 분류된 주차 집합."""
+    path = "/rs_global_theme_weekly?select=week_date"
+    rows = req("GET", path, prefer="return=representation") or []
+    return {r["week_date"] for r in rows}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--week", default=None, help="특정 주차 YYYY-MM-DD")
     ap.add_argument("--weeks", type=int, default=1, help="최신부터 N주차")
+    ap.add_argument("--skip-existing", action="store_true",
+                    help="이미 rs_global_theme_weekly 에 있는 주차는 건너뛰기 (백필 재실행 시)")
     args = ap.parse_args()
 
     Config()
@@ -291,6 +300,13 @@ def main():
         weeks = [args.week]
     else:
         weeks = fetch_weeks_with_data(req, args.weeks)
+
+    if args.skip_existing:
+        existing = fetch_existing_weeks(req)
+        before = len(weeks)
+        weeks = [w for w in weeks if w not in existing]
+        print(f"대상 {before}주 중 {before - len(weeks)}주 기존 분류 존재 → 건너뜀.")
+
     print(f"대상 주차 {len(weeks)}개 · 캐논 시드 {len(CANONICAL_THEMES)}개 · model={MODEL_NAME}\n")
 
     total_ok = 0
