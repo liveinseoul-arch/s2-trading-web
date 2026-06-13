@@ -80,6 +80,94 @@ async function fetchSubdivisions(weekDate: string): Promise<Map<string, Subtheme
   return new Map(rows.map((x) => [x.theme_key, x]));
 }
 
+interface UnifiedThemeRow {
+  week_date: string;
+  summary: string | null;
+  categories: { big: string; small?: string; tickers: string[] }[];
+}
+
+/** rs_global_theme_weekly (단일 호출 통합 분류) 로부터 groups 생성. 없으면 null. */
+async function loadUnifiedGroups(
+  week: string,
+): Promise<{ groups: GlobalThemeGroup[]; summary: string | null } | null> {
+  const u = await supabase
+    .from("rs_global_theme_weekly")
+    .select("*")
+    .eq("week_date", week)
+    .maybeSingle();
+  if (u.error || !u.data) return null;
+  const unified = u.data as UnifiedThemeRow;
+
+  // 3개 시장의 rs_top_weekly fetch → ticker 메타 lookup
+  const marketRowsPromises = MARKETS.map(async (m) => {
+    const r = await supabase
+      .from("rs_top_weekly")
+      .select("*")
+      .eq("market", m)
+      .eq("week_date", week)
+      .order("rank_in_week", { ascending: true });
+    return { market: m, rows: (r.data as RsTopWeekly[]) ?? [] };
+  });
+  const marketRows = await Promise.all(marketRowsPromises);
+  const tkLookup = new Map<string, { row: RsTopWeekly; market: RsMarket }>();
+  for (const { market, rows } of marketRows) {
+    for (const r of rows) tkLookup.set(r.ticker, { row: r, market });
+  }
+
+  const groups: GlobalThemeGroup[] = [];
+  for (const cat of unified.categories) {
+    const byMarket: Record<RsMarket, GlobalThemeStock[]> = { KR: [], US: [], JP: [] };
+    for (const tk of cat.tickers) {
+      const hit = tkLookup.get(tk);
+      if (!hit) continue;
+      byMarket[hit.market].push({
+        market: hit.market,
+        ticker: tk,
+        name: hit.row.name,
+        name_en: hit.row.name_en,
+        rs: hit.row.rs,
+        comp_return: hit.row.comp_return,
+        rank_in_week: hit.row.rank_in_week,
+        small: cat.small ?? undefined,
+      });
+    }
+    const total = byMarket.KR.length + byMarket.US.length + byMarket.JP.length;
+    if (total === 0) continue;
+
+    const sortFn = (a: GlobalThemeStock, b: GlobalThemeStock) => {
+      if (b.rs !== a.rs) return b.rs - a.rs;
+      const ar = a.comp_return ?? -Infinity;
+      const br = b.comp_return ?? -Infinity;
+      if (br !== ar) return br - ar;
+      return a.rank_in_week - b.rank_in_week;
+    };
+    for (const m of MARKETS) byMarket[m].sort(sortFn);
+    const allStocks = [...byMarket.KR, ...byMarket.US, ...byMarket.JP].sort(sortFn);
+
+    const countByMarket = {
+      KR: byMarket.KR.length, US: byMarket.US.length, JP: byMarket.JP.length,
+    };
+    const isGlobal = countByMarket.KR > 0 && countByMarket.US > 0 && countByMarket.JP > 0;
+
+    groups.push({
+      label: cat.big,
+      key: normalizeBig(cat.big),  // 같은 정규화 — subdivision 호환용
+      byMarket,
+      allStocks,
+      total,
+      countByMarket,
+      isGlobal,
+    });
+  }
+
+  groups.sort((a, b) => {
+    if (a.isGlobal !== b.isGlobal) return a.isGlobal ? -1 : 1;
+    return b.total - a.total;
+  });
+
+  return { groups, summary: unified.summary };
+}
+
 /** 정규화: 대소문자·공백·일부 특수문자 제거 + 흔한 동의어를 한 표현으로. */
 function normalizeBig(s: string): string {
   let v = s.trim().toLowerCase();
@@ -230,13 +318,21 @@ export async function loadGlobalThemes(
   }
 
   // 그룹 정렬: 3국 동시 가동 → 총 종목 수 내림차순
-  const groups = Array.from(groupMap.values()).sort((a, b) => {
+  let groups = Array.from(groupMap.values()).sort((a, b) => {
     if (a.isGlobal !== b.isGlobal) return a.isGlobal ? -1 : 1;
     return b.total - a.total;
   });
 
-  // 50+ 테마 서브디비전 머지 (selectedWeek 기준)
+  // 통합 단일 호출 분류가 있으면 그것을 우선 사용 (라벨 일관성 보장)
   const subWeek = selectedWeek ?? Object.values(weeks).find((v) => v) ?? null;
+  if (subWeek) {
+    const unified = await loadUnifiedGroups(subWeek);
+    if (unified && unified.groups.length > 0) {
+      groups = unified.groups;
+    }
+  }
+
+  // 50+ 테마 서브디비전 머지 (selectedWeek 기준)
   if (subWeek) {
     const subMap = await fetchSubdivisions(subWeek);
     for (const g of groups) {
