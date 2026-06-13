@@ -47,8 +47,11 @@ def _sb_client():
     H = {"apikey": key, "Authorization": f"Bearer {key}",
          "Content-Type": "application/json"}
 
-    def req(method, path, body=None, prefer="return=minimal"):
+    def req(method, path, body=None, prefer="return=minimal", range_header=None):
         h = dict(H); h["Prefer"] = prefer
+        if range_header:
+            h["Range-Unit"] = "items"
+            h["Range"] = range_header
         data = json.dumps(body).encode("utf-8") if body is not None else None
         r = urllib.request.Request(base + path, data=data, method=method, headers=h)
         try:
@@ -74,7 +77,9 @@ def fetch_available_weeks(req, market):
     """그 시장의 분류 가능한 주차 (rs_top_weekly 기준 최신 → 과거)."""
     path = (f"/rs_top_weekly?market=eq.{urllib.parse.quote(market)}"
             f"&select=week_date&order=week_date.desc")
-    rows = req("GET", path, prefer="return=representation") or []
+    # PostgREST 기본 limit 1000 회피 — 최대 1만 행 fetch 해서 distinct
+    rows = req("GET", path, prefer="return=representation",
+               range_header="0-9999") or []
     return sorted({r["week_date"] for r in rows}, reverse=True)
 
 
