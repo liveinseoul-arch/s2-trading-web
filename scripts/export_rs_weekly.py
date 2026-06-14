@@ -299,13 +299,15 @@ def compute_threshold(week_ts, weekly_cache, mktcap_lookup, top_pct):
 
 def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
                  mktcap_lookup, mktcap_top, mktcap_min, names_en=None):
-    """한 주차 → (top96 후보, 모든 RS row).
+    """한 주차 → (top96 후보, 모든 RS row, universe row).
 
-    top96: RS ≥ 96 AND (mktcap_top 컷오프 통과) AND (mktcap_min 통과)
+    top96     : RS ≥ 96 AND (mktcap_top 컷오프 통과) AND (mktcap_min 통과)
+    all_rs    : 모든 종목의 RS (mktcap 필터 없음) — RS96+ tracking 용
+    universe  : mktcap 필터 통과한 모든 종목 (RS 컷오프 없음) — RS 조회 검색용
     """
     threshold_row, _src = get_threshold_row(rs_table, week_ts, weekly_cache, market)
     if threshold_row is None:
-        return [], []
+        return [], [], []
 
     pct_threshold = np.nan
     if mktcap_top is not None:
@@ -314,6 +316,7 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
     week_str = week_ts.date().isoformat()
     top96_rows = []
     all_rs_rows = []
+    universe_rows = []
 
     for tk, wdf in weekly_cache.items():
         s = get_close_series(wdf)
@@ -337,9 +340,7 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
             "close": last_close,
         })
 
-        if rs < RS_MIN:
-            continue
-
+        # mktcap 필터 — universe 통과 여부
         mc_val = mktcap_lookup(tk, week_ts, last_close)
         if mktcap_top is not None and not np.isnan(pct_threshold):
             if np.isnan(mc_val) or mc_val < pct_threshold:
@@ -348,22 +349,41 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
             if np.isnan(mc_val) or mc_val < mktcap_min:
                 continue
 
+        # universe 통과 — RS 컷오프 무관하게 저장
+        name = ticker_names.get(tk, "") or ""
+        name_en = (names_en.get(tk) if names_en else None) or None
+        mc_clean = float(mc_val) if not np.isnan(mc_val) else None
+        universe_rows.append({
+            "market": market,
+            "ticker": tk,
+            "week_date": week_str,
+            "name": name,
+            "name_en": name_en,
+            "rs": int(rs),
+            "comp_return": float(comp),
+            "close": last_close,
+            "mktcap": mc_clean,
+        })
+
+        if rs < RS_MIN:
+            continue
+
         top96_rows.append({
             "market": market,
             "week_date": week_str,
             "ticker": tk,
-            "name": ticker_names.get(tk, "") or "",
-            "name_en": (names_en.get(tk) if names_en else None) or None,
+            "name": name,
+            "name_en": name_en,
             "rs": int(rs),
             "comp_return": float(comp),
             "close": last_close,
-            "mktcap": float(mc_val) if not np.isnan(mc_val) else None,
+            "mktcap": mc_clean,
         })
 
     top96_rows.sort(key=lambda r: (-r["rs"], -r["comp_return"]))
     for i, r in enumerate(top96_rows, 1):
         r["rank_in_week"] = i
-    return top96_rows, all_rs_rows
+    return top96_rows, all_rs_rows, universe_rows
 
 
 def fetch_market(market, weeks_back):
@@ -425,28 +445,33 @@ def fetch_market(market, weeks_back):
     top96_all = []
     hist_by_ticker = {}
     rs96_tickers = set()
+    universe_all = []
 
     for i, w in enumerate(weeks, 1):
-        top96, all_rs = extract_week(w, market, rs_table, weekly_cache,
-                                     ticker_names, mktcap_lookup,
-                                     mktcap_top, mktcap_min,
-                                     names_en=names_en_map)
+        top96, all_rs, universe = extract_week(w, market, rs_table, weekly_cache,
+                                               ticker_names, mktcap_lookup,
+                                               mktcap_top, mktcap_min,
+                                               names_en=names_en_map)
         top96_all.extend(top96)
+        universe_all.extend(universe)
         for r in top96:
             rs96_tickers.add(r["ticker"])
         for r in all_rs:
             hist_by_ticker.setdefault(r["ticker"], []).append(r)
         if i % 10 == 0 or i == len(weeks):
-            print(f"  진행 {i}/{len(weeks)}주 · top96 누적 {len(top96_all):,}건", flush=True)
+            print(f"  진행 {i}/{len(weeks)}주 · top96 누적 {len(top96_all):,}건 · "
+                  f"universe 누적 {len(universe_all):,}건", flush=True)
 
     hist_rows = []
     for tk in rs96_tickers:
         hist_rows.extend(hist_by_ticker.get(tk, []))
     hist_rows.sort(key=lambda r: (r["ticker"], r["week_date"]))
+    universe_all.sort(key=lambda r: (r["ticker"], r["week_date"]))
 
     print(f"  [{market}] top96 {len(top96_all):,}건 · "
-          f"history {len(hist_rows):,}건 ({len(rs96_tickers):,}종목)")
-    return top96_all, hist_rows, sorted(rs96_tickers)
+          f"history {len(hist_rows):,}건 ({len(rs96_tickers):,}종목) · "
+          f"universe {len(universe_all):,}건")
+    return top96_all, hist_rows, sorted(rs96_tickers), universe_all
 
 
 # ─── Supabase REST 클라이언트 ─────────────────────────────────────────
@@ -474,7 +499,7 @@ def _chunk(rows, n=500):
         yield rows[i:i + n]
 
 
-def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market):
+def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market, universe_rows=None):
     req = _supabase_client()
 
     # 시장 전체 삭제 후 재적재 — 옛 stale 주차(예: 월요일 timestamp) row 동시 정리.
@@ -482,6 +507,8 @@ def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market):
     for mk in markets:
         req("DELETE", f"/rs_top_weekly?market=eq.{urllib.parse.quote(mk)}")
         req("DELETE", f"/rs_history_weekly?market=eq.{urllib.parse.quote(mk)}")
+        if universe_rows is not None:
+            req("DELETE", f"/rs_universe_weekly?market=eq.{urllib.parse.quote(mk)}")
 
     for c in _chunk(top_rows):
         req("POST", "/rs_top_weekly", c)
@@ -490,6 +517,11 @@ def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market):
     for c in _chunk(hist_rows):
         req("POST", "/rs_history_weekly", c)
     print(f"[supabase] rs_history_weekly {len(hist_rows):,}건 적재 완료")
+
+    if universe_rows:
+        for c in _chunk(universe_rows, n=1000):
+            req("POST", "/rs_universe_weekly", c)
+        print(f"[supabase] rs_universe_weekly {len(universe_rows):,}건 적재 완료")
 
     req("PATCH", "/meta?key=eq.last_rs_weekly_at",
         {"value": datetime.now().isoformat()})
@@ -527,24 +559,31 @@ def main():
                     help=f"최근 N주 적재 (기본 {WEEKS_BACK_DEFAULT})")
     ap.add_argument("--dry-run", action="store_true",
                     help="Supabase 적재 없이 미리보기")
+    ap.add_argument("--full-universe", action="store_true",
+                    help="rs_universe_weekly 에 mktcap 필터 통과 모든 종목의 RS 도 적재 "
+                         "(RS 조회 검색용)")
     args = ap.parse_args()
 
     Config()  # .env.local 로드
 
-    top_all, hist_all = [], []
+    top_all, hist_all, universe_all = [], [], []
     rs96_tickers_by_market = {}
     targets = MARKETS_ALL if args.market == "all" else (args.market,)
     for mk in targets:
-        t, h, tks = fetch_market(mk, args.weeks)
+        t, h, tks, u = fetch_market(mk, args.weeks)
         top_all.extend(t); hist_all.extend(h); rs96_tickers_by_market[mk] = tks
+        if args.full_universe:
+            universe_all.extend(u)
 
-    print(f"\n총 top96 {len(top_all):,}건 · history {len(hist_all):,}건")
+    print(f"\n총 top96 {len(top_all):,}건 · history {len(hist_all):,}건"
+          + (f" · universe {len(universe_all):,}건" if args.full_universe else ""))
 
     if args.dry_run:
         preview(top_all, hist_all)
     else:
-        if top_all or hist_all:
-            upsert_supabase(top_all, hist_all, rs96_tickers_by_market)
+        if top_all or hist_all or universe_all:
+            upsert_supabase(top_all, hist_all, rs96_tickers_by_market,
+                            universe_rows=universe_all if args.full_universe else None)
         else:
             print("적재할 row 없음 — Supabase 호출 생략")
     print("DONE")
