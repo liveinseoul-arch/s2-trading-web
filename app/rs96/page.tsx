@@ -217,24 +217,45 @@ export default async function RsScreen({
                   </Link>
                 );
               })}
-              {weeks.length > 12 && (
-                <details className="relative inline-block">
-                  <summary className="cursor-pointer rounded bg-surface px-2 py-1 text-xs text-muted">
-                    이전 {weeks.length - 12}주 ▾
-                  </summary>
-                  <div className="absolute z-20 mt-1 grid max-h-64 w-44 grid-cols-1 gap-0.5 overflow-y-auto rounded-lg border border-[var(--color-borderc)] bg-bg p-2 shadow-lg">
-                    {weeks.slice(12).map((w) => (
-                      <Link
-                        key={w}
-                        href={`/rs96?market=${market}&week=${w}`}
-                        className="rounded px-2 py-1 text-xs tnum text-muted hover:bg-surface hover:text-textc"
-                      >
-                        {w}
-                      </Link>
-                    ))}
-                  </div>
-                </details>
-              )}
+              {weeks.length > 12 && (() => {
+                const olderActive =
+                  selectedWeek != null && !weeks.slice(0, 12).includes(selectedWeek);
+                return (
+                  <details className="relative inline-block">
+                    <summary
+                      className={`cursor-pointer rounded px-2 py-1 text-xs ${
+                        olderActive
+                          ? "bg-accent font-medium text-white"
+                          : "bg-surface text-muted"
+                      }`}
+                    >
+                      이전 {weeks.length - 12}주
+                      {olderActive && (
+                        <span className="ml-1 tnum">· {fmtWeek(selectedWeek)}</span>
+                      )}{" "}
+                      ▾
+                    </summary>
+                    <div className="absolute z-20 mt-1 grid max-h-64 w-44 grid-cols-1 gap-0.5 overflow-y-auto rounded-lg border border-[var(--color-borderc)] bg-bg p-2 shadow-lg">
+                      {weeks.slice(12).map((w) => {
+                        const active = w === selectedWeek;
+                        return (
+                          <Link
+                            key={w}
+                            href={`/rs96?market=${market}&week=${w}`}
+                            className={`rounded px-2 py-1 text-xs tnum ${
+                              active
+                                ? "bg-accent text-white"
+                                : "text-muted hover:bg-surface hover:text-textc"
+                            }`}
+                          >
+                            {w}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  </details>
+                );
+              })()}
             </div>
           </div>
 
