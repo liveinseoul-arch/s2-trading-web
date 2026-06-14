@@ -167,22 +167,31 @@ def load_jp_ticker_names():
 
 
 def load_jp_localized_names():
-    """JP 종목 → 영문/한국어 표기 dict 반환.
+    """JP 종목 → 표기 dict (name_en 컬럼 용).
 
-    fallback chain: yfinance longName (정식 영문) > Google JA→KO (한국어) > None.
-    None 이면 export 단계에서 그 종목의 name_en 컬럼은 NULL.
+    rule:
+      - 영문 + 한국어 둘 다 있음 → "ENGLISH (한국어)" 합쳐 둘 다 ILIKE 검색 가능.
+      - 영문만 있음 → 영문.
+      - 한국어만 있음 → 한국어.
+      - 둘 다 없음 → None (name_en NULL, 일본어 name 만 보임).
     """
     en = _load_pkl(Path(QB_SCREEN_DIR) / JP_NAMES_EN_PKL) or {}
     ko = _load_pkl(Path(QB_SCREEN_DIR) / JP_NAMES_KO_PKL) or {}
     merged = {}
-    for tk, name in en.items():
-        if name:
-            merged[tk] = name           # 영문 우선
-    for tk, name in ko.items():
-        if name and tk not in merged:
-            merged[tk] = name           # 영문 없으면 한국어
+    n_both = 0
+    for tk in set(en) | set(ko):
+        e = (en.get(tk) or "").strip()
+        k = (ko.get(tk) or "").strip()
+        if e and k and e.lower() != k.lower():
+            merged[tk] = f"{e} ({k})"
+            n_both += 1
+        elif e:
+            merged[tk] = e
+        elif k:
+            merged[tk] = k
     if merged:
-        print(f"  JP name_en/ko 매핑: 영문 {len(en):,} + 한국어 {len(ko):,} → 통합 {len(merged):,}")
+        print(f"  JP name_en/ko 매핑: 영문 {len(en):,} + 한국어 {len(ko):,} → 통합 {len(merged):,} "
+              f"(영+한 결합 {n_both:,})")
     return merged
 
 
