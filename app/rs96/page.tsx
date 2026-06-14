@@ -13,12 +13,6 @@ export const metadata = {
     "한국·미국 시장의 상위 4% 모멘텀 종목(RS96 이상)을 주별로 정리. O'Neil CANSLIM·Minervini SEPA 변형 룰의 기본 후보군.",
 };
 
-const MARKETS: { key: RsMarket; label: string }[] = [
-  { key: "KR", label: "한국" },
-  { key: "US", label: "미국" },
-  { key: "JP", label: "일본" },
-];
-
 function parseMarket(v: string | string[] | undefined): RsMarket {
   if (v === "US") return "US";
   if (v === "JP") return "JP";
@@ -171,25 +165,7 @@ export default async function RsScreen({
         {lastRun ? <> · 마지막 갱신 {String(lastRun).slice(0, 16).replace("T", " ")}</> : null}
       </p>
 
-      {/* 시장 토글 */}
-      <div className="mb-4 flex gap-2">
-        {MARKETS.map((m) => {
-          const active = m.key === market;
-          return (
-            <Link
-              key={m.key}
-              href={`/rs96?market=${m.key}`}
-              className={`rounded-lg px-4 py-1.5 text-sm transition ${
-                active
-                  ? "bg-accent text-white"
-                  : "border border-[var(--color-borderc)] text-muted hover:text-textc"
-              }`}
-            >
-              {m.label}
-            </Link>
-          );
-        })}
-      </div>
+      {/* 시장 토글 — 상단 nav 와 중복돼 제거 */}
 
       {/* 주차 셀렉터 */}
       {weeks.length === 0 ? (
