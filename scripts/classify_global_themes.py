@@ -37,7 +37,7 @@ sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
 from config import Config                                    # noqa: E402
 
-MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
 MARKETS_ALL = ("KR", "US", "JP")
 MARKET_LABEL = {"KR": "한국", "US": "미국", "JP": "일본"}
 
