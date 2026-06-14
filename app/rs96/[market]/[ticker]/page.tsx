@@ -156,19 +156,29 @@ export default async function RsTickerHistory({
         <span>{MARKET_LABEL[market]}</span>
       </div>
 
-      <form action="/rs/search" method="get" className="mb-4 flex gap-2">
-        <input
-          type="text"
-          name="q"
-          placeholder="다른 종목 검색 (ticker / 회사명)"
-          className="flex-1 rounded-lg border border-[var(--color-borderc)] bg-surface px-3 py-1.5 text-sm text-textc placeholder-muted focus:border-accent focus:outline-none"
-        />
-        <button
-          type="submit"
-          className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white transition hover:opacity-90"
-        >
-          조회
-        </button>
+      <form
+        action="/rs/search"
+        method="get"
+        className="mb-5 rounded-xl border border-accent/30 bg-accent/5 p-2.5"
+      >
+        <label className="mb-1.5 flex items-center gap-1.5 px-1 text-[11px] font-semibold text-accent">
+          🔍 다른 종목 RS 조회
+        </label>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            name="q"
+            placeholder="ticker 또는 회사명 입력 (예: 005930, 키옥시아, AAPL)"
+            className="flex-1 rounded-lg border-2 border-[var(--color-borderc)] bg-bg px-3 py-2 text-sm text-textc placeholder-muted focus:border-accent focus:outline-none"
+            autoComplete="off"
+          />
+          <button
+            type="submit"
+            className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+          >
+            조회
+          </button>
+        </div>
       </form>
 
       <h1 className="mb-1 text-xl font-bold">
