@@ -221,7 +221,7 @@ export default async function RsScreen({
                 const olderActive =
                   selectedWeek != null && !weeks.slice(0, 12).includes(selectedWeek);
                 return (
-                  <details className="relative inline-block">
+                  <details key={selectedWeek ?? "none"} className="relative inline-block">
                     <summary
                       className={`cursor-pointer rounded px-2 py-1 text-xs ${
                         olderActive
