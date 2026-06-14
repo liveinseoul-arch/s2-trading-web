@@ -37,14 +37,14 @@ function fmtMktcap(v: number | null, market: RsMarket) {
     return `¥${Math.round(v / 1e8).toLocaleString("ja-JP")}億`;
   }
   // US
-  if (v >= 1e9) return `$${(v / 1e9).toFixed(1)}B`;
+  if (v >= 1e9) return `$${Math.round(v / 1e9).toLocaleString("en-US")}B`;
   return `$${Math.round(v / 1e6).toLocaleString("en-US")}M`;
 }
 
 function fmtPrice(v: number | null, market: RsMarket) {
   if (v == null) return "-";
   if (market === "US") {
-    return v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return v.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   }
   // KR/JP: 정수 (원/엔 단위)
   return v.toLocaleString(market === "JP" ? "ja-JP" : "ko-KR", { maximumFractionDigits: 0 });
@@ -281,7 +281,7 @@ export default async function RsScreen({
                         <td className="font-bold text-accent">{r.rs}</td>
                         <td className={signClass(r.comp_return ? r.comp_return * 100 : null)}>
                           {r.comp_return != null
-                            ? `${r.comp_return >= 0 ? "+" : ""}${(r.comp_return * 100).toFixed(1)}%`
+                            ? `${r.comp_return >= 0 ? "+" : ""}${Math.round(r.comp_return * 100)}%`
                             : "-"}
                         </td>
                         <td>{fmtPrice(r.close, market)}</td>

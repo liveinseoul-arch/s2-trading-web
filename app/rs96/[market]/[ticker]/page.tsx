@@ -41,7 +41,7 @@ function rsBarOpacity(rs: number): number {
 function fmtClose(close: number | null, market: RsMarket): string {
   if (close == null) return "-";
   if (market === "US") {
-    return close.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return close.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   }
   return close.toLocaleString(market === "JP" ? "ja-JP" : "ko-KR", { maximumFractionDigits: 0 });
 }
@@ -202,7 +202,7 @@ export default async function RsTickerHistory({
                         <td className={isTop ? "font-bold text-accent" : ""}>{r.rs}</td>
                         <td className={signClass(r.comp_return ? r.comp_return * 100 : null)}>
                           {r.comp_return != null
-                            ? `${r.comp_return >= 0 ? "+" : ""}${(r.comp_return * 100).toFixed(1)}%`
+                            ? `${r.comp_return >= 0 ? "+" : ""}${Math.round(r.comp_return * 100)}%`
                             : "-"}
                         </td>
                         <td>

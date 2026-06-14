@@ -21,7 +21,7 @@ function fmtWeek(d: string) {
 function fmtCompReturn(v: number | null): string {
   if (v == null) return "-";
   const p = v * 100;
-  return `${p >= 0 ? "+" : ""}${p.toFixed(1)}%`;
+  return `${p >= 0 ? "+" : ""}${Math.round(p)}%`;
 }
 
 function signClass(v: number | null): string {
