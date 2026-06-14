@@ -44,6 +44,8 @@ MARKET_LABEL = {"KR": "한국", "US": "미국", "JP": "일본"}
 
 # ── 고정 캐논 테마 시드 ───────────────────────────────────────
 # Gemini 에게 "가능하면 이 안에서 골라, 정 없으면 새로 만들어" 라고 제시.
+# 반도체는 'big=반도체' 로 두고 세부는 small 로 분기하도록 유도.
+# (예: big='반도체', small='메모리 IDM' / '팹리스' / '장비-전공정' / '소재' 등)
 CANONICAL_THEMES = [
     "반도체",
     "AI 인프라",
@@ -74,6 +76,20 @@ CANONICAL_THEMES = [
     "통신",
     "음식료",
     "지주사 기타",
+]
+
+# 반도체 안의 권장 'small' 세부 라벨 — 50+ 시 subdivide 가 사용.
+SEMI_SMALL_HINTS = [
+    "메모리 IDM (NAND/DRAM)",
+    "로직 IDM/파운드리",
+    "팹리스 (CPU/GPU/AI 칩)",
+    "팹리스 (네트워킹/특수)",
+    "장비 - 전공정 (노광/에칭/박막)",
+    "장비 - 후공정 (테스트/OSAT/패키징)",
+    "소재 - 웨이퍼/화학/타겟",
+    "소재 - 마스크/EUV/포토",
+    "부품/기판/모듈",
+    "EDA/IP",
 ]
 
 
@@ -177,6 +193,13 @@ def build_global_prompt(week, market_rows):
     ]
     for t in CANONICAL_THEMES:
         lines.append(f"  · {t}")
+    lines.extend([
+        "",
+        "반도체 카테고리 안의 권장 'small' 세부 라벨 (big='반도체' 일 때 사용 권장,",
+        "특히 메모리·장비·소재·팹리스 등 명확한 경우 small 에 명시):",
+    ])
+    for s in SEMI_SMALL_HINTS:
+        lines.append(f"  · {s}")
     lines.extend([
         "",
         "각 행: ticker | 회사명 | 시장 | RS | 52주 모멘텀(%) | 시총",

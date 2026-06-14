@@ -49,6 +49,10 @@ export interface GlobalThemeData {
   totals: Record<RsMarket, number>;
   /** 시장별 Gemini 의 그 주차 시장 전반 summary (1~2문장) */
   marketSummaries: Record<RsMarket, string | null>;
+  /** 한미일 통합 단일 호출 Gemini 모델 (rs_global_theme_weekly.model) */
+  unifiedModel: string | null;
+  /** 50+ 테마 서브디비전 Gemini 모델 (있을 경우) */
+  subdivisionModel: string | null;
 }
 
 /** 전 시장 합쳐 분류 가능한 주차 목록 (최신 → 과거). */
@@ -67,6 +71,7 @@ interface SubthemeRow {
   theme_label: string;
   total_stocks: number;
   subcategories: { label: string; tickers: string[] }[];
+  model?: string | null;
 }
 
 async function fetchSubdivisions(weekDate: string): Promise<Map<string, SubthemeRow>> {
@@ -84,12 +89,13 @@ interface UnifiedThemeRow {
   week_date: string;
   summary: string | null;
   categories: { big: string; small?: string; tickers: string[] }[];
+  model?: string | null;
 }
 
 /** rs_global_theme_weekly (단일 호출 통합 분류) 로부터 groups 생성. 없으면 null. */
 async function loadUnifiedGroups(
   week: string,
-): Promise<{ groups: GlobalThemeGroup[]; summary: string | null } | null> {
+): Promise<{ groups: GlobalThemeGroup[]; summary: string | null; model: string | null } | null> {
   const u = await supabase
     .from("rs_global_theme_weekly")
     .select("*")
@@ -188,7 +194,7 @@ async function loadUnifiedGroups(
     return b.total - a.total;
   });
 
-  return { groups, summary: unified.summary };
+  return { groups, summary: unified.summary, model: unified.model ?? null };
 }
 
 /** 정규화: 대소문자·공백·일부 특수문자 제거 + 흔한 동의어를 한 표현으로. */
@@ -348,16 +354,22 @@ export async function loadGlobalThemes(
 
   // 통합 단일 호출 분류가 있으면 그것을 우선 사용 (라벨 일관성 보장)
   const subWeek = selectedWeek ?? Object.values(weeks).find((v) => v) ?? null;
+  let unifiedModel: string | null = null;
+  let subdivisionModel: string | null = null;
   if (subWeek) {
     const unified = await loadUnifiedGroups(subWeek);
     if (unified && unified.groups.length > 0) {
       groups = unified.groups;
+      unifiedModel = unified.model;
     }
   }
 
   // 50+ 테마 서브디비전 머지 (selectedWeek 기준)
   if (subWeek) {
     const subMap = await fetchSubdivisions(subWeek);
+    for (const sub of subMap.values()) {
+      if (sub.model) { subdivisionModel = sub.model; break; }
+    }
     for (const g of groups) {
       const sub = subMap.get(g.key);
       if (!sub) continue;
@@ -391,5 +403,5 @@ export async function loadGlobalThemes(
     }
   }
 
-  return { groups, weeks, totals, unmatched, marketSummaries };
+  return { groups, weeks, totals, unmatched, marketSummaries, unifiedModel, subdivisionModel };
 }

@@ -191,7 +191,7 @@ export default async function GlobalThemes({
     sp.week && availWeeks.includes(sp.week) ? sp.week : (availWeeks[0] ?? null);
 
   const data = await loadGlobalThemes(selectedWeek);
-  const { groups, weeks, totals, unmatched, marketSummaries } = data;
+  const { groups, weeks, totals, unmatched, marketSummaries, unifiedModel, subdivisionModel } = data;
 
   const noData = Object.values(weeks).every((w) => !w);
   const hasAnySummary = Object.values(marketSummaries).some((s) => s);
@@ -289,6 +289,26 @@ export default async function GlobalThemes({
           </div>
         ))}
       </div>
+
+      {/* 분류 모델 명시 */}
+      {(unifiedModel || subdivisionModel) && (
+        <p className="mb-3 text-[11px] text-muted">
+          {unifiedModel && (
+            <>
+              테마 분류 <b className="text-textc">{unifiedModel.replace("gemini-", "Gemini ")}</b>
+            </>
+          )}
+          {subdivisionModel && subdivisionModel !== unifiedModel && (
+            <>
+              {unifiedModel ? " · " : ""}서브 세분화{" "}
+              <b className="text-textc">{subdivisionModel.replace("gemini-", "Gemini ")}</b>
+            </>
+          )}
+          {subdivisionModel && subdivisionModel === unifiedModel && (
+            <> (서브 세분화 동일 모델)</>
+          )}
+        </p>
+      )}
 
       {/* Gemini 의 시장별 한줄평 */}
       {hasAnySummary && (

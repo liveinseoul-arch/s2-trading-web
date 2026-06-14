@@ -250,7 +250,22 @@ SUBDIVIDE_SCHEMA = {
 }
 
 
+SEMI_CANONICAL_SUBS = [
+    "메모리 IDM (NAND/DRAM)",         # 삼성·SK하이닉스·Kioxia·Micron·Western Digital·Sandisk 등
+    "로직 IDM/파운드리",                # Intel/TSMC/GlobalFoundries 등
+    "팹리스 (CPU/GPU/AI 칩)",           # AMD/NVIDIA/Marvell/Astera Labs/Arm 등
+    "팹리스 (네트워킹/특수)",
+    "장비 - 전공정 (노광·에칭·박막·CMP)",
+    "장비 - 후공정 (테스트·OSAT·패키징)",
+    "소재 - 웨이퍼·화학·타겟",
+    "소재 - 마스크·EUV·포토",
+    "부품·기판·모듈",
+    "EDA·IP",
+]
+
+
 def build_subdivide_prompt(theme_label, stocks):
+    is_semi = "반도체" in theme_label
     lines = [
         f"테마: {theme_label}",
         f"이 테마로 분류된 한·미·일 RS96+ 종목 {len(stocks)}개. 너무 크니 4~8개 서브카테고리로 다시 세분해 주세요.",
@@ -265,11 +280,24 @@ def build_subdivide_prompt(theme_label, stocks):
     lines.extend([
         "",
         "요구사항:",
-        "  1) 서브카테고리는 큰 테마 안에서 의미 있는 세분 (예: '반도체' → '메모리 IDM', '장비-전공정', '장비-후공정', '소재', '설계/IDM').",
-        "  2) 'label' 은 한국어로 짧게 (예: '메모리 IDM', '장비 - 전공정', '소재 - 식각/박막').",
+        "  1) 서브카테고리는 큰 테마 안에서 의미 있는 세분.",
+        "  2) 'label' 은 한국어로 짧게.",
         "  3) 한 종목은 한 서브카테고리만.",
         "  4) 모든 종목을 빠짐없이 분류 (애매하면 '기타' 서브 만들기).",
         "  5) 4~8개 서브카테고리 권장 (종목이 적으면 4개, 많으면 8개까지).",
+    ])
+    if is_semi:
+        lines.append("")
+        lines.append("반도체 권장 캐논 서브카테고리 (가능하면 이 안에서 'label' 선택):")
+        for s in SEMI_CANONICAL_SUBS:
+            lines.append(f"  · {s}")
+        lines.append("")
+        lines.append(
+            "**중요**: Kioxia(285A.T), 삼성전자(005930.KS), SK하이닉스(000660.KS), "
+            "Micron(MU), Western Digital(WDC), Sandisk(SNDK) 등 NAND/DRAM 메모리 IDM 종목은 "
+            "반드시 '메모리 IDM (NAND/DRAM)' 서브카테고리에 배치."
+        )
+    lines.extend([
         "",
         "JSON 만 응답. 다른 텍스트 X.",
     ])
