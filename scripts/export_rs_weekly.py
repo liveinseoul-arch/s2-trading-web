@@ -258,12 +258,23 @@ def load_jp_mktcap_combined():
 def make_mktcap_lookup(market, mktcap_cache, shares_map, yahoo_mktcap=None):
     """mktcap_lookup(ticker, week_ts, close_at_week) → float | NaN
 
-    KR: collect_mktcap_kr_v2 캐시에서 ref_date 이하 최근 값.
+    KR: shares_out × 그 주차 종가 (가격 변동 즉시 반영). 캐시는 28일 snapshot
+        이라 mktcap 컬럼 자체는 stale → shares_out 만 뽑아 close 와 곱함.
+        shares_out 없으면 snapshot mktcap fallback.
     US: shares × 그 주차 종가.
     JP: yahoo_mktcap dict 우선(정확) → shares × close (근사) → NaN.
     """
     if market == "KR":
         def lookup(tk, ts, close):
+            df = mktcap_cache.get(tk)
+            if df is not None and "shares_out" in getattr(df, "columns", []):
+                sub = df[df.index <= pd.Timestamp(ts)]
+                if len(sub) > 0:
+                    sh = sub["shares_out"].iloc[-1]
+                    if (not pd.isna(sh) and sh > 0 and
+                            close is not None and not np.isnan(close)):
+                        return float(sh) * float(close)
+            # fallback — 옛 snapshot mktcap
             return lookup_mktcap_at(mktcap_cache, tk, ts)
         return lookup
     if market == "JP":
