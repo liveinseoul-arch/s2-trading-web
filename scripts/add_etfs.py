@@ -1,0 +1,296 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""선두지기(96+) · ETF RS 값 추가.
+
+US universe 는 시총 상위 20% 필터로 ETF 를 자동 제외하기 때문에 QQQ/SPY/SMH 등이
+RS 조회에 안 나옴. 본 스크립트가 화이트리스트 ETF 들을 yfinance 로 가져와
+같은 12·24·36·48 가중 composite return 으로 RS 를 계산, rs_universe_weekly 에 추가.
+
+RS 계산법:
+  comp_return 을 그 주차 US 전체 stock universe 의 comp_return 분포에서 percentile rank.
+  (export_rs_weekly 의 quantile 기반 comp_to_rs 와 거의 동일 결과)
+
+사용:
+  python add_etfs.py                  # 화이트리스트 ETF 모두 (US 시장)
+  python add_etfs.py --weeks 56       # 최근 N주
+
+⚠ export_rs_weekly --market US 가 rs_universe_weekly 의 US 행 전체를 삭제 후 재적재
+  하기 때문에 그 직후엔 본 스크립트도 다시 실행해야 합니다.
+
+env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (.env.local)
+"""
+from __future__ import annotations
+import argparse
+import json
+import os
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+import yfinance as yf
+
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+os.chdir(ROOT)
+from config import Config                                    # noqa: E402
+
+# ── ETF 화이트리스트 (market='US' 가정) ────────────────────────
+# name 은 yfinance 가 자동 채우고, name_en 은 영문 (한국어 별칭) 형식.
+ETFS = [
+    # 대표 지수
+    {"ticker": "SPY",  "name_en": "SPDR S&P 500 ETF (S&P 500)"},
+    {"ticker": "QQQ",  "name_en": "Invesco QQQ Trust (나스닥 100)"},
+    {"ticker": "DIA",  "name_en": "SPDR Dow Jones ETF (다우 30)"},
+    {"ticker": "IWM",  "name_en": "iShares Russell 2000 (러셀 2000)"},
+    {"ticker": "VTI",  "name_en": "Vanguard Total Stock Market (전체 미국)"},
+
+    # 섹터 SPDR
+    {"ticker": "XLK",  "name_en": "Technology Select Sector (기술주)"},
+    {"ticker": "XLF",  "name_en": "Financial Select Sector (금융)"},
+    {"ticker": "XLE",  "name_en": "Energy Select Sector (에너지)"},
+    {"ticker": "XLI",  "name_en": "Industrial Select Sector (산업재)"},
+    {"ticker": "XLV",  "name_en": "Health Care Select Sector (헬스케어)"},
+    {"ticker": "XLY",  "name_en": "Consumer Discretionary (소비재)"},
+    {"ticker": "XLP",  "name_en": "Consumer Staples (필수소비재)"},
+    {"ticker": "XLU",  "name_en": "Utilities Select Sector (유틸리티)"},
+    {"ticker": "XLB",  "name_en": "Materials Select Sector (소재)"},
+    {"ticker": "XLRE", "name_en": "Real Estate Select Sector (리츠)"},
+    {"ticker": "XLC",  "name_en": "Communication Services (통신)"},
+
+    # 테마/산업
+    {"ticker": "SMH",  "name_en": "VanEck Semiconductor (반도체)"},
+    {"ticker": "SOXX", "name_en": "iShares Semiconductor (반도체)"},
+    {"ticker": "ARKK", "name_en": "ARK Innovation (혁신)"},
+    {"ticker": "ITA",  "name_en": "iShares Aerospace & Defense (방산우주)"},
+    {"ticker": "IBB",  "name_en": "iShares Biotechnology (바이오)"},
+    {"ticker": "KBE",  "name_en": "SPDR Bank ETF (은행)"},
+    {"ticker": "KRE",  "name_en": "SPDR Regional Bank (지역 은행)"},
+    {"ticker": "GDX",  "name_en": "VanEck Gold Miners (금 채굴)"},
+    {"ticker": "IGV",  "name_en": "iShares Expanded Tech-Software (소프트웨어)"},
+
+    # 채권·원자재
+    {"ticker": "TLT",  "name_en": "iShares 20+ Yr Treasury (장기 국채)"},
+    {"ticker": "IEF",  "name_en": "iShares 7-10 Yr Treasury (중기 국채)"},
+    {"ticker": "GLD",  "name_en": "SPDR Gold (금)"},
+    {"ticker": "SLV",  "name_en": "iShares Silver (은)"},
+    {"ticker": "USO",  "name_en": "United States Oil Fund (WTI 원유)"},
+    {"ticker": "UUP",  "name_en": "Invesco DB US Dollar (달러)"},
+
+    # 국가
+    {"ticker": "EEM",  "name_en": "iShares Emerging Markets (신흥국)"},
+    {"ticker": "EWJ",  "name_en": "iShares Japan (일본)"},
+    {"ticker": "EWY",  "name_en": "iShares Korea (한국)"},
+    {"ticker": "EWT",  "name_en": "iShares Taiwan (대만)"},
+    {"ticker": "FXI",  "name_en": "iShares China Large-Cap (중국 대형주)"},
+    {"ticker": "INDA", "name_en": "iShares India (인도)"},
+    {"ticker": "VGK",  "name_en": "Vanguard FTSE Europe (유럽)"},
+]
+
+MARKET = "US"        # 현재 화이트리스트는 모두 US 상장 ETF
+
+
+# ── 같은 composite_return 공식 (export_rs_weekly 와 일치) ─────
+COMPOSITE = [(12, 2.0), (24, 1.0), (36, 1.0), (48, 1.0)]
+TOTAL_WEIGHT = sum(w for _, w in COMPOSITE)
+
+
+def composite_return(weekly_close: pd.Series, week) -> float:
+    """w-FRI 기준 12·24·36·48 가중 누적수익률."""
+    if week not in weekly_close.index:
+        return np.nan
+    idx = weekly_close.index.get_loc(week)
+    cur = float(weekly_close.iloc[idx])
+    if cur <= 0:
+        return np.nan
+    s = 0.0
+    for n, w in COMPOSITE:
+        j = idx - n
+        if j < 0:
+            return np.nan
+        past = float(weekly_close.iloc[j])
+        if past <= 0:
+            return np.nan
+        s += w * (cur / past - 1.0)
+    return s / TOTAL_WEIGHT
+
+
+# ── Supabase REST ────────────────────────────────────────────
+def _sb_client():
+    base = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1"
+    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    H = {"apikey": key, "Authorization": f"Bearer {key}",
+         "Content-Type": "application/json"}
+
+    def req(method, path, body=None, prefer="return=minimal", range_header=None):
+        h = dict(H); h["Prefer"] = prefer
+        if range_header:
+            h["Range-Unit"] = "items"
+            h["Range"] = range_header
+        data = json.dumps(body).encode("utf-8") if body is not None else None
+        r = urllib.request.Request(base + path, data=data, method=method, headers=h)
+        try:
+            with urllib.request.urlopen(r, timeout=120) as resp:
+                txt = resp.read().decode("utf-8")
+                return json.loads(txt) if txt.strip() else None
+        except urllib.error.HTTPError as e:
+            raise SystemExit(f"[supabase] {method} {path} 실패 {e.code}: "
+                             f"{e.read().decode('utf-8')[:400]}")
+    return req
+
+
+def fetch_us_distribution(req, week: str) -> list[float]:
+    """그 주차 US 전체 universe 종목의 comp_return 분포 (RS 백분위 계산용)."""
+    out: list[float] = []
+    for page in range(10):
+        from_ = page * 1000
+        to = from_ + 999
+        path = (f"/rs_universe_weekly?market=eq.US&week_date=eq.{urllib.parse.quote(week)}"
+                f"&select=comp_return&order=ticker.asc")
+        rows = req("GET", path, prefer="return=representation",
+                   range_header=f"{from_}-{to}") or []
+        if not rows:
+            break
+        for r in rows:
+            v = r.get("comp_return")
+            if v is not None:
+                out.append(float(v))
+        if len(rows) < 1000:
+            break
+    return out
+
+
+def fetch_us_weeks(req) -> list[str]:
+    """US rs_universe_weekly 의 distinct week_date 최신순."""
+    seen = set()
+    for page in range(10):
+        from_ = page * 1000
+        to = from_ + 999
+        path = "/rs_universe_weekly?market=eq.US&select=week_date&order=week_date.desc"
+        rows = req("GET", path, prefer="return=representation",
+                   range_header=f"{from_}-{to}") or []
+        if not rows:
+            break
+        for r in rows:
+            seen.add(r["week_date"])
+        if len(rows) < 1000:
+            break
+    return sorted(seen, reverse=True)
+
+
+def percentile_rank(value: float, sorted_dist: list[float]) -> int:
+    """RS = floor(rank / n * 100), max 99 (export_rs_weekly 의 quantile bucket 과 거의 동일)."""
+    if value is None or np.isnan(value) or not sorted_dist:
+        return -1
+    import bisect
+    rank = bisect.bisect_right(sorted_dist, value)
+    n = len(sorted_dist)
+    return min(int(rank / n * 100), 99)
+
+
+# ── ETF 1개 처리 ─────────────────────────────────────────────
+def process_etf(req, etf: dict, us_weeks: list[str], dist_cache: dict[str, list[float]]):
+    ticker = etf["ticker"]
+    name_en = etf["name_en"]
+    print(f"\n[{ticker}] yfinance fetch...")
+    yh = yf.Ticker(ticker)
+    info = yh.info or {}
+    name = info.get("longName") or info.get("shortName") or ticker
+
+    daily = yh.history(period="3y", interval="1d", auto_adjust=False)
+    if daily.empty:
+        print(f"  ⚠ 데이터 없음 — skip")
+        return 0
+    daily.index = daily.index.tz_localize(None)
+    weekly = daily["Close"].resample("W-FRI").last().dropna()
+    print(f"  weekly {len(weekly)}주 · longName={name}")
+
+    rows = []
+    for w in us_weeks:
+        w_ts = pd.Timestamp(w)
+        # weekly index 가 정확히 같은 주차여야
+        if w_ts not in weekly.index:
+            continue
+        comp = composite_return(weekly, w_ts)
+        if np.isnan(comp):
+            continue
+        # 그 주차 US 분포
+        sorted_dist = dist_cache.get(w)
+        if sorted_dist is None:
+            dist = fetch_us_distribution(req, w)
+            sorted_dist = sorted(dist)
+            dist_cache[w] = sorted_dist
+        if not sorted_dist:
+            continue
+        rs = percentile_rank(comp, sorted_dist)
+        if rs < 0:
+            continue
+        close_val = float(weekly.loc[w_ts])
+        rows.append({
+            "market": MARKET,
+            "ticker": ticker,
+            "week_date": w,
+            "name": name,
+            "name_en": name_en,
+            "rs": rs,
+            "comp_return": float(comp),
+            "close": close_val,
+            "mktcap": None,
+        })
+    if not rows:
+        print(f"  ⚠ 적재 row 0개")
+        return 0
+
+    # upsert: 같은 (market, ticker, week_date) 행 제거 후 insert
+    req("DELETE",
+        f"/rs_universe_weekly?market=eq.{MARKET}&ticker=eq.{urllib.parse.quote(ticker)}")
+    # 1000건 청크
+    for i in range(0, len(rows), 500):
+        req("POST", "/rs_universe_weekly", rows[i:i+500])
+    latest_rs = rows[0]["rs"]
+    print(f"  ✓ {len(rows)}주 적재 · 최신 RS{latest_rs}")
+    return len(rows)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--weeks", type=int, default=56,
+                    help="최근 N주 (기본 56)")
+    ap.add_argument("--ticker", default=None,
+                    help="특정 ticker 1개만 처리 (테스트용)")
+    args = ap.parse_args()
+
+    Config()
+    req = _sb_client()
+
+    print("US 주차 목록 fetch...")
+    us_weeks = fetch_us_weeks(req)[: args.weeks]
+    if not us_weeks:
+        raise SystemExit("⚠ US rs_universe_weekly 데이터 없음. 먼저 export_rs_weekly --full-universe 실행 필요.")
+    print(f"  대상 {len(us_weeks)}주 ({us_weeks[-1]} ~ {us_weeks[0]})")
+
+    if args.ticker:
+        targets = [{"ticker": args.ticker.upper(), "name_en": args.ticker.upper()}]
+    else:
+        targets = ETFS
+    print(f"\n대상 ETF {len(targets)}개")
+
+    dist_cache: dict[str, list[float]] = {}
+    total_rows = 0
+    for etf in targets:
+        try:
+            total_rows += process_etf(req, etf, us_weeks, dist_cache)
+        except Exception as e:
+            print(f"  ⚠ {etf['ticker']} 처리 실패: {type(e).__name__}: {str(e)[:120]}")
+            continue
+
+    print(f"\n✅ 총 {total_rows}건 ETF 행 적재 완료.")
+    print(f"   분포 캐시 사용: {len(dist_cache)}주 (각 ~1000건)")
+
+
+if __name__ == "__main__":
+    main()
