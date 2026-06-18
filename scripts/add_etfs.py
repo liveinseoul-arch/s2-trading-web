@@ -128,6 +128,7 @@ KR_ETFS = [
     {"ticker": "381180.KS", "name_en": "TIGER 미국필라델피아반도체나스닥"},
     {"ticker": "371460.KS", "name_en": "TIGER 차이나전기차SOLACTIVE (중국 전기차)"},
     {"ticker": "364980.KS", "name_en": "TIGER KRX2차전지K-뉴딜 (배터리)"},
+    {"ticker": "396500.KS", "name_en": "TIGER Fn반도체TOP10 (반도체)"},
     {"ticker": "091160.KS", "name_en": "TIGER 반도체"},
     {"ticker": "143860.KS", "name_en": "TIGER 헬스케어"},
     {"ticker": "244580.KS", "name_en": "TIGER 바이오TOP10"},
