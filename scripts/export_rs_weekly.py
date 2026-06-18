@@ -278,15 +278,19 @@ def make_mktcap_lookup(market, mktcap_cache, shares_map, yahoo_mktcap=None):
             return lookup_mktcap_at(mktcap_cache, tk, ts)
         return lookup
     if market == "JP":
+        # KR/US 와 동일 정책: shares × 그 주차 종가 우선 (가격 변동 즉시 반영).
+        # yfinance.info.marketCap 은 일부 종목에서 stale (예: Tokyo Electron, Advantest, Murata 등)
+        # 또는 데이터 버그가 있어 더 이상 우선하지 않음.
+        # shares 없는 종목만 yahoo_mktcap fallback.
         yc = yahoo_mktcap or {}
         def lookup(tk, ts, close):
+            sh = shares_map.get(tk)
+            if sh and sh > 0 and close is not None and not np.isnan(close):
+                return float(sh) * float(close)
             v = yc.get(tk)
             if v and v > 0:
-                return float(v)                                  # 정확 시총
-            sh = shares_map.get(tk)
-            if not sh or sh <= 0 or close is None or np.isnan(close):
-                return np.nan
-            return float(sh) * float(close)                      # 근사
+                return float(v)
+            return np.nan
         return lookup
     # US
     def lookup(tk, ts, close):
