@@ -25,14 +25,17 @@ function fmtWeek(d: string) {
 
 function fmtMktcap(v: number | null, market: RsMarket) {
   if (v == null) return "-";
-  if (market === "KR") return `${Math.round(v / 1e8).toLocaleString("ko-KR")}억`;
-  if (market === "JP") {
-    // 단위 통일: 모두 억엔 표기 (1조엔 = 10,000억엔)
-    return `¥${Math.round(v / 1e8).toLocaleString("ja-JP")}億`;
-  }
-  // US
-  if (v >= 1e9) return `$${Math.round(v / 1e9).toLocaleString("en-US")}B`;
-  return `$${Math.round(v / 1e6).toLocaleString("en-US")}M`;
+  // 단위는 컬럼 헤더에 표기 — 여기선 숫자만.
+  // KR: 억원, JP: 억엔, US: M달러 (소형 가독성 위해 1e6 단위로 통일)
+  if (market === "KR") return Math.round(v / 1e8).toLocaleString("ko-KR");
+  if (market === "JP") return Math.round(v / 1e8).toLocaleString("ja-JP");
+  return Math.round(v / 1e6).toLocaleString("en-US");
+}
+
+function mktcapUnit(market: RsMarket): string {
+  if (market === "KR") return "억원";
+  if (market === "JP") return "억엔";
+  return "M $";
 }
 
 function fmtPrice(v: number | null, market: RsMarket) {
@@ -262,7 +265,7 @@ export default async function RsScreen({
                       <th>RS</th>
                       <th>52주 모멘텀</th>
                       <th>종가</th>
-                      <th>시총</th>
+                      <th>시총({mktcapUnit(market)})</th>
                     </tr>
                   </thead>
                   <tbody>

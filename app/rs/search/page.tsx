@@ -33,10 +33,15 @@ interface UniverseRow {
 
 function fmtMktcap(v: number | null, market: RsMarket) {
   if (v == null) return "-";
-  if (market === "KR") return `${Math.round(v / 1e8).toLocaleString("ko-KR")}억`;
-  if (market === "JP") return `¥${Math.round(v / 1e8).toLocaleString("ja-JP")}億`;
-  if (v >= 1e9) return `$${Math.round(v / 1e9).toLocaleString("en-US")}B`;
-  return `$${Math.round(v / 1e6).toLocaleString("en-US")}M`;
+  if (market === "KR") return Math.round(v / 1e8).toLocaleString("ko-KR");
+  if (market === "JP") return Math.round(v / 1e8).toLocaleString("ja-JP");
+  return Math.round(v / 1e6).toLocaleString("en-US");
+}
+
+function mktcapUnit(market: RsMarket): string {
+  if (market === "KR") return "억원";
+  if (market === "JP") return "억엔";
+  return "M $";
 }
 
 async function fetchLatestWeek(): Promise<string | null> {
@@ -173,7 +178,10 @@ export default async function RsSearch({
                       <span className="text-muted">RS </span>
                       <b className="text-accent">{r.rs}</b>
                     </span>
-                    <span className="text-muted">{fmtMktcap(r.mktcap, r.market)}</span>
+                    <span className="text-muted">
+                      {fmtMktcap(r.mktcap, r.market)}
+                      <span className="ml-0.5 text-[10px]">{mktcapUnit(r.market)}</span>
+                    </span>
                   </span>
                 </Link>
               </li>
