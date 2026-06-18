@@ -165,12 +165,15 @@ def fetch_us_distribution(req, week: str) -> list[float]:
 
 
 def fetch_us_weeks(req) -> list[str]:
-    """US rs_universe_weekly 의 distinct week_date 최신순."""
+    """US rs_universe_weekly 의 distinct week_date 최신순.
+
+    rs_top_weekly (시장당 ~70행/주) 를 쓰면 같은 distinct 를 훨씬 적은 행으로 얻을 수 있음.
+    """
     seen = set()
-    for page in range(10):
+    for page in range(20):
         from_ = page * 1000
         to = from_ + 999
-        path = "/rs_universe_weekly?market=eq.US&select=week_date&order=week_date.desc"
+        path = "/rs_top_weekly?market=eq.US&select=week_date&order=week_date.desc"
         rows = req("GET", path, prefer="return=representation",
                    range_header=f"{from_}-{to}") or []
         if not rows:
