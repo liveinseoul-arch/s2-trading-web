@@ -101,42 +101,58 @@ export default async function RsTickerHistory({
 
   const ticker = decodeURIComponent(tickerParam);
 
-  // 시계열 — rs_universe_weekly (풀 유니버스 + name 포함) 우선, 없으면 rs_history_weekly fallback
-  const univRes = await supabase
-    .from("rs_universe_weekly")
-    .select("*")
-    .eq("market", market)
-    .eq("ticker", ticker)
-    .order("week_date", { ascending: true });
+  // 시계열 — rs_universe_weekly (메타 정보 풍부) + rs_history_weekly (mktcap 무관 전체 시계열)
+  // 둘을 합쳐서 가장 긴 시계열 노출. 소형주가 최근에야 mktcap 필터 통과한 경우에도 RS 추이 풍부.
+  const [univRes, histRes, topRes] = await Promise.all([
+    supabase
+      .from("rs_universe_weekly")
+      .select("*")
+      .eq("market", market)
+      .eq("ticker", ticker)
+      .order("week_date", { ascending: true }),
+    supabase
+      .from("rs_history_weekly")
+      .select("*")
+      .eq("market", market)
+      .eq("ticker", ticker)
+      .order("week_date", { ascending: true }),
+    supabase
+      .from("rs_top_weekly")
+      .select("name,name_en,close,mktcap")
+      .eq("market", market)
+      .eq("ticker", ticker)
+      .order("week_date", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+  ]);
 
-  let hist: RsHistoryWeekly[] = [];
+  const univRows = (univRes.data as Array<RsHistoryWeekly & {
+    name: string | null; name_en: string | null; mktcap: number | null;
+  }> | null) ?? [];
+  const histRows = (histRes.data as RsHistoryWeekly[]) ?? [];
+
+  // week_date → universe row (있을 때) Map
+  const univByWeek = new Map(univRows.map((r) => [r.week_date, r] as const));
+  // 합집합 시계열 — universe 가 있는 주차는 universe row, 없으면 history row
+  const byWeek = new Map<string, RsHistoryWeekly>();
+  for (const r of histRows) byWeek.set(r.week_date, r);
+  for (const r of univRows) byWeek.set(r.week_date, {
+    market: r.market, ticker: r.ticker, week_date: r.week_date,
+    rs: r.rs, comp_return: r.comp_return, close: r.close,
+  });
+  const hist: RsHistoryWeekly[] = Array.from(byWeek.values())
+    .sort((a, b) => (a.week_date < b.week_date ? -1 : 1));
+
+  // 메타: 최신 universe row 우선, 없으면 rs_top_weekly 마지막 row
   let meta: { name: string | null; name_en: string | null; close: number | null; mktcap: number | null } | null = null;
-
-  if (!univRes.error && univRes.data && univRes.data.length > 0) {
-    const rows = univRes.data as Array<RsHistoryWeekly & { name: string | null; name_en: string | null; mktcap: number | null }>;
-    hist = rows.map((r) => ({ market: r.market, ticker: r.ticker, week_date: r.week_date, rs: r.rs, comp_return: r.comp_return, close: r.close }));
-    const last = rows[rows.length - 1];
+  if (univRows.length > 0) {
+    const last = univRows[univRows.length - 1];
     meta = { name: last.name, name_en: last.name_en, close: last.close, mktcap: last.mktcap };
-  } else {
-    const [histRes, nameRes] = await Promise.all([
-      supabase
-        .from("rs_history_weekly")
-        .select("*")
-        .eq("market", market)
-        .eq("ticker", ticker)
-        .order("week_date", { ascending: true }),
-      supabase
-        .from("rs_top_weekly")
-        .select("name,name_en,close,mktcap")
-        .eq("market", market)
-        .eq("ticker", ticker)
-        .order("week_date", { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-    ]);
-    hist = (histRes.data as RsHistoryWeekly[]) ?? [];
-    meta = nameRes.data as { name: string | null; name_en: string | null; close: number | null; mktcap: number | null } | null;
+  } else if (topRes.data) {
+    meta = topRes.data as unknown as { name: string | null; name_en: string | null; close: number | null; mktcap: number | null };
   }
+  // hist 가 비어있고 univByWeek 도 없을 때 0주 (빈 페이지)
+  void univByWeek;
 
   // 최근이 위에 오도록 표 정렬용 (역순)
   const tableRows = [...hist].reverse();
