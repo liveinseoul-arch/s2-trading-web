@@ -1,10 +1,15 @@
 # 매주 토요일 02:00 — RS 캐시·테이블·Supabase 풀세트 갱신.
 #
-# 1) Rebuild_weekly_cache.py  : KR _bt_daily → _kr_weekly 재구성 + 자동 백업
-# 2) 14_RS_KR_pykrx.py         : KR 종목·주간 OHLCV·RS 임계값 테이블 신선화
-# 3) 13_RS_US_screen.py        : US 종목·주간 OHLCV·RS 임계값 테이블 신선화
-# 4) 15_RS_JP_screen.py        : JP 종목·주간 OHLCV 신선화 (RS 테이블 없음 — export 시 임시 계산)
-# 5) export_rs_weekly.py       : 마감지기 Supabase rs_top_weekly/rs_history_weekly 동기화
+# 병렬 단계 (의존성 분석):
+#   1) Rebuild_weekly_cache.py  : KR _bt_daily → _kr_weekly 재구성 + 자동 백업
+#   2) 14_RS_KR_pykrx.py         : KR 종목·주간 OHLCV·RS 임계값 테이블 신선화 (1 필요)
+#   3) 13_RS_US_screen.py        : US 종목·주간 OHLCV·RS 임계값 테이블 신선화 (독립)
+#   4) 15_RS_JP_screen.py        : JP 종목·주간 OHLCV 신선화 (독립)
+#   5) export_rs_weekly.py       : 마감지기 Supabase rs_top_weekly/rs_history_weekly 동기화 (2+3+4 모두 필요)
+#   6) classify_rs96_gemini.py   : Gemini 분류 (5 필요)
+#
+# 병렬 패턴: 1·3·4 동시 → 1 끝나면 2 시작 → 2·3·4 모두 끝나면 5 → 6
+# 순차 ~154분 → 병렬 ~74분 (50% 단축).
 #
 # 13_/14_/15_ 는 input() 사용. PS 5.1 stdin pipe 가 BOM 을 prepend 해 깨지는 문제 회피 위해
 # silent_run.py wrapper 가 builtins.input 을 monkey-patch 한 뒤 모듈 import + main() 호출.
@@ -20,6 +25,7 @@ function Log($m) {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $m" | Out-File -Append -Encoding utf8 $log
 }
 
+# Foreground Python runner — 단계별 로그 기록.
 function RunPy($label, [string[]]$pyArgs) {
     Log "[$label] start  ($($pyArgs -join ' '))"
     try {
@@ -28,6 +34,19 @@ function RunPy($label, [string[]]$pyArgs) {
     } catch {
         Log "[$label] FAILED: $_"
     }
+}
+
+# Background Python launcher — 별도 log 파일에 기록 후 PSJob 반환.
+function StartPyJob($label, [string[]]$pyArgs, $jobLog) {
+    Log "[$label] start (job)  ($($pyArgs -join ' ')) → $jobLog"
+    Start-Job -Name $label -ScriptBlock {
+        param($args2, $jobLog2)
+        try {
+            & C:\Python314\python.exe @args2 *>> $jobLog2
+        } catch {
+            "FAILED: $_" | Out-File -Append -Encoding utf8 $jobLog2
+        }
+    } -ArgumentList (,$pyArgs), $jobLog
 }
 
 "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') rs_weekly start =====" | Out-File -Append -Encoding utf8 $log
@@ -39,7 +58,6 @@ if (Test-Path $log) {
                 | Select-String -Pattern "rs_weekly done" -SimpleMatch `
                 | Select-Object -Last 1
     if ($lastDone) {
-        # 라인 prefix 'YYYY-MM-DD HH:mm:ss ' 14~19 자만 사용
         $tsText = $lastDone.Line.Substring(0, 19)
         try {
             $lastTs = [DateTime]::ParseExact($tsText, "yyyy-MM-dd HH:mm:ss", $null)
@@ -53,13 +71,38 @@ if (Test-Path $log) {
     }
 }
 
+# ── 병렬 단계 1·3·4 ──────────────────────────────
+$logUS = Join-Path $PSScriptRoot "rs_weekly_us.log"
+$logJP = Join-Path $PSScriptRoot "rs_weekly_jp.log"
+$jobUS = StartPyJob "3/6 13_RS_US" @($silent, "$qb\13_RS_US_screen.py") $logUS
+$jobJP = StartPyJob "4/6 15_RS_JP" @($silent, "$qb\15_RS_JP_screen.py") $logJP
+
+# 1단계 (KR rebuild) 는 foreground — 빠르고 (~30s) 2단계 진입 위해 직접 대기.
 RunPy "1/6 Rebuild"   @("$qb\Rebuild_weekly_cache.py")
+
+# 2단계 — 1단계 완료 직후 시작. US/JP 잡과 병렬 진행.
 RunPy "2/6 14_RS_KR"  @($silent, "$qb\14_RS_KR_pykrx.py")
-RunPy "3/6 13_RS_US"  @($silent, "$qb\13_RS_US_screen.py")
-RunPy "4/6 15_RS_JP"  @($silent, "$qb\15_RS_JP_screen.py")
+
+# US/JP 잡 완료 대기 + 결과 로그를 본 log 에 append.
+Log "[wait] US/JP 잡 완료 대기..."
+Wait-Job -Job $jobUS, $jobJP | Out-Null
+foreach ($job in @($jobUS, $jobJP)) {
+    $jobName = $job.Name
+    $exit = if ($job.State -eq "Completed") { 0 } else { 1 }
+    Log "[$jobName] done (job state=$($job.State))"
+    Remove-Job -Job $job
+}
+# 잡 로그 본 log 에 append (참조용)
+foreach ($jl in @($logUS, $logJP)) {
+    if (Test-Path $jl) {
+        "--- $jl ---" | Out-File -Append -Encoding utf8 $log
+        Get-Content $jl -Encoding utf8 | Out-File -Append -Encoding utf8 $log
+        Remove-Item $jl -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# ── 순차 단계 5·6 ──────────────────────────────
 RunPy "5/6 export"    @("s2-trading-web\scripts\export_rs_weekly.py")
-# 매주 새 주차 1개만 Pro 모델로 분류 — Flash 보다 정밀한 카테고리·summary.
-# 변경 시 이 env 만 갱신하면 됨.
 $env:GEMINI_MODEL = "gemini-2.5-pro"
 RunPy "6/6 classify"  @("s2-trading-web\scripts\classify_rs96_gemini.py", "--weeks", "1")
 
