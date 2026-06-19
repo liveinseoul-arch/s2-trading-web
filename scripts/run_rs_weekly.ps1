@@ -32,6 +32,27 @@ function RunPy($label, [string[]]$pyArgs) {
 
 "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') rs_weekly start =====" | Out-File -Append -Encoding utf8 $log
 
+# ── 중복 실행 가드 — 마지막 done 마커가 18시간 이내면 skip
+$skipHours = 18
+if (Test-Path $log) {
+    $lastDone = (Get-Content $log -ErrorAction SilentlyContinue) `
+                | Select-String -Pattern "rs_weekly done" -SimpleMatch `
+                | Select-Object -Last 1
+    if ($lastDone) {
+        # 라인 prefix 'YYYY-MM-DD HH:mm:ss ' 14~19 자만 사용
+        $tsText = $lastDone.Line.Substring(0, 19)
+        try {
+            $lastTs = [DateTime]::ParseExact($tsText, "yyyy-MM-dd HH:mm:ss", $null)
+            $age = (Get-Date) - $lastTs
+            if ($age.TotalHours -lt $skipHours) {
+                Log "[SKIP] 마지막 실행 $($lastTs) ($([int]$age.TotalHours)h $($age.Minutes)m 전) < ${skipHours}h → 건너뜀"
+                "===== rs_weekly skipped =====" | Out-File -Append -Encoding utf8 $log
+                exit 0
+            }
+        } catch { }
+    }
+}
+
 RunPy "1/6 Rebuild"   @("$qb\Rebuild_weekly_cache.py")
 RunPy "2/6 14_RS_KR"  @($silent, "$qb\14_RS_KR_pykrx.py")
 RunPy "3/6 13_RS_US"  @($silent, "$qb\13_RS_US_screen.py")
