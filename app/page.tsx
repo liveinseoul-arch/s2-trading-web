@@ -17,17 +17,38 @@ export default async function Home() {
   if (!d) {
     return <p className="py-10 text-center text-muted">데이터가 아직 없습니다. EOD 익스포터를 먼저 실행하세요.</p>;
   }
-  const [nav, cands, plan, execs, positions] = await Promise.all([
+  const [nav, cands, plan, execs, positions, first, minDd] = await Promise.all([
     supabase.from("nav_daily").select("*").eq("d", d).single(),
     supabase.from("daily_candidates").select("*").eq("d", d).eq("kind", "new").order("reached", { ascending: false }).order("drop_to_pct", { ascending: false }),
     supabase.from("daily_order_plan").select("*").eq("d", d),
     supabase.from("executions").select("*").eq("d", d),
     supabase.from("position_snapshots").select("*").eq("d", d).order("eval_amount", { ascending: false }),
+    supabase.from("nav_daily").select("d,nav").order("d", { ascending: true }).limit(1).single(),
+    supabase.from("nav_daily").select("dd_pct").order("dd_pct", { ascending: true }).limit(1).single(),
   ]);
+
+  const navRow = (nav.data as NavDaily) ?? null;
+  const firstRow = (first.data as { d: string; nav: number }) ?? null;
+  const BASE_CAP = 1e8;
+  const years = firstRow && navRow
+    ? (new Date(navRow.d).getTime() - new Date(firstRow.d).getTime()) / (365.25 * 864e5)
+    : 0;
+  const cagrPct = navRow && years > 0
+    ? ((navRow.nav / BASE_CAP) ** (1 / years) - 1) * 100
+    : null;
+  const mddPct = (minDd.data as { dd_pct: number } | null)?.dd_pct ?? null;
+  const startDate = firstRow?.d ?? null;
 
   return (
     <>
-      <SummaryBar nav={(nav.data as NavDaily) ?? null} date={d} lastEod={String(meta.last_eod_at ?? "-")} />
+      <SummaryBar
+        nav={navRow}
+        date={d}
+        lastEod={String(meta.last_eod_at ?? "-")}
+        startDate={startDate}
+        cagr={cagrPct}
+        mdd={mddPct}
+      />
       <CandidateList cands={(cands.data as DailyCandidate[]) ?? []} />
       <WatchOrderPlan plan={(plan.data as OrderPlan[]) ?? []} />
       <ExecutionList execs={(execs.data as Execution[]) ?? []} title={`${d} 체결`}

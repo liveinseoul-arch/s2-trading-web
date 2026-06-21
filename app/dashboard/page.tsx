@@ -29,7 +29,7 @@ export default async function Dashboard() {
   const top = (topCounts.data as DailyCount[]) ?? [];
 
   const f = first.data as NavDaily, l = last.data as NavDaily;
-  const base = 5e8;
+  const base = 1e8;     // 기준자본 1억
   const years = f && l ? (new Date(l.d).getTime() - new Date(f.d).getTime()) / (365.25 * 864e5) : 0;
   const cagr = l && years > 0 ? ((l.nav / base) ** (1 / years) - 1) * 100 : 0;
   const mdd = (minDd.data as { dd_pct: number })?.dd_pct ?? 0;
@@ -51,8 +51,8 @@ export default async function Dashboard() {
         <Stat label="매수당 평균" value={pct(avgRet)} tone={signClass(avgRet)} />
       </div>
       <p className="mb-4 text-xs text-muted">
-        기준자본 5억 · 무비용·0버퍼 모델(주문가 기준) · 시초 매도·추가매수일 매도 보류 가정. 실제 결과는 슬리피지·수수료·세금으로 다를 수 있음.
-        11.8년(2014-08~2026-06) 전체 검증 — CAGR 5.7% · MDD −31% · Calmar 0.18. 자세히는 규칙 화면 참고.
+        기준자본 1억 · 무비용·0버퍼 모델(주문가 기준) · 3주 기간 손절·시초 매도·추가매수일 매도 보류 적용. 실제 결과는 슬리피지·수수료·세금으로 다를 수 있음.
+        11.8년(2014-08~2026-06) 전체 검증 — CAGR 9.7% · MDD −10.8% · Calmar 0.90. 자세히는 규칙 화면 참고.
       </p>
 
       <Section title="월별 성과" sub="월을 누르면 그 달에 청산된 거래 종목 상세.">

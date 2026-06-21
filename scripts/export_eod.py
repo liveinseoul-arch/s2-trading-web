@@ -39,6 +39,9 @@ ADD_DROP, MAX_BUY = 0.10, 3
 # 매도 차수별 비중 — 1차/2차는 SELL_STAGE_PCT, 3차는 잔량(=1 - 2*SELL_STAGE_PCT).
 # 기본 10/10/80. 환경변수 S2_SELL_STAGE_PCT 로 변경 가능 (예: 0.30 → 30/30/40).
 SELL_STAGE_PCT = float(os.environ.get("S2_SELL_STAGE_PCT", "0.10"))
+# 기간 손절 — 진입 후 N영업일 경과해도 분할매도 한 단계도 못 찍으면 강제 청산.
+# 0 = 비활성. 환경변수 S2_TIME_STOP_DAYS 로 활성화 (예: 252 ≈ 12개월).
+TIME_STOP_DAYS = int(os.environ.get("S2_TIME_STOP_DAYS", "0"))
 MKT = {"KOSPI": "KS", "KOSDAQ": "KQ"}
 
 
@@ -156,6 +159,16 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 close_trade(p, d, "newlow_stop"); del positions[tk]; closed.add(tk); last_exit[tk] = d
                 p["min_low"] = min(p["min_low"], lo); continue
             p["min_low"] = min(p["min_low"], lo)
+
+            # 기간 손절 — TIME_STOP_DAYS 영업일 경과 + 분할매도 한 단계도 못 찍었으면 종가 강제 청산
+            if (TIME_STOP_DAYS > 0 and p["sell_count"] == 0
+                    and (didx[d] - didx[p["entry_date"]]) >= TIME_STOP_DAYS):
+                ex(d, p, "stop", None, cl, p["qty"], nav_today)
+                leg(p, d, "stop", None, cl, p["qty"], nav_today)
+                cash += p["qty"] * cl; p["proc"] += p["qty"] * cl; p["qty"] = 0
+                close_trade(p, d, f"time_stop({TIME_STOP_DAYS}d)")
+                del positions[tk]; closed.add(tk); last_exit[tk] = d
+                continue
 
             # [옵션 B] 추가매수 발생일은 hi 기반 분할매도 검사 보류 —
             # high 가 추가매수 전이었는지 후였는지 일봉으로 알 수 없어 보수적 처리.
@@ -474,7 +487,8 @@ def main():
 
     cfg = Config(); cfg.lookback_days = WINDOW
     end = date.fromisoformat(args.end) if args.end else date.today()
-    base_cap = 5e8
+    # 기준자본 — 환경변수 S2_BASE_CAP 으로 오버라이드 가능 (예: "100000000" = 1억).
+    base_cap = float(os.environ.get("S2_BASE_CAP", "100000000"))
     print(f"S2 EOD 익스포터 — 종료일 {end}, 기준자본 {base_cap:,.0f}원")
     px, nmap, mmap, period_start, sm, smy = load(cfg, end)
     data = simulate(px, nmap, mmap, period_start, sm, smy, base_cap)
