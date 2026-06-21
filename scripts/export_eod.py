@@ -39,9 +39,11 @@ ADD_DROP, MAX_BUY = 0.10, 3
 # 매도 차수별 비중 — 1차/2차는 SELL_STAGE_PCT, 3차는 잔량(=1 - 2*SELL_STAGE_PCT).
 # 기본 10/10/80. 환경변수 S2_SELL_STAGE_PCT 로 변경 가능 (예: 0.30 → 30/30/40).
 SELL_STAGE_PCT = float(os.environ.get("S2_SELL_STAGE_PCT", "0.10"))
-# 기간 손절 — 진입 후 N영업일 경과해도 분할매도 한 단계도 못 찍으면 강제 청산.
-# 0 = 비활성. 환경변수 S2_TIME_STOP_DAYS 로 활성화 (예: 252 ≈ 12개월).
+# 기간 손절 — N영업일 경과해도 분할매도 한 단계도 못 찍으면 강제 청산.
+# 0 = 비활성. 환경변수 S2_TIME_STOP_DAYS 로 활성화 (예: 15 ≈ 3주).
 TIME_STOP_DAYS = int(os.environ.get("S2_TIME_STOP_DAYS", "0"))
+# 기간 손절 기준 시점: "entry" = 1차 매수일 (기본·엄격) / "last_buy" = 마지막 매수일 (매수마다 reset·관대)
+TIME_STOP_REF = os.environ.get("S2_TIME_STOP_REF", "entry").lower()
 MKT = {"KOSPI": "KS", "KOSDAQ": "KQ"}
 
 
@@ -140,16 +142,18 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     break
 
             bought = False
-            # 추가매수 — 시뮬에서는 MAX_BUY 까지 허용 (3차까지). 시뮬 내부 가격 순서가 정확해 충돌 없음.
-            # broker 충돌 회피는 build_order_plan 에서 조건부로 처리.
+            # 추가매수 — buy_count < MAX_BUY. 단 buy_count >= NL_AFTER 이고 추가매수 가격이
+            # 직전 최저가 이하면 신저가 손절 발동 시점이 더 빠르므로 추가매수 skip (broker 동일 정책).
             if p["sell_count"] == 0 and p["buy_count"] < MAX_BUY:
                 at = p["last_buy"] * (1 - ADD_DROP)
-                if lo <= at:
+                _skip = (p["buy_count"] >= NL_AFTER and at <= p["min_low"])
+                if not _skip and lo <= at:
                     sh = int(p["tranche"] // at)
                     if sh > 0 and lev_ok(day, sh * at):
                         cash -= sh * at; p["cost"] += sh * at
                         p["avg_buy"] = (p["avg_buy"] * p["total_qty"] + at * sh) / (p["total_qty"] + sh)
                         p["total_qty"] += sh; p["qty"] += sh; p["last_buy"] = at; p["buy_count"] += 1; bought = True
+                        p["last_buy_idx"] = didx[d]            # 기간 손절 reset 기준 (옵션 B)
                         ex(d, p, "buy_add", p["buy_count"], at, sh, nav_today)
                         leg(p, d, "buy_add", p["buy_count"], at, sh, nav_today)
                     elif sh > 0:
@@ -163,8 +167,10 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             p["min_low"] = min(p["min_low"], lo)
 
             # 기간 손절 — TIME_STOP_DAYS 영업일 경과 + 분할매도 한 단계도 못 찍었으면 종가 강제 청산
+            # 기준: TIME_STOP_REF = "entry" (1차 매수일) | "last_buy" (마지막 매수일)
+            _ref_idx = p["last_buy_idx"] if TIME_STOP_REF == "last_buy" else didx[p["entry_date"]]
             if (TIME_STOP_DAYS > 0 and p["sell_count"] == 0
-                    and (didx[d] - didx[p["entry_date"]]) >= TIME_STOP_DAYS):
+                    and (didx[d] - _ref_idx) >= TIME_STOP_DAYS):
                 ex(d, p, "stop", None, cl, p["qty"], nav_today)
                 leg(p, d, "stop", None, cl, p["qty"], nav_today)
                 cash += p["qty"] * cl; p["proc"] += p["qty"] * cl; p["qty"] = 0
@@ -233,6 +239,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             tid_seq += 1
             cash -= sh * price
             p = dict(tk=tk, name=stub["name"], market=stub["market"], entry_date=d,
+                last_buy_idx=didx[d],
                 tranche=amt, avg_buy=price, last_buy=price, buy_count=1, sell_count=0, stop=None,
                 qty=sh, total_qty=sh, min_low=price, last_close=price,
                 entry_above=above, entry_bull=bull, tid=tid_seq, cost=sh * price, proc=0.0, legs=[])
