@@ -31,11 +31,24 @@ from backtest import _prepare                     # noqa: E402
 from notify import telegram_send                  # noqa: E402
 
 # ── 운용안 상수 (s2_candidates 와 동일) ──────────────────────────────
-SIZE_ABOVE, SIZE_BELOW, MUSEOB = 0.15, 0.075, 0.80
+MUSEOB = 0.80   # 음봉 스파이크 시 사이즈 × 0.8
 PROX = 0.05                      # 예비후보 근접 허용폭(지지선 위 5%까지 포함)
 MA_LONG, WINDOW, NL_AFTER, MAX_LEV = 120, 60, 2, 1.3
-S = (0.03, 0.05, 0.07)
-ADD_DROP, MAX_BUY = 0.10, 3
+S = tuple(float(x)/100 for x in os.environ.get("S2_SELL_TARGETS", "3,5,7").split(","))
+# 추가매수 drop: 직전 매수가 × (1 - ADD_DROP). 기본 -10%. env S2_ADD_DROP (예: 0.08 = -8%)
+ADD_DROP = float(os.environ.get("S2_ADD_DROP", "0.10"))
+MAX_BUY = 3
+# 사이징 (NAV %) — 120일선 위 SIZE_ABOVE / 아래 SIZE_BELOW. 기본 0.15 / 0.075.
+# env S2_SIZE_ABOVE / S2_SIZE_BELOW (예: 0.18 / 0.09)
+SIZE_ABOVE = float(os.environ.get("S2_SIZE_ABOVE", "0.15"))
+SIZE_BELOW = float(os.environ.get("S2_SIZE_BELOW", "0.075"))
+# KR 거래비용 — 매수 수수료 0.015% / 매도 수수료 + 거래세 0.015% + 0.25% = 0.265%
+# 환경변수 S2_COSTS=1 일 때만 적용 (기본 0 = 비활성, 백테스트 비교 호환성 유지).
+COSTS_ON = os.environ.get("S2_COSTS", "0") == "1"
+BUY_FEE  = 0.00015
+SELL_FEE = 0.00015 + 0.0025
+BUY_MULT  = 1 + BUY_FEE  if COSTS_ON else 1.0
+SELL_MULT = 1 - SELL_FEE if COSTS_ON else 1.0
 # 매도 차수별 비중 — 1차/2차는 SELL_STAGE_PCT, 3차는 잔량(=1 - 2*SELL_STAGE_PCT).
 # 기본 10/10/80. 환경변수 S2_SELL_STAGE_PCT 로 변경 가능 (예: 0.30 → 30/30/40).
 SELL_STAGE_PCT = float(os.environ.get("S2_SELL_STAGE_PCT", "0.10"))
@@ -44,6 +57,8 @@ SELL_STAGE_PCT = float(os.environ.get("S2_SELL_STAGE_PCT", "0.10"))
 TIME_STOP_DAYS = int(os.environ.get("S2_TIME_STOP_DAYS", "0"))
 # 기간 손절 기준 시점: "entry" = 1차 매수일 (기본·엄격) / "last_buy" = 마지막 매수일 (매수마다 reset·관대)
 TIME_STOP_REF = os.environ.get("S2_TIME_STOP_REF", "entry").lower()
+# 신저가 손절 트리거 기준: "intraday" = 그날 lo (장중) / "close" = 그날 cl (종가만)
+NEWLOW_TRIGGER = os.environ.get("S2_NEWLOW_TRIGGER", "intraday").lower()
 MKT = {"KOSPI": "KS", "KOSDAQ": "KQ"}
 
 
@@ -124,7 +139,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 px_ = op if op < p["stop"] else p["stop"]
                 ex(d, p, "stop", p["sell_count"], px_, p["qty"], nav_today)
                 leg(p, d, "stop", p["sell_count"], px_, p["qty"], nav_today)
-                cash += p["qty"] * px_; p["proc"] += p["qty"] * px_; p["qty"] = 0
+                _net = p["qty"] * px_ * SELL_MULT
+                cash += _net; p["proc"] += _net; p["qty"] = 0
                 close_trade(p, d, "stop"); del positions[tk]; closed.add(tk); last_exit[tk] = d; continue
 
             # [옵션 B] 시초 분할매도 — 시가(op) 가 평단×1.03/1.05/1.07 이상이면 시초에 체결로 가정.
@@ -136,7 +152,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
                     ex(d, p, f"sell_{stg}", stg, t[stg - 1], sq, nav_today)
                     leg(p, d, f"sell_{stg}", stg, t[stg - 1], sq, nav_today)
-                    cash += sq * t[stg - 1]; p["proc"] += sq * t[stg - 1]
+                    _net = sq * t[stg - 1] * SELL_MULT
+                    cash += _net; p["proc"] += _net
                     p["qty"] -= sq; p["sell_count"] = stg; p["stop"] = t[stg - 1]
                 else:
                     break
@@ -150,7 +167,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 if not _skip and lo <= at:
                     sh = int(p["tranche"] // at)
                     if sh > 0 and lev_ok(day, sh * at):
-                        cash -= sh * at; p["cost"] += sh * at
+                        _net = sh * at * BUY_MULT
+                        cash -= _net; p["cost"] += _net
                         p["avg_buy"] = (p["avg_buy"] * p["total_qty"] + at * sh) / (p["total_qty"] + sh)
                         p["total_qty"] += sh; p["qty"] += sh; p["last_buy"] = at; p["buy_count"] += 1; bought = True
                         p["last_buy_idx"] = didx[d]            # 기간 손절 reset 기준 (옵션 B)
@@ -158,10 +176,12 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                         leg(p, d, "buy_add", p["buy_count"], at, sh, nav_today)
                     elif sh > 0:
                         ex(d, p, "buy_add", p["buy_count"] + 1, at, sh, nav_today, blocked=True)
-            if p["sell_count"] == 0 and p["buy_count"] >= NL_AFTER and not bought and lo < p["min_low"]:
+            _trigger_px = lo if NEWLOW_TRIGGER == "intraday" else cl
+            if p["sell_count"] == 0 and p["buy_count"] >= NL_AFTER and not bought and _trigger_px < p["min_low"]:
                 ex(d, p, "newlow_stop", None, cl, p["qty"], nav_today)
                 leg(p, d, "newlow_stop", None, cl, p["qty"], nav_today)
-                cash += p["qty"] * cl; p["proc"] += p["qty"] * cl; p["qty"] = 0
+                _net = p["qty"] * cl * SELL_MULT
+                cash += _net; p["proc"] += _net; p["qty"] = 0
                 close_trade(p, d, "newlow_stop"); del positions[tk]; closed.add(tk); last_exit[tk] = d
                 p["min_low"] = min(p["min_low"], lo); continue
             p["min_low"] = min(p["min_low"], lo)
@@ -173,7 +193,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     and (didx[d] - _ref_idx) >= TIME_STOP_DAYS):
                 ex(d, p, "stop", None, cl, p["qty"], nav_today)
                 leg(p, d, "stop", None, cl, p["qty"], nav_today)
-                cash += p["qty"] * cl; p["proc"] += p["qty"] * cl; p["qty"] = 0
+                _net = p["qty"] * cl * SELL_MULT
+                cash += _net; p["proc"] += _net; p["qty"] = 0
                 close_trade(p, d, f"time_stop({TIME_STOP_DAYS}d)")
                 del positions[tk]; closed.add(tk); last_exit[tk] = d
                 continue
@@ -189,14 +210,16 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                         sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
                         ex(d, p, f"sell_{stg}", stg, t[stg - 1], sq, nav_today)
                         leg(p, d, f"sell_{stg}", stg, t[stg - 1], sq, nav_today)
-                        cash += sq * t[stg - 1]; p["proc"] += sq * t[stg - 1]
+                        _net = sq * t[stg - 1] * SELL_MULT
+                        cash += _net; p["proc"] += _net
                         p["qty"] -= sq; p["sell_count"] = stg; p["stop"] = t[stg - 1]
                     else:
                         break
             if p["sell_count"] >= 1 and p["qty"] > 0 and lo <= p["stop"]:
                 ex(d, p, "stop", p["sell_count"], p["stop"], p["qty"], nav_today)
                 leg(p, d, "stop", p["sell_count"], p["stop"], p["qty"], nav_today)
-                cash += p["qty"] * p["stop"]; p["proc"] += p["qty"] * p["stop"]; p["qty"] = 0
+                _net = p["qty"] * p["stop"] * SELL_MULT
+                cash += _net; p["proc"] += _net; p["qty"] = 0
                 close_trade(p, d, "stop"); del positions[tk]; closed.add(tk); last_exit[tk] = d
             elif tk in positions and p["qty"] == 0:
                 close_trade(p, d, "sell_3"); del positions[tk]; closed.add(tk); last_exit[tk] = d
@@ -237,12 +260,13 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 n_blocked += 1
                 continue
             tid_seq += 1
-            cash -= sh * price
+            _cost = sh * price * BUY_MULT
+            cash -= _cost
             p = dict(tk=tk, name=stub["name"], market=stub["market"], entry_date=d,
                 last_buy_idx=didx[d],
                 tranche=amt, avg_buy=price, last_buy=price, buy_count=1, sell_count=0, stop=None,
                 qty=sh, total_qty=sh, min_low=price, last_close=price,
-                entry_above=above, entry_bull=bull, tid=tid_seq, cost=sh * price, proc=0.0, legs=[])
+                entry_above=above, entry_bull=bull, tid=tid_seq, cost=_cost, proc=0.0, legs=[])
             positions[tk] = p
             ex(d, p, "buy_new", 1, price, sh, nav_today)
             leg(p, d, "buy_new", 1, price, sh, nav_today)
