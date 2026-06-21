@@ -140,6 +140,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     break
 
             bought = False
+            # 추가매수 — 시뮬에서는 MAX_BUY 까지 허용 (3차까지). 시뮬 내부 가격 순서가 정확해 충돌 없음.
+            # broker 충돌 회피는 build_order_plan 에서 조건부로 처리.
             if p["sell_count"] == 0 and p["buy_count"] < MAX_BUY:
                 at = p["last_buy"] * (1 - ADD_DROP)
                 if lo <= at:
@@ -276,12 +278,18 @@ def build_order_plan(positions, d, nav):
     for tk, p in positions.items():
         is_new = (p["entry_date"] == d)
         diff = "new" if is_new else "keep"
-        if p["sell_count"] == 0 and p["buy_count"] < MAX_BUY:        # 추가매수 감시
-            at = p["last_buy"] * (1 - ADD_DROP); sh = int(p["tranche"] // at)
-            plan.append(dict(d=d, ticker=tk, name=p["name"], market=p["market"], order_type="buy_add",
-                stage=p["buy_count"] + 1, trigger_price=round(at), qty=sh,
-                port_pct=round(p["tranche"] / nav * 100, 2) if nav > 0 else None, diff=diff,
-                note=f"{p['buy_count']+1}차 매수(직전매수가 -10%)"))
+        # 추가매수 감시 — buy_count < MAX_BUY 일 때 표시.
+        # 단 buy_count >= NL_AFTER (2 이후) 신저가 손절 활성 상태에서 추가매수 가격이 신저가 손절
+        # 가격 이하면 broker 충돌 (신저가 손절 먼저 발동 후 추가매수 잘못 체결) → 표시 skip.
+        if p["sell_count"] == 0 and p["buy_count"] < MAX_BUY:
+            at = p["last_buy"] * (1 - ADD_DROP)
+            skip_conflict = (p["buy_count"] >= NL_AFTER and at <= p["min_low"])
+            if not skip_conflict:
+                sh = int(p["tranche"] // at)
+                plan.append(dict(d=d, ticker=tk, name=p["name"], market=p["market"], order_type="buy_add",
+                    stage=p["buy_count"] + 1, trigger_price=round(at), qty=sh,
+                    port_pct=round(p["tranche"] / nav * 100, 2) if nav > 0 else None, diff=diff,
+                    note=f"{p['buy_count']+1}차 매수(직전매수가 -10%)"))
         t = [p["avg_buy"] * (1 + s) for s in S]                       # 매도 감시(미체결 단계)
         for stg in range(p["sell_count"] + 1, 4):
             sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
