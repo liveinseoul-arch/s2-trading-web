@@ -44,40 +44,58 @@ function mktcapUnit(market: RsMarket): string {
   return "M $";
 }
 
-async function fetchLatestWeek(): Promise<string | null> {
-  const r = await supabase
-    .from("rs_universe_weekly")
-    .select("week_date")
-    .order("week_date", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-  return r.data?.week_date ?? null;
+/** 시장별 최신 주차를 따로 조회 — 시장마다 갱신 시점 다를 수 있음 (KR/JP 금요일, US 토요일 등). */
+async function fetchLatestWeeksByMarket(): Promise<Record<RsMarket, string | null>> {
+  const markets: RsMarket[] = ["KR", "US", "JP"];
+  const entries = await Promise.all(
+    markets.map(async (m) => {
+      const r = await supabase
+        .from("rs_universe_weekly")
+        .select("week_date")
+        .eq("market", m)
+        .order("week_date", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      return [m, r.data?.week_date ?? null] as const;
+    }),
+  );
+  const out: Record<RsMarket, string | null> = { KR: null, US: null, JP: null };
+  for (const [m, w] of entries) out[m] = w;
+  return out;
 }
 
-async function searchUniverse(query: string, latestWeek: string): Promise<UniverseRow[]> {
+async function searchUniverse(
+  query: string,
+  latestByMarket: Record<RsMarket, string | null>,
+): Promise<UniverseRow[]> {
   const q = query.trim();
   if (!q) return [];
 
-  // 최신 주차에서 검색 — 같은 종목의 여러 주차 중복 방지.
-  // 1) ticker 시작/포함 매치  2) name/name_en 포함 매치
-  // PostgREST or 필터: ticker.ilike.%q%,name.ilike.%q%,name_en.ilike.%q%
-  const pat = q.replace(/[%_,]/g, "");                  // simple escape
+  const pat = q.replace(/[%_,]/g, "");
   const orFilter = [
     `ticker.ilike.%${pat}%`,
     `name.ilike.%${pat}%`,
     `name_en.ilike.%${pat}%`,
   ].join(",");
 
-  const r = await supabase
-    .from("rs_universe_weekly")
-    .select("*")
-    .eq("week_date", latestWeek)
-    .or(orFilter)
-    .order("mktcap", { ascending: false, nullsFirst: false })
-    .limit(50);
-
-  if (r.error) return [];
-  return (r.data as UniverseRow[]) ?? [];
+  // 시장별로 각자의 최신 주차에서 검색 → 합침
+  const queries = (Object.entries(latestByMarket) as Array<[RsMarket, string | null]>)
+    .filter(([, week]) => week)
+    .map(async ([market, week]) => {
+      const r = await supabase
+        .from("rs_universe_weekly")
+        .select("*")
+        .eq("market", market)
+        .eq("week_date", week as string)
+        .or(orFilter)
+        .order("mktcap", { ascending: false, nullsFirst: false })
+        .limit(20);
+      return r.error ? [] : ((r.data as UniverseRow[]) ?? []);
+    });
+  const results = await Promise.all(queries);
+  const merged = results.flat();
+  merged.sort((a, b) => (b.mktcap ?? 0) - (a.mktcap ?? 0));
+  return merged.slice(0, 50);
 }
 
 export default async function RsSearch({
@@ -88,10 +106,16 @@ export default async function RsSearch({
   const sp = await searchParams;
   const query = sp.q?.trim() ?? "";
 
-  const latestWeek = await fetchLatestWeek();
-  const results: UniverseRow[] = query && latestWeek
-    ? await searchUniverse(query, latestWeek)
+  const latestByMarket = await fetchLatestWeeksByMarket();
+  const anyLatest = Object.values(latestByMarket).some((w) => w);
+  const results: UniverseRow[] = query && anyLatest
+    ? await searchUniverse(query, latestByMarket)
     : [];
+  // 화면 하단 안내용 — 가장 최신 시장 주차
+  const latestWeek = Object.values(latestByMarket)
+    .filter((w): w is string => !!w)
+    .sort()
+    .pop() ?? null;
 
   // 단일 매치(특히 ticker 정확 일치) 면 다이렉트 라우팅
   if (query && results.length === 1) {
