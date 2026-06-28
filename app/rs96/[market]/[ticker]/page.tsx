@@ -130,7 +130,9 @@ export default async function RsTickerHistory({
 
   const univRows = (univRes.data as Array<RsHistoryWeekly & {
     name: string | null; name_en: string | null; mktcap: number | null;
-    vol_ma_4?: number | null; vol_ma_26?: number | null;
+    vol_ma_4?: number | null; vol_ma_13?: number | null; vol_ma_26?: number | null;
+    price_ma_4?: number | null; price_ma_13?: number | null;
+    price_ma_26?: number | null; price_ma_52?: number | null;
   }> | null) ?? [];
   const histRows = (histRes.data as RsHistoryWeekly[]) ?? [];
 
@@ -169,9 +171,12 @@ export default async function RsTickerHistory({
   // hist 가 비어있고 univByWeek 도 없을 때 0주 (빈 페이지)
   void univByWeek;
 
-  // 이동평균 스냅샷 (최신 RS96+ 주차 기준) — rs_top_weekly 최신행
+  // 이동평균 스냅샷 — universe 최신행 우선(전 종목 보유), 없으면 rs_top_weekly
+  const lastUniv = univRows.length ? univRows[univRows.length - 1] : null;
   const maSnap =
-    (topRes.data as unknown as (Partial<RsTopWeekly> & { week_date?: string }) | null) ?? null;
+    (lastUniv as unknown as (Partial<RsTopWeekly> & { week_date?: string }) | null) ??
+    (topRes.data as unknown as (Partial<RsTopWeekly> & { week_date?: string }) | null) ??
+    null;
 
   // 최근이 위에 오도록 표 정렬용 (역순)
   const tableRows = [...hist].reverse();
@@ -285,7 +290,7 @@ export default async function RsTickerHistory({
 
           {maSnap?.price_ma_4 != null && (
             <Section
-              title="이동평균 (최신 RS96+ 주차)"
+              title="이동평균 (최신 주차)"
               sub={`주가 4/13/26/52주 · 거래량 4/13/26주${maSnap.week_date ? ` — ${maSnap.week_date} 기준` : ""}`}
             >
               <div className="grid grid-cols-2 gap-x-6 gap-y-0.5 text-sm sm:grid-cols-4">

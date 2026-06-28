@@ -297,14 +297,16 @@ def process_etf(req, etf: dict, market: str, market_weeks: list[str],
                   if "Volume" in daily.columns else None)
     print(f"  weekly {len(weekly)}주 · longName={name}")
 
-    # 보조 신호 시계열 (정배열 / 클라이맥스 / 거래량 이동평균)
+    # 보조 신호 시계열 (정배열 / 클라이맥스 / 주가·거래량 이동평균)
     aw_s = since_s = None
     vma = {4: None, 13: None, 26: None}
+    pma = {4: None, 13: None, 26: None, 52: None}
     if sig_ok and RSC is not None:
         try:
             aw_s = RSC.align_weeks_series(weekly)
             since_s = RSC.weeks_since_climax_series(weekly, weekly_vol)
             vma = RSC.vol_ma_series(weekly, weekly_vol)
+            pma = RSC.price_ma_series(weekly)
         except Exception as e:
             print(f"  ⚠ 신호 계산 실패: {e}")
 
@@ -355,6 +357,10 @@ def process_etf(req, etf: dict, market: str, market_weeks: list[str],
                 if vma.get(n) is not None:
                     x = _at(vma[n])
                     row[f"vol_ma_{n}"] = round(float(x), 0) if x is not None else None
+            for n in (4, 13, 26, 52):
+                if pma.get(n) is not None:
+                    x = _at(pma[n])
+                    row[f"price_ma_{n}"] = round(float(x), 2) if x is not None else None
         rows.append(row)
     if not rows:
         print(f"  ⚠ 적재 row 0개")

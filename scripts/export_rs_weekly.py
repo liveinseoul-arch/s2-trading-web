@@ -447,6 +447,10 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
             "vol_ma_4": vma_val[4],
             "vol_ma_13": vma_val[13],
             "vol_ma_26": vma_val[26],
+            "price_ma_4": pma_val[4],
+            "price_ma_13": pma_val[13],
+            "price_ma_26": pma_val[26],
+            "price_ma_52": pma_val[52],
         })
 
         if rs < RS_MIN:
@@ -638,11 +642,14 @@ def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market, universe_rows=N
                 r.pop("align_weeks", None)
                 r.pop("vol_gap_4_26", None)
     if universe_rows and "align_weeks" in universe_rows[0]:
-        if not _columns_exist("rs_universe_weekly", ["align_weeks", "vol_ma_4"]):
-            print("[supabase] rs_universe_weekly 에 align_weeks/vol_ma_* 컬럼 없음 "
+        if not _columns_exist("rs_universe_weekly",
+                              ["align_weeks", "vol_ma_4", "price_ma_4"]):
+            print("[supabase] rs_universe_weekly 에 신호/이평 컬럼 없음 "
                   "— 이번엔 생략(ALTER 실행 후 다음 적재부터 표시)")
             for r in universe_rows:
-                for k in ("align_weeks", "climax_warn", "vol_ma_4", "vol_ma_13", "vol_ma_26"):
+                for k in ("align_weeks", "climax_warn",
+                          "vol_ma_4", "vol_ma_13", "vol_ma_26",
+                          "price_ma_4", "price_ma_13", "price_ma_26", "price_ma_52"):
                     r.pop(k, None)
 
     # 시장 전체 삭제 후 재적재 — 옛 stale 주차(예: 월요일 timestamp) row 동시 정리.

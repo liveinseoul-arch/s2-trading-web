@@ -33,3 +33,10 @@ alter table public.rs_universe_weekly
   add column if not exists vol_ma_4   double precision,
   add column if not exists vol_ma_13  double precision,
   add column if not exists vol_ma_26  double precision;
+
+-- 이평값 패널을 전 종목(비RS96+ 포함)으로 확장 — 주가 이평 4컬럼.
+alter table public.rs_universe_weekly
+  add column if not exists price_ma_4   real,
+  add column if not exists price_ma_13  real,
+  add column if not exists price_ma_26  real,
+  add column if not exists price_ma_52  real;
