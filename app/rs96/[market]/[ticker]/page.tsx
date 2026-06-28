@@ -130,6 +130,7 @@ export default async function RsTickerHistory({
 
   const univRows = (univRes.data as Array<RsHistoryWeekly & {
     name: string | null; name_en: string | null; mktcap: number | null;
+    vol_ma_4?: number | null; vol_ma_26?: number | null;
   }> | null) ?? [];
   const histRows = (histRes.data as RsHistoryWeekly[]) ?? [];
 
@@ -139,12 +140,19 @@ export default async function RsTickerHistory({
   const byWeek = new Map<string, RsHistoryWeekly>();
   for (const r of histRows) byWeek.set(r.week_date, r);
   for (const r of univRows) {
-    const prev = byWeek.get(r.week_date);  // 보조신호는 history 에만 있음 — 덮어쓸 때 보존
+    const prev = byWeek.get(r.week_date);
+    // align_weeks: universe 행 우선(전 종목 보유), 없으면 history(prev)
+    const aw = r.align_weeks != null ? r.align_weeks : (prev?.align_weeks ?? null);
+    // vol_gap_4_26: history 값 우선, 없으면 universe 의 vol_ma 로 계산(4w/26w-1)
+    let vg = prev?.vol_gap_4_26 ?? null;
+    if (vg == null && r.vol_ma_4 != null && r.vol_ma_26) {
+      vg = (r.vol_ma_4 / r.vol_ma_26 - 1) * 100;
+    }
     byWeek.set(r.week_date, {
       market: r.market, ticker: r.ticker, week_date: r.week_date,
       rs: r.rs, comp_return: r.comp_return, close: r.close,
-      align_weeks: prev?.align_weeks ?? null,
-      vol_gap_4_26: prev?.vol_gap_4_26 ?? null,
+      align_weeks: aw,
+      vol_gap_4_26: vg,
     });
   }
   const hist: RsHistoryWeekly[] = Array.from(byWeek.values())
