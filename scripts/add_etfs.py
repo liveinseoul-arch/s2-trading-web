@@ -39,6 +39,30 @@ sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
 from config import Config                                    # noqa: E402
 
+# 보조 신호(정배열·거래량 이동평균) 공용 모듈 — C:\quantBacktest
+QB_DIR = Path(r"C:\quantBacktest")
+sys.path.insert(0, str(QB_DIR))
+try:
+    import rs_signal_cols as RSC                              # noqa: E402
+except Exception as _e:                                       # pragma: no cover
+    RSC = None
+    print(f"⚠ rs_signal_cols 로드 실패 — ETF 보조신호 생략: {_e}")
+
+
+def _sig_cols_exist():
+    """rs_universe_weekly 에 신호 컬럼이 있는지 비치명적 확인 (없으면 ETF 신호 생략)."""
+    try:
+        base = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1"
+        key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+        url = base + "/rs_universe_weekly?select=align_weeks,vol_ma_4&limit=1"
+        r = urllib.request.Request(url, headers={"apikey": key,
+                                                 "Authorization": f"Bearer {key}"})
+        with urllib.request.urlopen(r, timeout=30) as resp:
+            resp.read()
+        return True
+    except Exception:
+        return False
+
 # ── ETF 화이트리스트 (시장별) ──────────────────────────────────
 # name 은 yfinance 가 자동 채움, name_en 은 영문 (한국어 별칭) 형식.
 
@@ -255,7 +279,7 @@ def percentile_rank(value: float, sorted_dist: list[float]) -> int:
 
 # ── ETF 1개 처리 ─────────────────────────────────────────────
 def process_etf(req, etf: dict, market: str, market_weeks: list[str],
-                dist_cache: dict[tuple[str, str], list[float]]):
+                dist_cache: dict[tuple[str, str], list[float]], sig_ok: bool = False):
     ticker = etf["ticker"]
     name_en = etf["name_en"]
     print(f"\n[{market} {ticker}] yfinance fetch...")
@@ -269,7 +293,20 @@ def process_etf(req, etf: dict, market: str, market_weeks: list[str],
         return 0
     daily.index = daily.index.tz_localize(None)
     weekly = daily["Close"].resample("W-FRI").last().dropna()
+    weekly_vol = ((daily["Volume"].resample("W-FRI").sum().reindex(weekly.index).fillna(0))
+                  if "Volume" in daily.columns else None)
     print(f"  weekly {len(weekly)}주 · longName={name}")
+
+    # 보조 신호 시계열 (정배열 / 클라이맥스 / 거래량 이동평균)
+    aw_s = since_s = None
+    vma = {4: None, 13: None, 26: None}
+    if sig_ok and RSC is not None:
+        try:
+            aw_s = RSC.align_weeks_series(weekly)
+            since_s = RSC.weeks_since_climax_series(weekly, weekly_vol)
+            vma = RSC.vol_ma_series(weekly, weekly_vol)
+        except Exception as e:
+            print(f"  ⚠ 신호 계산 실패: {e}")
 
     rows = []
     for w in market_weeks:
@@ -290,7 +327,7 @@ def process_etf(req, etf: dict, market: str, market_weeks: list[str],
         if rs < 0:
             continue
         close_val = float(weekly.loc[w_ts])
-        rows.append({
+        row = {
             "market": market,
             "ticker": ticker,
             "week_date": w,
@@ -300,7 +337,25 @@ def process_etf(req, etf: dict, market: str, market_weeks: list[str],
             "comp_return": float(comp),
             "close": close_val,
             "mktcap": None,
-        })
+        }
+        if sig_ok:
+            def _at(series):
+                try:
+                    val = series.loc[w_ts]
+                    return None if pd.isna(val) else val
+                except Exception:
+                    return None
+            if aw_s is not None:
+                a = _at(aw_s)
+                row["align_weeks"] = int(a) if a is not None else None
+            if since_s is not None:
+                sc = _at(since_s)
+                row["climax_warn"] = bool(sc <= RSC.WARN_WITHIN) if sc is not None else None
+            for n in (4, 13, 26):
+                if vma.get(n) is not None:
+                    x = _at(vma[n])
+                    row[f"vol_ma_{n}"] = round(float(x), 0) if x is not None else None
+        rows.append(row)
     if not rows:
         print(f"  ⚠ 적재 row 0개")
         return 0
@@ -327,6 +382,9 @@ def main():
     Config()
     req = _sb_client()
 
+    sig_ok = (RSC is not None) and _sig_cols_exist()
+    print(f"보조신호(정배열·거래량MA): {'ON' if sig_ok else 'OFF (모듈/컬럼 없음 — RS만 적재)'}")
+
     markets = [args.market.upper()] if args.market else list(ETFS_BY_MARKET.keys())
 
     dist_cache: dict[tuple[str, str], list[float]] = {}
@@ -351,7 +409,7 @@ def main():
 
         for etf in targets:
             try:
-                total_rows += process_etf(req, etf, mk, market_weeks, dist_cache)
+                total_rows += process_etf(req, etf, mk, market_weeks, dist_cache, sig_ok)
             except Exception as e:
                 print(f"  ⚠ {etf['ticker']} 처리 실패: {type(e).__name__}: {str(e)[:120]}")
                 continue

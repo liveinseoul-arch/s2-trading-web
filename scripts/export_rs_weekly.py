@@ -387,8 +387,10 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
         sub = s[s.index <= week_ts]
         last_close = float(sub.iloc[-1]) if len(sub) > 0 else None
 
-        # 보조 신호 (표시용) — 정배열 경과주수 / 클라이맥스 / 거래량 4-26 갭
+        # 보조 신호 (표시용) — 정배열 / 클라이맥스 / 거래량 4-26 갭 / 이동평균 (사전계산)
         aw_val, cw_val, vg_val = 0, False, None
+        pma_val = {4: None, 13: None, 26: None, 52: None}
+        vma_val = {4: None, 13: None, 26: None}
         if signal_lookup is not None:
             sig = signal_lookup.get(tk)
             if sig is not None:
@@ -398,6 +400,13 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
                 aw_val = int(a) if a is not None and not pd.isna(a) else 0
                 cw_val = bool(c2) if c2 is not None and not pd.isna(c2) else False
                 vg_val = round(float(g), 1) if g is not None and not pd.isna(g) else None
+                if len(sig) >= 5:
+                    for n in (4, 13, 26, 52):
+                        x = sig[3][n].get(week_ts)
+                        pma_val[n] = round(float(x), 2) if x is not None and not pd.isna(x) else None
+                    for n in (4, 13, 26):
+                        x = sig[4][n].get(week_ts)
+                        vma_val[n] = round(float(x), 0) if x is not None and not pd.isna(x) else None
 
         all_rs_rows.append({
             "market": market,
@@ -433,23 +442,15 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
             "comp_return": float(comp),
             "close": last_close,
             "mktcap": mc_clean,
+            "align_weeks": aw_val,
+            "climax_warn": cw_val,
+            "vol_ma_4": vma_val[4],
+            "vol_ma_13": vma_val[13],
+            "vol_ma_26": vma_val[26],
         })
 
         if rs < RS_MIN:
             continue
-
-        # 이동평균 스냅샷 (표시용, 상세페이지 패널) — 주가 4/13/26/52w · 거래량 4/13/26w
-        pma_val = {4: None, 13: None, 26: None, 52: None}
-        vma_val = {4: None, 13: None, 26: None}
-        if signal_lookup is not None:
-            sig2 = signal_lookup.get(tk)
-            if sig2 is not None and len(sig2) >= 5:
-                for n in (4, 13, 26, 52):
-                    x = sig2[3][n].get(week_ts)
-                    pma_val[n] = round(float(x), 2) if x is not None and not pd.isna(x) else None
-                for n in (4, 13, 26):
-                    x = sig2[4][n].get(week_ts)
-                    vma_val[n] = round(float(x), 0) if x is not None and not pd.isna(x) else None
 
         top96_rows.append({
             "market": market,
@@ -636,6 +637,13 @@ def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market, universe_rows=N
             for r in hist_rows:
                 r.pop("align_weeks", None)
                 r.pop("vol_gap_4_26", None)
+    if universe_rows and "align_weeks" in universe_rows[0]:
+        if not _columns_exist("rs_universe_weekly", ["align_weeks", "vol_ma_4"]):
+            print("[supabase] rs_universe_weekly 에 align_weeks/vol_ma_* 컬럼 없음 "
+                  "— 이번엔 생략(ALTER 실행 후 다음 적재부터 표시)")
+            for r in universe_rows:
+                for k in ("align_weeks", "climax_warn", "vol_ma_4", "vol_ma_13", "vol_ma_26"):
+                    r.pop(k, None)
 
     # 시장 전체 삭제 후 재적재 — 옛 stale 주차(예: 월요일 timestamp) row 동시 정리.
     markets = set(rs96_tickers_by_market.keys()) | {r["market"] for r in top_rows}
