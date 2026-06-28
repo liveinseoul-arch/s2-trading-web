@@ -326,12 +326,26 @@ export default async function RsScreen({
             )}
           </Section>
 
-          <p className="text-xs text-muted">
-            <b>RS</b>는 IBD/Minervini 정의의 상대강도 백분위(0~99). RS 96 = 상위 4%.
-            <b className="ml-2">52주 모멘텀</b>은 백테스트 본체의 composite return —
-            12주 가중치 2배, 24·36·48주 가중치 1배의 누적 수익률.
-            분할·액면병합 보정 누락 종목은 극단값이 나올 수 있으니 RS 등급만 기준으로 보세요.
-          </p>
+          <div className="space-y-1.5 text-xs text-muted">
+            <p>
+              <b>RS</b>는 IBD/Minervini 정의의 상대강도 백분위(0~99). RS 96 = 상위 4%.
+              <b className="ml-2">52주 모멘텀</b>은 백테스트 본체의 composite return —
+              12주 가중치 2배, 24·36·48주 가중치 1배의 누적 수익률.
+              분할·액면병합 보정 누락 종목은 극단값이 나올 수 있으니 RS 등급만 기준으로 보세요.
+            </p>
+            <p>
+              <b>정배열</b> 컬럼은 주봉 4&gt;13&gt;26&gt;52주 정배열이 연속 유지된 주수(트렌드의 나이) —
+              <span className="mx-0.5 text-muted">47w</span>처럼 회색이면 정배열 유지 중,
+              <span className="mx-0.5 inline-block rounded bg-red-500/70 px-1 py-0.5 font-bold text-white">3w</span>
+              처럼 적색이면 정배열이 깨진 지 N주 경과를 뜻합니다.
+            </p>
+            <p>
+              <span className="mr-0.5 text-amber-500">⚡</span>
+              <b>(번개)</b> 표시는 <b>클라이맥스/블로우오프 진입 주의</b> — 최근 3주 내에
+              ① 52주 신고가 ② 거래량 13주평균 2배↑ ③ 주간 +5%↑ 가 <b>동시에</b> 나타난 과열 정점 신호입니다.
+              매도 신호가 아니라 <b>신규 추격매수에 신중</b>하라는 보조 표시입니다(검증상 클라이맥스 직후 매수는 승률 −5.6%p).
+            </p>
+          </div>
           </div>
           {theme && theme.categories.length > 0 && rows.length > 0 && (
             <aside className="mt-4 lg:mt-0 lg:sticky lg:top-20">

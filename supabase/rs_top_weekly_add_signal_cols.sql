@@ -50,3 +50,17 @@ alter table public.rs_top_weekly
 alter table public.rs_universe_weekly
   add column if not exists ema_21  real,
   add column if not exists ema_50  real;
+
+-- 클라이맥스(⚡) 진단 — climax_warn 일 때 '가장 최근 클라이맥스 주'의 3조건 실제 수치.
+--   climax_week     : 그 클라이맥스가 발생한 주차(금요일, ISO date text)
+--   climax_vol_mult : 그 주 거래량 / 13주평균 (≥2.0 이면 ② 거래량 충족)
+--   climax_ret      : 그 주 주간 수익률(%) (≥5 이면 ③ 장대양봉 충족)
+--   ① 신고가는 클라이맥스 정의상 항상 충족 → 별도 컬럼 없이 ✓ 표시.
+alter table public.rs_top_weekly
+  add column if not exists climax_week      text,
+  add column if not exists climax_vol_mult  real,
+  add column if not exists climax_ret       real;
+alter table public.rs_universe_weekly
+  add column if not exists climax_week      text,
+  add column if not exists climax_vol_mult  real,
+  add column if not exists climax_ret       real;

@@ -90,6 +90,10 @@ export interface RsTopWeekly {
   // 일봉 21/50 EMA 스냅샷 (미너비니 트레일링 손절선, 최근 금요일 as-of). RS86+ 종목만 값 존재.
   ema_21?: number | null;
   ema_50?: number | null;
+  // 클라이맥스(⚡) 진단 — climax_warn 일 때 가장 최근 클라이맥스 주의 3조건 수치.
+  climax_week?: string | null;       // 클라이맥스 발생 주차 (ISO date)
+  climax_vol_mult?: number | null;   // 거래량/13주평균 (≥2 충족)
+  climax_ret?: number | null;        // 주간 수익률 % (≥5 충족)
 }
 
 export interface RsHistoryWeekly {

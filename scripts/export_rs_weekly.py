@@ -386,7 +386,9 @@ def build_signal_lookup(raw_cache, weeks):
                    for n, s2 in RSC.price_ma_series(c).items()}
             vma = {n: s2.reindex(widx, method="ffill")
                    for n, s2 in RSC.vol_ma_series(c, v).items()}
-            out[tk] = (aw, warn, vg, pma, vma)
+            cd = {k: s2.reindex(widx, method="ffill")
+                  for k, s2 in RSC.recent_climax_detail_series(c, v).items()}
+            out[tk] = (aw, warn, vg, pma, vma, cd)
         except Exception:
             continue
     return out
@@ -429,6 +431,7 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
 
         # 보조 신호 (표시용) — 정배열 / 클라이맥스 / 거래량 4-26 갭 / 이동평균 (사전계산)
         aw_val, cw_val, vg_val = 0, False, None
+        cx_week, cx_vmult, cx_ret = None, None, None
         pma_val = {4: None, 13: None, 26: None, 52: None}
         vma_val = {4: None, 13: None, 26: None}
         if signal_lookup is not None:
@@ -440,6 +443,16 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
                 aw_val = int(a) if a is not None and not pd.isna(a) else 0
                 cw_val = bool(c2) if c2 is not None and not pd.isna(c2) else False
                 vg_val = round(float(g), 1) if g is not None and not pd.isna(g) else None
+                # 클라이맥스 진단 — warn 일 때 가장 최근 클라이맥스 주의 3조건 수치
+                if cw_val and len(sig) >= 6:
+                    cd = sig[5]
+                    dv = cd["date"].get(week_ts)
+                    if dv is not None and not pd.isna(dv):
+                        cx_week = pd.Timestamp(int(dv)).date().isoformat()
+                    x = cd["vol_mult"].get(week_ts)
+                    cx_vmult = round(float(x), 2) if x is not None and not pd.isna(x) else None
+                    x = cd["week_ret"].get(week_ts)
+                    cx_ret = round(float(x), 2) if x is not None and not pd.isna(x) else None
                 if len(sig) >= 5:
                     for n in (4, 13, 26, 52):
                         x = sig[3][n].get(week_ts)
@@ -503,6 +516,9 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
             "price_ma_52": pma_val[52],
             "ema_21": ema21_val,
             "ema_50": ema50_val,
+            "climax_week": cx_week,
+            "climax_vol_mult": cx_vmult,
+            "climax_ret": cx_ret,
         })
 
         if rs < RS_MIN:
@@ -524,6 +540,7 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
             "price_ma_26": pma_val[26], "price_ma_52": pma_val[52],
             "vol_ma_4": vma_val[4], "vol_ma_13": vma_val[13], "vol_ma_26": vma_val[26],
             "ema_21": ema21_val, "ema_50": ema50_val,
+            "climax_week": cx_week, "climax_vol_mult": cx_vmult, "climax_ret": cx_ret,
         })
 
     top96_rows.sort(key=lambda r: (-r["rs"], -r["comp_return"]))
@@ -699,6 +716,14 @@ def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market, universe_rows=N
             for r in top_rows:
                 r.pop("ema_21", None)
                 r.pop("ema_50", None)
+    _CX_COLS = ("climax_week", "climax_vol_mult", "climax_ret")
+    if top_rows and "climax_week" in top_rows[0]:
+        if not _columns_exist("rs_top_weekly", ["climax_week"]):
+            print("[supabase] rs_top_weekly 에 클라이맥스 진단 컬럼 없음 "
+                  "— 이번엔 생략(ALTER 실행 후 다음 적재부터 표시)")
+            for r in top_rows:
+                for k in _CX_COLS:
+                    r.pop(k, None)
     if hist_rows and "align_weeks" in hist_rows[0]:
         if not _columns_exist("rs_history_weekly", ["align_weeks", "vol_gap_4_26"]):
             print("[supabase] rs_history_weekly 에 align_weeks/vol_gap_4_26 컬럼 없음 "
@@ -723,6 +748,13 @@ def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market, universe_rows=N
             for r in universe_rows:
                 r.pop("ema_21", None)
                 r.pop("ema_50", None)
+    if universe_rows and "climax_week" in universe_rows[0]:
+        if not _columns_exist("rs_universe_weekly", ["climax_week"]):
+            print("[supabase] rs_universe_weekly 에 클라이맥스 진단 컬럼 없음 "
+                  "— 이번엔 생략(ALTER 실행 후 다음 적재부터 표시)")
+            for r in universe_rows:
+                for k in ("climax_week", "climax_vol_mult", "climax_ret"):
+                    r.pop(k, None)
 
     # 시장 전체 삭제 후 재적재 — 옛 stale 주차(예: 월요일 timestamp) row 동시 정리.
     markets = set(rs96_tickers_by_market.keys()) | {r["market"] for r in top_rows}

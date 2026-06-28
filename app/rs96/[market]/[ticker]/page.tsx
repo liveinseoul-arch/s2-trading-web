@@ -119,7 +119,7 @@ export default async function RsTickerHistory({
     supabase
       .from("rs_top_weekly")
       .select(
-        "week_date,name,name_en,close,mktcap,price_ma_4,price_ma_13,price_ma_26,price_ma_52,vol_ma_4,vol_ma_13,vol_ma_26,ema_21,ema_50",
+        "week_date,name,name_en,close,mktcap,price_ma_4,price_ma_13,price_ma_26,price_ma_52,vol_ma_4,vol_ma_13,vol_ma_26,ema_21,ema_50,climax_warn,climax_week,climax_vol_mult,climax_ret",
       )
       .eq("market", market)
       .eq("ticker", ticker)
@@ -182,6 +182,13 @@ export default async function RsTickerHistory({
   const tableRows = [...hist].reverse();
   const top96Weeks = hist.filter((h) => h.rs >= 96).length;
   const latest = hist[hist.length - 1];
+  // 클라이맥스 발생 주 → 현재(최신주)까지 경과 주수 (배지 ⚡의 '최근 3주 내' 근거 표시)
+  const cxWeeksAgo =
+    maSnap?.climax_week && latest?.week_date
+      ? Math.round(
+          (Date.parse(latest.week_date) - Date.parse(maSnap.climax_week)) / (7 * 864e5),
+        )
+      : null;
   const rsAvg = hist.length ? hist.reduce((s, h) => s + h.rs, 0) / hist.length : 0;
   const rsMax = hist.length ? Math.max(...hist.map((h) => h.rs)) : 0;
   const rsMin = hist.length ? Math.min(...hist.map((h) => h.rs)) : 0;
@@ -287,6 +294,45 @@ export default async function RsTickerHistory({
               </span>
             )}
           </div>
+
+          {maSnap?.climax_warn && maSnap?.climax_week && (
+            <Section
+              title="⚡ 클라이맥스 진입 주의 — 3조건 진단"
+              sub={`최근 클라이맥스 ${maSnap.climax_week}${
+                cxWeeksAgo != null ? ` (${cxWeeksAgo}주 전)` : ""
+              } · 52주 신고가에서 거래량 터지며 급등한 정점 패턴. 신규 추격매수 신중(매도신호 아님).`}
+            >
+              <div className="space-y-1">
+                <CxRow
+                  ok={true}
+                  label="① 52주 신고가"
+                  detail="해당 주 종가가 직전 52주 최고가 — 신고가 갱신"
+                />
+                <CxRow
+                  ok={maSnap.climax_vol_mult != null && maSnap.climax_vol_mult >= 2.0}
+                  label="② 거래량 급증"
+                  detail={
+                    maSnap.climax_vol_mult != null
+                      ? `13주 평균 대비 ${maSnap.climax_vol_mult.toFixed(1)}배 (기준 ≥2.0배)`
+                      : "거래량 데이터 없음"
+                  }
+                />
+                <CxRow
+                  ok={maSnap.climax_ret != null && maSnap.climax_ret >= 5}
+                  label="③ 장대 양봉"
+                  detail={
+                    maSnap.climax_ret != null
+                      ? `주간 ${maSnap.climax_ret >= 0 ? "+" : ""}${maSnap.climax_ret.toFixed(1)}% (기준 ≥+5%)`
+                      : "수익률 데이터 없음"
+                  }
+                />
+              </div>
+              <p className="mt-2 text-[11px] text-muted">
+                세 조건이 최근 3주 내 한 주에 <b>동시 충족</b>되면 ⚡ 표시됩니다. 검증상 클라이맥스 직후
+                신규 매수는 승률 −5.6%p — 진입 타이밍 참고용 표시입니다.
+              </p>
+            </Section>
+          )}
 
           {maSnap?.price_ma_4 != null && (
             <Section
@@ -465,6 +511,23 @@ function EmaCell({
           </span>
         )}
       </span>
+    </div>
+  );
+}
+
+// 클라이맥스 3조건 행 — 충족(ok)이면 호박색 ✓, 아니면 회색 ✗.
+function CxRow({ ok, label, detail }: { ok: boolean; label: string; detail: string }) {
+  return (
+    <div className="flex items-center gap-2 border-b border-[var(--color-borderc)] py-1.5 text-sm last:border-0">
+      <span
+        className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${
+          ok ? "bg-amber-500/20 text-amber-600" : "bg-[var(--color-borderc)] text-muted"
+        }`}
+      >
+        {ok ? "✓" : "✗"}
+      </span>
+      <span className="font-medium">{label}</span>
+      <span className="ml-auto text-right text-xs text-muted tnum">{detail}</span>
     </div>
   );
 }
