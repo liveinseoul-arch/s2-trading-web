@@ -136,10 +136,15 @@ export default async function RsTickerHistory({
   // 합집합 시계열 — universe 가 있는 주차는 universe row, 없으면 history row
   const byWeek = new Map<string, RsHistoryWeekly>();
   for (const r of histRows) byWeek.set(r.week_date, r);
-  for (const r of univRows) byWeek.set(r.week_date, {
-    market: r.market, ticker: r.ticker, week_date: r.week_date,
-    rs: r.rs, comp_return: r.comp_return, close: r.close,
-  });
+  for (const r of univRows) {
+    const prev = byWeek.get(r.week_date);  // 보조신호는 history 에만 있음 — 덮어쓸 때 보존
+    byWeek.set(r.week_date, {
+      market: r.market, ticker: r.ticker, week_date: r.week_date,
+      rs: r.rs, comp_return: r.comp_return, close: r.close,
+      align_weeks: prev?.align_weeks ?? null,
+      vol_gap_4_26: prev?.vol_gap_4_26 ?? null,
+    });
+  }
   const hist: RsHistoryWeekly[] = Array.from(byWeek.values())
     .sort((a, b) => (a.week_date < b.week_date ? -1 : 1));
 
@@ -219,11 +224,49 @@ export default async function RsTickerHistory({
       ) : (
         <>
           {/* 요약 stat */}
-          <div className="mb-5 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
             <Stat label="최신 RS" value={String(latest.rs)} tone="text-accent" />
             <Stat label="평균 RS" value={rsAvg.toFixed(1)} />
             <Stat label="최고 RS" value={String(rsMax)} />
             <Stat label="RS96+ 주" value={`${top96Weeks}주`} />
+          </div>
+
+          {/* 현재 추세 배지 — 정배열 여부/나이 · 거래량 4-26 역배열 여부 (표시용, 매매신호 아님) */}
+          <div className="mb-5 flex flex-wrap gap-2 text-xs">
+            <span
+              title="주봉 4>13>26>52주 정배열 연속 유지 주수 (트렌드 나이). 음수=정배열이 N주 전 깨짐. RS96+ 와 상당 중복 — 확인용."
+              className={`rounded-lg px-2.5 py-1 ${
+                latest.align_weeks != null && latest.align_weeks > 0
+                  ? "border border-accent/40 bg-accent/5 text-accent"
+                  : latest.align_weeks != null && latest.align_weeks < 0
+                    ? "bg-red-500/70 font-bold text-white"
+                    : "border border-[var(--color-borderc)] text-muted"
+              }`}
+            >
+              {latest.align_weeks != null && latest.align_weeks > 0
+                ? `주가 정배열 ✓ ${latest.align_weeks}주`
+                : latest.align_weeks != null && latest.align_weeks < 0
+                  ? `주가 정배열 깨짐 · ${Math.abs(latest.align_weeks)}주 전`
+                  : "주가 정배열 ✗"}
+            </span>
+            {latest.vol_gap_4_26 != null && (
+              <span
+                title="거래량 4주MA/26주MA-1(%). 음수=4w<26w 역배열(거래량 데드크로스). 검증상 매도 알파 없음 — 표시용."
+                className={`rounded-lg border px-2.5 py-1 ${
+                  latest.vol_gap_4_26 < 0
+                    ? "border-amber-500/40 bg-amber-500/5 text-amber-600"
+                    : "border-[var(--color-borderc)] text-muted"
+                }`}
+              >
+                거래량 4-26 {latest.vol_gap_4_26 >= 0 ? "+" : ""}
+                {latest.vol_gap_4_26.toFixed(1)}%
+                {latest.vol_gap_4_26 < 0
+                  ? " · 역배열"
+                  : latest.vol_gap_4_26 < 10
+                    ? " · 역배열 근접"
+                    : ""}
+              </span>
+            )}
           </div>
 
           <Section title="주차별 RS 추이" sub="막대 — RS96+ 진한 강조색 · 90~95 중간 강조색 · 89 이하 옅은 회색(관심 외)">
@@ -243,6 +286,8 @@ export default async function RsTickerHistory({
                     <th className="py-1.5 pl-1 text-left">주차</th>
                     <th>RS</th>
                     <th>52주 모멘텀</th>
+                    <th title="주봉 정배열 연속주수 (정배열 여부 = >0)">정배열</th>
+                    <th title="거래량 4주MA/26주MA-1(%). 음수=4w<26w 역배열">거래량4-26</th>
                     <th>종가</th>
                   </tr>
                 </thead>
@@ -262,6 +307,31 @@ export default async function RsTickerHistory({
                           {r.comp_return != null
                             ? `${r.comp_return >= 0 ? "+" : ""}${Math.round(r.comp_return * 100)}%`
                             : "-"}
+                        </td>
+                        <td>
+                          {r.align_weeks == null ? (
+                            <span className="text-muted">–</span>
+                          ) : r.align_weeks < 0 ? (
+                            <span
+                              title={`정배열이 깨진 지 ${Math.abs(r.align_weeks)}주`}
+                              className="inline-block rounded bg-red-500/70 px-1.5 py-0.5 text-[11px] font-bold text-white"
+                            >
+                              {Math.abs(r.align_weeks)}w
+                            </span>
+                          ) : (
+                            <span className={isTop ? "" : "text-muted"}>{r.align_weeks}w</span>
+                          )}
+                        </td>
+                        <td
+                          className={
+                            r.vol_gap_4_26 != null && r.vol_gap_4_26 < 0
+                              ? "text-amber-600"
+                              : "text-muted"
+                          }
+                        >
+                          {r.vol_gap_4_26 != null
+                            ? `${r.vol_gap_4_26 >= 0 ? "+" : ""}${Math.round(r.vol_gap_4_26)}%`
+                            : "–"}
                         </td>
                         <td>
                           {r.close == null

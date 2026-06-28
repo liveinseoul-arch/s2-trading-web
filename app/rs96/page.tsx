@@ -264,7 +264,7 @@ export default async function RsScreen({
                       <th className="text-left">종목</th>
                       <th>RS</th>
                       <th>52주 모멘텀</th>
-                      <th title="주봉 정배열(4>13>26>52주) 연속 유지 주수 — 트렌드 나이">정배열</th>
+                      <th title="주봉 정배열(4>13>26>52주) 연속 유지 주수(트렌드 나이). 적색 = 정배열이 N주 전 깨짐">정배열</th>
                       <th>종가</th>
                       <th>시총({mktcapUnit(market)})</th>
                     </tr>
@@ -302,7 +302,20 @@ export default async function RsScreen({
                             ? `${r.comp_return >= 0 ? "+" : ""}${Math.round(r.comp_return * 100)}%`
                             : "-"}
                         </td>
-                        <td className="text-muted">{r.align_weeks ? `${r.align_weeks}w` : "–"}</td>
+                        <td>
+                          {r.align_weeks == null ? (
+                            <span className="text-muted">–</span>
+                          ) : r.align_weeks < 0 ? (
+                            <span
+                              title={`정배열이 깨진 지 ${Math.abs(r.align_weeks)}주 경과`}
+                              className="inline-block rounded bg-red-500/70 px-1.5 py-0.5 text-[11px] font-bold text-white"
+                            >
+                              {Math.abs(r.align_weeks)}w
+                            </span>
+                          ) : (
+                            <span className="text-muted">{r.align_weeks}w</span>
+                          )}
+                        </td>
                         <td>{fmtPrice(r.close, market)}</td>
                         <td className="text-muted">{fmtMktcap(r.mktcap, market)}</td>
                       </tr>

@@ -7,3 +7,10 @@
 alter table public.rs_top_weekly
   add column if not exists align_weeks smallint,
   add column if not exists climax_warn boolean;
+
+-- rs_history_weekly (기업 상세 페이지의 56주 시계열 표) 에도 추가:
+--   align_weeks  : 그 주차의 정배열 연속주수 (정배열 여부 = align_weeks>0)
+--   vol_gap_4_26 : 거래량 4주MA/26주MA-1 (%). 음수=4w<26w 역배열(거래량 데드크로스). 표시용(매도 알파 없음).
+alter table public.rs_history_weekly
+  add column if not exists align_weeks smallint,
+  add column if not exists vol_gap_4_26 real;
