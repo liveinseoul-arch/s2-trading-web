@@ -321,8 +321,35 @@ def compute_threshold(week_ts, weekly_cache, mktcap_lookup, top_pct):
     return float(np.percentile(values, cutoff)), len(values)
 
 
+def build_signal_lookup(raw_cache, weeks):
+    """주차별 보조신호(align_weeks, climax_warn) as-of 조회용 사전계산.
+    반환: {ticker: (aw_series, warn_series)} — 인덱스 weeks 로 ffill 정렬.
+    raw_cache 는 정규화 전 {close, volume} dict (climax 에 volume 필요)."""
+    try:
+        import rs_signal_cols as RSC
+    except Exception as e:
+        print(f"  ⚠ rs_signal_cols 로드 실패 — 보조 컬럼 생략: {e}")
+        return {}
+    widx = pd.DatetimeIndex(sorted(weeks))
+    out = {}
+    for tk, wdf in raw_cache.items():
+        c = get_close_series(wdf)
+        if c is None or len(c) < 5:
+            continue
+        v = wdf.get("volume") if isinstance(wdf, dict) else None
+        try:
+            aw = RSC.align_weeks_series(c).reindex(widx, method="ffill").fillna(0)
+            since = RSC.weeks_since_climax_series(c, v).reindex(widx, method="ffill")
+            warn = (since <= RSC.WARN_WITHIN).fillna(False)
+            out[tk] = (aw, warn)
+        except Exception:
+            continue
+    return out
+
+
 def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
-                 mktcap_lookup, mktcap_top, mktcap_min, names_en=None):
+                 mktcap_lookup, mktcap_top, mktcap_min, names_en=None,
+                 signal_lookup=None):
     """한 주차 → (top96 후보, 모든 RS row, universe row).
 
     top96     : RS ≥ 96 AND (mktcap_top 컷오프 통과) AND (mktcap_min 통과)
@@ -392,6 +419,16 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
         if rs < RS_MIN:
             continue
 
+        # 보조 신호 컬럼 (표시용) — 정배열 경과주수 / 클라이맥스 진입주의
+        aw_val, cw_val = 0, False
+        if signal_lookup is not None:
+            sig = signal_lookup.get(tk)
+            if sig is not None:
+                a = sig[0].get(week_ts)
+                c2 = sig[1].get(week_ts)
+                aw_val = int(a) if a is not None and not pd.isna(a) else 0
+                cw_val = bool(c2) if c2 is not None and not pd.isna(c2) else False
+
         top96_rows.append({
             "market": market,
             "week_date": week_str,
@@ -402,6 +439,8 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
             "comp_return": float(comp),
             "close": last_close,
             "mktcap": mc_clean,
+            "align_weeks": aw_val,
+            "climax_warn": cw_val,
         })
 
     top96_rows.sort(key=lambda r: (-r["rs"], -r["comp_return"]))
@@ -420,7 +459,8 @@ def fetch_market(market, weeks_back):
     yahoo_mktcap = None
     if market == "JP":
         rs_table = pd.DataFrame()                                 # 테이블 없음 — 매 주차 임시 계산
-        weekly_cache = _normalize_weekly_cache(load_jp_weekly_cache())
+        raw_cache = load_jp_weekly_cache()
+        weekly_cache = _normalize_weekly_cache(raw_cache)
         ticker_names = load_jp_ticker_names()
         names_en_map = load_jp_localized_names()
         mktcap_cache = {}
@@ -439,7 +479,8 @@ def fetch_market(market, weeks_back):
             mktcap_min = None
     elif market == "KR":
         rs_table = _normalize_rs_table(load_rs_table("KR"))
-        weekly_cache = _normalize_weekly_cache(load_weekly_cache("KR"))
+        raw_cache = load_weekly_cache("KR")
+        weekly_cache = _normalize_weekly_cache(raw_cache)
         ticker_names = load_ticker_names("KR")
         mktcap_cache = load_mktcap_cache("KR")
         shares_map = {}
@@ -448,7 +489,8 @@ def fetch_market(market, weeks_back):
               f"(인덱스 W-FRI 정규화 완료)")
     else:  # US
         rs_table = _normalize_rs_table(load_rs_table("US"))
-        weekly_cache = _normalize_weekly_cache(load_weekly_cache("US"))
+        raw_cache = load_weekly_cache("US")
+        weekly_cache = _normalize_weekly_cache(raw_cache)
         ticker_names = load_ticker_names("US")
         mktcap_cache = {}
         shares_map = load_us_shares()
@@ -466,6 +508,9 @@ def fetch_market(market, weeks_back):
     weeks = sorted(all_weeks)[-weeks_back:]
     print(f"  대상 주차 {len(weeks)}개: {weeks[0].date()} ~ {weeks[-1].date()}")
 
+    signal_lookup = build_signal_lookup(raw_cache, weeks)
+    print(f"  보조신호 사전계산: {len(signal_lookup):,}종목 (align_weeks · climax_warn)")
+
     top96_all = []
     hist_by_ticker = {}
     rs96_tickers = set()
@@ -475,7 +520,8 @@ def fetch_market(market, weeks_back):
         top96, all_rs, universe = extract_week(w, market, rs_table, weekly_cache,
                                                ticker_names, mktcap_lookup,
                                                mktcap_top, mktcap_min,
-                                               names_en=names_en_map)
+                                               names_en=names_en_map,
+                                               signal_lookup=signal_lookup)
         top96_all.extend(top96)
         universe_all.extend(universe)
         for r in top96:
@@ -518,6 +564,21 @@ def _supabase_client():
     return req
 
 
+def _columns_exist(table, cols):
+    """table 에 cols 가 모두 존재하면 True. 없으면(400) False — 적재 전 방어용."""
+    base = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1"
+    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    url = f"{base}/{table}?select={','.join(cols)}&limit=1"
+    h = {"apikey": key, "Authorization": f"Bearer {key}"}
+    r = urllib.request.Request(url, headers=h, method="GET")
+    try:
+        with urllib.request.urlopen(r, timeout=30) as resp:
+            resp.read()
+        return True
+    except Exception:
+        return False
+
+
 def _chunk(rows, n=500):
     for i in range(0, len(rows), n):
         yield rows[i:i + n]
@@ -525,6 +586,15 @@ def _chunk(rows, n=500):
 
 def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market, universe_rows=None):
     req = _supabase_client()
+
+    # 새 보조 컬럼(align_weeks·climax_warn)이 테이블에 아직 없으면 strip — ALTER 전이어도 적재 안 깨짐
+    if top_rows and "align_weeks" in top_rows[0]:
+        if not _columns_exist("rs_top_weekly", ["align_weeks", "climax_warn"]):
+            print("[supabase] rs_top_weekly 에 align_weeks/climax_warn 컬럼 없음 "
+                  "— 이번엔 생략(ALTER 실행 후 다음 적재부터 표시)")
+            for r in top_rows:
+                r.pop("align_weeks", None)
+                r.pop("climax_warn", None)
 
     # 시장 전체 삭제 후 재적재 — 옛 stale 주차(예: 월요일 timestamp) row 동시 정리.
     markets = set(rs96_tickers_by_market.keys()) | {r["market"] for r in top_rows}

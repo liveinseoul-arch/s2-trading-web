@@ -264,6 +264,7 @@ export default async function RsScreen({
                       <th className="text-left">종목</th>
                       <th>RS</th>
                       <th>52주 모멘텀</th>
+                      <th title="주봉 정배열(4>13>26>52주) 연속 유지 주수 — 트렌드 나이">정배열</th>
                       <th>종가</th>
                       <th>시총({mktcapUnit(market)})</th>
                     </tr>
@@ -283,6 +284,14 @@ export default async function RsScreen({
                             {r.name_en || r.name || r.ticker}
                           </Link>
                           <span className="ml-2 text-[11px] text-muted">{r.ticker}</span>
+                          {r.climax_warn && (
+                            <span
+                              title="클라이맥스 진입 주의 — 52주 신고가+거래량 급증+장대양봉이 최근 3주내 발생(블로우오프). 진입 신중."
+                              className="ml-1 text-[11px] text-amber-500"
+                            >
+                              ⚡
+                            </span>
+                          )}
                           {market === "JP" && r.name_en && r.name && r.name !== r.name_en && (
                             <div className="text-[11px] text-muted">{r.name}</div>
                           )}
@@ -293,6 +302,7 @@ export default async function RsScreen({
                             ? `${r.comp_return >= 0 ? "+" : ""}${Math.round(r.comp_return * 100)}%`
                             : "-"}
                         </td>
+                        <td className="text-muted">{r.align_weeks ? `${r.align_weeks}w` : "–"}</td>
                         <td>{fmtPrice(r.close, market)}</td>
                         <td className="text-muted">{fmtMktcap(r.mktcap, market)}</td>
                       </tr>

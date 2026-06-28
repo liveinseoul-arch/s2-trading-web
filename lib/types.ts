@@ -77,6 +77,8 @@ export interface RsTopWeekly {
   close: number | null;
   mktcap: number | null;        // KR=원, US=USD, JP=¥ (native currency)
   rank_in_week: number;
+  align_weeks?: number | null;  // 주봉 loose 정배열(4>13>26>52w) 연속 유지 주수. 미정배열=0
+  climax_warn?: boolean | null; // 클라이맥스/블로우오프 진입 주의 (최근 3주내)
 }
 
 export interface RsHistoryWeekly {
