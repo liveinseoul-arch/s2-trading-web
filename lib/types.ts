@@ -79,6 +79,14 @@ export interface RsTopWeekly {
   rank_in_week: number;
   align_weeks?: number | null;  // 주봉 정배열(4>13>26>52w) 부호 연속주수: 양수=N주 유지, 음수=N주 전 깨짐
   climax_warn?: boolean | null; // 클라이맥스/블로우오프 진입 주의 (최근 3주내)
+  // 이동평균 스냅샷 (상세페이지 패널용)
+  price_ma_4?: number | null;
+  price_ma_13?: number | null;
+  price_ma_26?: number | null;
+  price_ma_52?: number | null;
+  vol_ma_4?: number | null;
+  vol_ma_13?: number | null;
+  vol_ma_26?: number | null;
 }
 
 export interface RsHistoryWeekly {

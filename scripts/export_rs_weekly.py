@@ -342,7 +342,11 @@ def build_signal_lookup(raw_cache, weeks):
             since = RSC.weeks_since_climax_series(c, v).reindex(widx, method="ffill")
             warn = (since <= RSC.WARN_WITHIN).fillna(False)
             vg = RSC.vol_gap_series(c, v).reindex(widx, method="ffill")
-            out[tk] = (aw, warn, vg)
+            pma = {n: s2.reindex(widx, method="ffill")
+                   for n, s2 in RSC.price_ma_series(c).items()}
+            vma = {n: s2.reindex(widx, method="ffill")
+                   for n, s2 in RSC.vol_ma_series(c, v).items()}
+            out[tk] = (aw, warn, vg, pma, vma)
         except Exception:
             continue
     return out
@@ -434,6 +438,19 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
         if rs < RS_MIN:
             continue
 
+        # 이동평균 스냅샷 (표시용, 상세페이지 패널) — 주가 4/13/26/52w · 거래량 4/13/26w
+        pma_val = {4: None, 13: None, 26: None, 52: None}
+        vma_val = {4: None, 13: None, 26: None}
+        if signal_lookup is not None:
+            sig2 = signal_lookup.get(tk)
+            if sig2 is not None and len(sig2) >= 5:
+                for n in (4, 13, 26, 52):
+                    x = sig2[3][n].get(week_ts)
+                    pma_val[n] = round(float(x), 2) if x is not None and not pd.isna(x) else None
+                for n in (4, 13, 26):
+                    x = sig2[4][n].get(week_ts)
+                    vma_val[n] = round(float(x), 0) if x is not None and not pd.isna(x) else None
+
         top96_rows.append({
             "market": market,
             "week_date": week_str,
@@ -446,6 +463,9 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
             "mktcap": mc_clean,
             "align_weeks": aw_val,
             "climax_warn": cw_val,
+            "price_ma_4": pma_val[4], "price_ma_13": pma_val[13],
+            "price_ma_26": pma_val[26], "price_ma_52": pma_val[52],
+            "vol_ma_4": vma_val[4], "vol_ma_13": vma_val[13], "vol_ma_26": vma_val[26],
         })
 
     top96_rows.sort(key=lambda r: (-r["rs"], -r["comp_return"]))
@@ -600,6 +620,15 @@ def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market, universe_rows=N
             for r in top_rows:
                 r.pop("align_weeks", None)
                 r.pop("climax_warn", None)
+    _MA_COLS = ("price_ma_4", "price_ma_13", "price_ma_26", "price_ma_52",
+                "vol_ma_4", "vol_ma_13", "vol_ma_26")
+    if top_rows and "price_ma_4" in top_rows[0]:
+        if not _columns_exist("rs_top_weekly", ["price_ma_4"]):
+            print("[supabase] rs_top_weekly 에 이동평균(price_ma_*/vol_ma_*) 컬럼 없음 "
+                  "— 이번엔 생략(ALTER 실행 후 다음 적재부터 표시)")
+            for r in top_rows:
+                for k in _MA_COLS:
+                    r.pop(k, None)
     if hist_rows and "align_weeks" in hist_rows[0]:
         if not _columns_exist("rs_history_weekly", ["align_weeks", "vol_gap_4_26"]):
             print("[supabase] rs_history_weekly 에 align_weeks/vol_gap_4_26 컬럼 없음 "

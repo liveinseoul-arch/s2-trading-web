@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { Section, Empty } from "@/components/ui";
 import { signClass } from "@/lib/format";
-import type { RsHistoryWeekly, RsMarket } from "@/lib/types";
+import type { RsHistoryWeekly, RsMarket, RsTopWeekly } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -118,7 +118,9 @@ export default async function RsTickerHistory({
       .order("week_date", { ascending: true }),
     supabase
       .from("rs_top_weekly")
-      .select("name,name_en,close,mktcap")
+      .select(
+        "week_date,name,name_en,close,mktcap,price_ma_4,price_ma_13,price_ma_26,price_ma_52,vol_ma_4,vol_ma_13,vol_ma_26",
+      )
       .eq("market", market)
       .eq("ticker", ticker)
       .order("week_date", { ascending: false })
@@ -158,6 +160,10 @@ export default async function RsTickerHistory({
   }
   // hist 가 비어있고 univByWeek 도 없을 때 0주 (빈 페이지)
   void univByWeek;
+
+  // 이동평균 스냅샷 (최신 RS96+ 주차 기준) — rs_top_weekly 최신행
+  const maSnap =
+    (topRes.data as unknown as (Partial<RsTopWeekly> & { week_date?: string }) | null) ?? null;
 
   // 최근이 위에 오도록 표 정렬용 (역순)
   const tableRows = [...hist].reverse();
@@ -269,6 +275,24 @@ export default async function RsTickerHistory({
             )}
           </div>
 
+          {maSnap?.price_ma_4 != null && (
+            <Section
+              title="이동평균 (최신 RS96+ 주차)"
+              sub={`주가 4/13/26/52주 · 거래량 4/13/26주${maSnap.week_date ? ` — ${maSnap.week_date} 기준` : ""}`}
+            >
+              <div className="grid grid-cols-2 gap-x-6 gap-y-0.5 text-sm sm:grid-cols-4">
+                <MaCell label="주가 4주" value={fmtClose(maSnap.price_ma_4 ?? null, market)} />
+                <MaCell label="주가 13주" value={fmtClose(maSnap.price_ma_13 ?? null, market)} />
+                <MaCell label="주가 26주" value={fmtClose(maSnap.price_ma_26 ?? null, market)} />
+                <MaCell label="주가 52주" value={fmtClose(maSnap.price_ma_52 ?? null, market)} />
+                <MaCell label="거래량 4주" value={fmtVol(maSnap.vol_ma_4 ?? null)} />
+                <MaCell label="거래량 13주" value={fmtVol(maSnap.vol_ma_13 ?? null)} />
+                <MaCell label="거래량 26주" value={fmtVol(maSnap.vol_ma_26 ?? null)} />
+                <MaCell label="종가(스냅샷)" value={fmtClose(maSnap.close ?? null, market)} />
+              </div>
+            </Section>
+          )}
+
           <Section title="주차별 RS 추이" sub="막대 — RS96+ 진한 강조색 · 90~95 중간 강조색 · 89 이하 옅은 회색(관심 외)">
             <RsBars data={hist} market={market} />
             <div className="mt-2 flex justify-between text-[11px] text-muted">
@@ -350,6 +374,22 @@ export default async function RsTickerHistory({
         </>
       )}
     </>
+  );
+}
+
+function fmtVol(v: number | null): string {
+  if (v == null) return "-";
+  if (v >= 1e8) return `${(v / 1e8).toFixed(1)}억`;
+  if (v >= 1e4) return `${(v / 1e4).toFixed(1)}만`;
+  return Math.round(v).toLocaleString();
+}
+
+function MaCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between border-b border-[var(--color-borderc)] py-1">
+      <span className="text-muted">{label}</span>
+      <span className="tnum font-medium">{value}</span>
+    </div>
   );
 }
 

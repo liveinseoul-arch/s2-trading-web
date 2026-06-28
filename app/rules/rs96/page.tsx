@@ -38,6 +38,10 @@ const RULES: { t: string; d: string }[] = [
     d: "RS96+ 는 '지난 1년 상승률이 시장 상위 4%' 라는 신호이지, 그 자체로 매수 시점은 아니다. Minervini SEPA 에서는 추가로 추세 템플릿(가격이 200일선 위·200일선 상승·150일선이 200일선 위)과 VCP(Volatility Contraction Pattern) 돌파를 함께 본다.",
   },
   {
+    t: "주봉 정배열 · 거래량 역배열 (보조 표시)",
+    d: "한규범 『주도주 사이클 절대법칙』의 주봉 4·13·26·52주 이동평균 정배열을 보조 정보로 표시한다. '정배열' 값은 양수=정배열 연속 유지 주수(트렌드 나이), 음수=N주 전 정배열 붕괴(예: 6w 적색=6주 전 깨짐). 상세 페이지에는 거래량 4주<26주 MA(역배열) 여부와 주가·거래량 이동평균 값도 함께 표기한다. 다만 자체 데이터 검증 결과 정배열은 RS96+ 와 상당히 중복(확인·트렌드 나이 용도)되고 거래량 역배열은 매도 우위(알파)가 확인되지 않았다. 따라서 둘 다 매매 신호가 아니라 '상태 표시'로만 활용한다.",
+  },
+  {
     t: "분할/액면병합 미보정 outlier 주의",
     d: "quantBacktest 의 weekly cache 는 분할·액면병합 보정이 누락된 종목이 있을 수 있어 comp_return 이 +100,000% 같은 극단값으로 나오기도 한다. RS 등급은 백분위 순위라 outlier 영향을 받지 않으니, 화면에서는 RS 값을 기준으로 판단할 것.",
   },
@@ -87,6 +91,7 @@ export default function RulesRsPage() {
         <ul className="ml-4 list-disc text-sm leading-relaxed text-muted">
           <li>William O&apos;Neil — <i>How to Make Money in Stocks</i> (CANSLIM)</li>
           <li>Mark Minervini — <i>Trade Like a Stock Market Wizard</i> (SEPA·VCP)</li>
+          <li>한규범 — <i>주도주 사이클 절대법칙</i> (주봉 4·13·26·52주 정배열 · 공세종말점)</li>
           <li>John Murphy — <i>Technical Analysis of the Financial Markets</i></li>
           <li>Marcos López de Prado — <i>Advances in Financial Machine Learning</i> Ch.11–15 (백테스트 과적합·DSR)</li>
         </ul>

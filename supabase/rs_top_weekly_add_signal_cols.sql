@@ -8,6 +8,16 @@ alter table public.rs_top_weekly
   add column if not exists align_weeks smallint,
   add column if not exists climax_warn boolean;
 
+-- 상세페이지 '이동평균(최신주)' 패널용 — 주가 4/13/26/52주, 거래량 4/13/26주 MA (스냅샷).
+alter table public.rs_top_weekly
+  add column if not exists price_ma_4   real,
+  add column if not exists price_ma_13  real,
+  add column if not exists price_ma_26  real,
+  add column if not exists price_ma_52  real,
+  add column if not exists vol_ma_4   double precision,
+  add column if not exists vol_ma_13  double precision,
+  add column if not exists vol_ma_26  double precision;
+
 -- rs_history_weekly (기업 상세 페이지의 56주 시계열 표) 에도 추가:
 --   align_weeks  : 그 주차의 정배열 연속주수 (정배열 여부 = align_weeks>0)
 --   vol_gap_4_26 : 거래량 4주MA/26주MA-1 (%). 음수=4w<26w 역배열(거래량 데드크로스). 표시용(매도 알파 없음).
