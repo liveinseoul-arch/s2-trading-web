@@ -99,3 +99,5 @@ npm run dev
 ```
 
 현재 단계: **Phase 0 — 설계/문서**. 코드 스캐폴딩은 설계 승인 후 Phase 1에서 진행한다.
+
+<!-- vercel redeploy test -->
