@@ -3,9 +3,9 @@ import { Section } from "@/components/ui";
 export const revalidate = 3600;
 
 export const metadata = {
-  title: "규칙 (RS96+) — 마감지기",
+  title: "규칙 (RS96+) — 선두지기",
   description:
-    "주간 상대강도(RS) 96 이상 종목을 추적하는 O'Neil CANSLIM · Minervini SEPA 변형 룰. RS 정의, 시장별 시총 필터, 데이터 소스, 갱신 주기.",
+    "주간 상대강도(RS) 96 이상 종목을 추적하는 O'Neil CANSLIM · Minervini SEPA 변형 룰. RS 정의, 시장별 시총 필터, 데이터 소스, 갱신 주기, 매수·매도 조건.",
 };
 
 const RULES: { t: string; d: string }[] = [
@@ -55,6 +55,50 @@ const RULES: { t: string; d: string }[] = [
   },
 ];
 
+// 백테스트/실전 실행 엔진(17_88)의 기계적 매매 규칙.
+// 위 RS96+ 화면은 "후보 풀"이고, 아래는 그 후보를 실제로 사고파는 규칙 — 성과(백테스트)가 이 규칙으로 산출된다.
+const BUY_RULES: { t: string; d: string }[] = [
+  {
+    t: "① 진입 신호 — RS 96+ & 시장 M-필터 ON",
+    d: "주간 RS가 96 이상으로 '신규' 진입한 종목만 매수 대상. 여기에 시장상태(M-필터) 게이트를 함께 건다: 지수(KOSPI/S&P500/N225)의 분산일(distribution day) 누적과 FTD(Follow-Through Day, 반등 4일차+ 1.7%↑ & 거래량 증가)로 시장을 ON/OFF 판정. OFF 구간에서는 RS 96+ 라도 신규 매수를 하지 않는다. 약세장 진입을 원천 차단하는 핵심 장치.",
+  },
+  {
+    t: "② 체결 시점 — 다음 주 시가",
+    d: "금요일 종가로 주간 RS가 확정되면, 다음 주 첫 거래일 시초가에 매수. (옵션 '조기진입': RS 90~95 종목을 월~목에 감시해 RS96 커트라인 주가에 도달하면 다음날 시초가에 진입 — 금요일 확정보다 최대 3영업일 빠름. 지수로 시장 보정.)",
+  },
+  {
+    t: "③ 포지션 크기 — ATR 리스크 사이징",
+    d: "기본은 변동성 기반: 2×ATR(20일) 손실이 총자본의 0.5%가 되도록 투자금액을 역산 → 변동성 큰 종목은 작게, 작은 종목은 크게. ATR 산출 불가 시 fallback 5%. (사이징 OFF 시 고정 비율: 이익·자산성장(C/A) 통과 10% / 미통과 5% / 미통과+RS99 7%.) 총 익스포저 상한으로 전체 레버리지 제한.",
+  },
+  {
+    t: "④ 재진입 쿨다운",
+    d: "손절로 청산한 종목은 이후 8주간 재매수 금지. 같은 자리에서 반복 손절되는 '휩쏘 누수'를 차단.",
+  },
+];
+
+const SELL_RULES: { t: string; d: string }[] = [
+  {
+    t: "① 손절 — max(매수가 −8%, 고점 −25%)",
+    d: "유효 손절가는 두 값 중 높은 쪽. 매수 직후엔 매수가 −8%가 바닥. 이익이 나면 '보유 중 고점 −25%' 트레일링 라인이 위로 올라오며 −8%를 대체 → 수익을 보호하며 추세를 최대한 태운다. 도달 시 전량 매도.",
+  },
+  {
+    t: "② RS 이탈 — 주간 RS ≤ 87",
+    d: "상대강도가 87 이하로 떨어지면(주도력 상실) 가격 손절 전이라도 전량 청산. 진입 96 / 청산 87 의 히스테리시스로 잦은 회전을 억제.",
+  },
+  {
+    t: "③ EMA 트레일링 (HOLDTIME 옵션)",
+    d: "이익이 쌓인 종목은 손절을 이평선으로 전환: 이익 +20%↑ 또는 보유 20일↑ → −8% 고정손절 제거하고 21일 EMA 이탈로 보호, +50%↑ 또는 50일↑ → 50일 EMA로 완화. 큰 추세주를 너무 일찍 털지 않기 위한 장치(기본 OFF, 토글).",
+  },
+  {
+    t: "④ 상장폐지 강제 청산",
+    d: "상폐일이 제공되면 매수 필터에서 우선 제외하고, 보유 중 상폐 도달 시 정리매매 마지막 가용 종가로 강제 청산. ※ KR만 상폐 이력 캐시 보유 → US·JP 백테스트는 상폐 보정이 없어 옛 구간 수익률이 낙관 편향(생존편향)될 수 있음.",
+  },
+  {
+    t: "부분매도 없음 · 전량 원칙",
+    d: "피라미딩(분할 추가매수)이나 분할 익절 없이 전량 보유·전량 매도. 위 매도 트리거는 '가장 먼저 충족되는 것'이 작동한다.",
+  },
+];
+
 export default function RulesRsPage() {
   return (
     <>
@@ -67,6 +111,32 @@ export default function RulesRsPage() {
       <Section title="규칙 상세">
         <ul className="flex flex-col gap-3">
           {RULES.map((r) => (
+            <li key={r.t}>
+              <div className="font-medium text-accent">{r.t}</div>
+              <div className="text-sm text-muted leading-relaxed">{r.d}</div>
+            </li>
+          ))}
+        </ul>
+      </Section>
+
+      <Section title="매수 조건 (전략 실행 · 백테스트 기준)">
+        <p className="mb-3 text-sm leading-relaxed text-muted">
+          위 RS96+ 리스트는 <b>후보 풀</b>이고, 아래는 그 후보를 실제로 <b>사고파는 기계적 규칙</b>입니다.
+          백테스트 성과는 전부 이 규칙(17_88 엔진)으로 산출됩니다. 전량 보유·전량 매도, 부분매도·피라미딩 없음.
+        </p>
+        <ul className="flex flex-col gap-3">
+          {BUY_RULES.map((r) => (
+            <li key={r.t}>
+              <div className="font-medium text-accent">{r.t}</div>
+              <div className="text-sm text-muted leading-relaxed">{r.d}</div>
+            </li>
+          ))}
+        </ul>
+      </Section>
+
+      <Section title="매도 조건 (가장 먼저 충족되는 것)">
+        <ul className="flex flex-col gap-3">
+          {SELL_RULES.map((r) => (
             <li key={r.t}>
               <div className="font-medium text-accent">{r.t}</div>
               <div className="text-sm text-muted leading-relaxed">{r.d}</div>
