@@ -91,8 +91,9 @@ except Exception as _e:
     print(f"[hhmm] 캐시 로드 실패(무시): {_e}")
 
 
-def _hhmm(ticker, d, leg_type, price):
-    return _HHMM.get((str(ticker), str(d), leg_type, int(round(price))))
+def _hhmm(ticker, d, leg_type):
+    # 키=(ticker, date, leg_type). 같은날 같은 leg_type 은 유일하므로 가격 불필요(반올림 오차 회피).
+    return _HHMM.get((str(ticker), str(d), leg_type))
 
 
 def load(cfg: Config, end: date):
@@ -148,7 +149,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
     def leg(p, d, leg_type, stage, price, qty, nav_today):
         p["legs"].append(dict(d=d, leg_type=leg_type, stage=stage, price=round(price), qty=int(qty),
             amount=round(price * qty), port_pct=round(price * qty / nav_today * 100, 2) if nav_today > 0 else None,
-            hhmm=_hhmm(p["tk"], d, leg_type, round(price))))
+            hhmm=_hhmm(p["tk"], d, leg_type)))
 
     def close_trade(p, d, reason):
         trades.append(dict(_tid=p["tid"], ticker=p["tk"], name=p["name"], market=p["market"],
