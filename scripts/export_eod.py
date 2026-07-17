@@ -77,6 +77,23 @@ TIME_STOP_REF = os.environ.get("S2_TIME_STOP_REF", "entry").lower()
 NEWLOW_TRIGGER = os.environ.get("S2_NEWLOW_TRIGGER", "intraday").lower()
 MKT = {"KOSPI": "KS", "KOSDAQ": "KQ"}
 
+# ── 체결시각 캐시 (2b) ──────────────────────────────────────────────
+# 크레온 분봉으로 복원한 체결시각. 키=(ticker, 'YYYY-MM-DD', leg_type, round(price)) → 'HH:MM'.
+# trade_legs 는 매일 전삭제·재적재되므로 DB 백필은 유지 안 됨 → export 가 매번 이 캐시에서 조회.
+# 캐시에 없으면(2024 이전·신규 거래) None. 갱신: scratchpad/hhmm_build_cache.py + 크레온 분봉.
+_HHMM = {}
+try:
+    _hp = Path(__file__).with_name("hhmm_cache.pkl")
+    if _hp.exists():
+        import pickle as _pk
+        _HHMM = _pk.load(open(_hp, "rb"))
+except Exception as _e:
+    print(f"[hhmm] 캐시 로드 실패(무시): {_e}")
+
+
+def _hhmm(ticker, d, leg_type, price):
+    return _HHMM.get((str(ticker), str(d), leg_type, int(round(price))))
+
 
 def load(cfg: Config, end: date):
     """전 구간 px(지표 포함) + 이름/시장 맵 + 스파이크 맵 로드."""
@@ -130,7 +147,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
 
     def leg(p, d, leg_type, stage, price, qty, nav_today):
         p["legs"].append(dict(d=d, leg_type=leg_type, stage=stage, price=round(price), qty=int(qty),
-            amount=round(price * qty), port_pct=round(price * qty / nav_today * 100, 2) if nav_today > 0 else None))
+            amount=round(price * qty), port_pct=round(price * qty / nav_today * 100, 2) if nav_today > 0 else None,
+            hhmm=_hhmm(p["tk"], d, leg_type, round(price))))
 
     def close_trade(p, d, reason):
         trades.append(dict(_tid=p["tid"], ticker=p["tk"], name=p["name"], market=p["market"],
@@ -427,6 +445,14 @@ def upsert_supabase(data):
     def iso(rows):  # date 객체 → 'YYYY-MM-DD'
         return [{k: (str(v) if isinstance(v, date) else v) for k, v in r.items()} for r in rows]
 
+    def _column_exists(table, col):
+        # 해당 컬럼만 select 시도 → 성공하면 존재. (없으면 PostgREST 400)
+        try:
+            req("GET", f"/{table}?select={col}&limit=0")
+            return True
+        except SystemExit:
+            return False
+
     def chunk(rows, n=500):
         for i in range(0, len(rows), n):
             yield rows[i:i + n]
@@ -453,6 +479,12 @@ def upsert_supabase(data):
             tmap[t_in["_tid"]] = t_out["id"]
     legs = [dict({k: v for k, v in lg.items() if k != "_tid"}, trade_id=tmap[lg["_tid"]])
             for lg in data["legs"]]
+    # hhmm 컬럼이 DB 에 아직 없으면(대시보드에서 add column 전) 제거 — 400 방지.
+    if not _column_exists("trade_legs", "hhmm"):
+        for l in legs:
+            l.pop("hhmm", None)
+        print("[hhmm] trade_legs.hhmm 컬럼 없음 → 시각 미적재. "
+              "Supabase SQL: alter table trade_legs add column if not exists hhmm text;")
     for c in chunk(legs):
         if c:
             req("POST", "/trade_legs", iso(c))

@@ -56,7 +56,7 @@ export default async function StockDetail({ params }: { params: Promise<{ ticker
               <li key={l.id} className="flex items-center justify-between py-1.5 text-sm">
                 <span className="flex items-center gap-1.5">
                   <Tag tone={l.leg_type.startsWith("buy") ? "up" : "down"}>{actionLabel[l.leg_type] ?? l.leg_type}</Tag>
-                  <span className="text-xs text-muted tnum">{l.d}</span>
+                  <span className="text-xs text-muted tnum">{l.d}{l.hhmm ? ` ${l.hhmm}` : ""}</span>
                 </span>
                 <span className="tnum">
                   {won(l.price)}원 · {l.qty.toLocaleString("ko-KR")}주

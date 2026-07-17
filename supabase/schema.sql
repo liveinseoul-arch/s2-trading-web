@@ -135,7 +135,8 @@ create table trade_legs (
   price     bigint  not null,
   qty       integer not null,
   amount    bigint  not null,
-  port_pct  numeric(5,2)
+  port_pct  numeric(5,2),
+  hhmm      text            -- 분봉 복원 체결시각 'HH:MM' (2025+ 만, 크레온 캐시). 그외 null.
 );
 create index trade_legs_trade_idx on trade_legs (trade_id);
 create index trade_legs_d_idx     on trade_legs (d);

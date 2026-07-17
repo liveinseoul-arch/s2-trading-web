@@ -52,6 +52,7 @@ export interface TradeLeg {
   id: number; trade_id: number; d: string; leg_type: string;
   stage: number | null; price: number; qty: number; amount: number;
   port_pct: number | null;
+  hhmm?: string | null;   // 분봉 복원 체결시각 'HH:MM' (2025+ 만). 컬럼 없거나 미상이면 undefined/null.
 }
 
 export interface DailyCount {
