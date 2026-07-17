@@ -77,6 +77,30 @@ TIME_STOP_REF = os.environ.get("S2_TIME_STOP_REF", "entry").lower()
 NEWLOW_TRIGGER = os.environ.get("S2_NEWLOW_TRIGGER", "intraday").lower()
 MKT = {"KOSPI": "KS", "KOSDAQ": "KQ"}
 
+
+# ── 호가단위 (KRX 2023-01-25 개정) ──────────────────────────────────
+# 지정가 주문·체결은 호가단위의 배수여야 한다. 목표가/체결가를 이 단위로 맞춘다.
+def _tick(price):
+    p = float(price)
+    if p < 2000:    return 1
+    if p < 5000:    return 5
+    if p < 20000:   return 10
+    if p < 50000:   return 50
+    if p < 200000:  return 100
+    if p < 500000:  return 500
+    return 1000
+
+
+def _to_tick(price, mode="round"):
+    """price 를 호가단위로. mode: round(반올림)/ceil(올림)/floor(내림)."""
+    t = _tick(price)
+    import math
+    if mode == "ceil":
+        return int(math.ceil(price / t) * t)
+    if mode == "floor":
+        return int(math.floor(price / t) * t)
+    return int(round(price / t) * t)
+
 # ── 체결시각 캐시 (2b) ──────────────────────────────────────────────
 # 크레온 분봉으로 복원한 체결시각. 키=(ticker, 'YYYY-MM-DD', leg_type, round(price)) → 'HH:MM'.
 # trade_legs 는 매일 전삭제·재적재되므로 DB 백필은 유지 안 됨 → export 가 매번 이 캐시에서 조회.
@@ -178,16 +202,18 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 cash += _net; p["proc"] += _net; p["qty"] = 0
                 close_trade(p, d, "stop"); del positions[tk]; closed.add(tk); last_exit[tk] = d; continue
 
-            # [옵션 B] 시초 분할매도 — 시가(op) 가 평단×1.03/1.05/1.07 이상이면 시초에 체결로 가정.
-            # 시초 갭업 케이스(시가 = 그날 최고 근처) 정확 처리.
+            # [옵션 B] 시초 분할매도 — 시가(op) 가 목표가(호가단위 반올림) 이상이면 시초에 체결.
+            # 갭업이면 지정가(목표가)가 아니라 '시가'에 체결된다(더 유리). 예: 목표 168,500 인데
+            # 시가 175,700 으로 갭업 → 175,700 에 팔림. 손절이 갭하락 시 시가로 체결되는 것과 대칭.
             # high/low 순서가 모호한 일봉 시뮬 결함 회피 — 시초 매도 후엔 추가매수 차단(sell_count≥1).
-            t = [p["avg_buy"] * (1 + s) for s in S]
+            t = [_to_tick(p["avg_buy"] * (1 + s)) for s in S]   # 목표가 호가단위 반올림
             for stg in range(p["sell_count"] + 1, 4):
                 if op >= t[stg - 1] and p["qty"] > 0:
+                    fill = max(op, t[stg - 1])          # 갭업이면 시가, 아니면 목표가
                     sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
-                    ex(d, p, f"sell_{stg}", stg, t[stg - 1], sq, nav_today)
-                    leg(p, d, f"sell_{stg}", stg, t[stg - 1], sq, nav_today)
-                    _net = sq * t[stg - 1] * SELL_MULT
+                    ex(d, p, f"sell_{stg}", stg, fill, sq, nav_today)
+                    leg(p, d, f"sell_{stg}", stg, fill, sq, nav_today)
+                    _net = sq * fill * SELL_MULT
                     cash += _net; p["proc"] += _net
                     p["qty"] -= sq; p["sell_count"] = stg; p["stop"] = t[stg - 1]
                 else:
@@ -197,7 +223,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             # 추가매수 — buy_count < MAX_BUY. 단 buy_count >= NL_AFTER 이고 추가매수 가격이
             # 직전 최저가 이하면 신저가 손절 발동 시점이 더 빠르므로 추가매수 skip (broker 동일 정책).
             if p["sell_count"] == 0 and p["buy_count"] < MAX_BUY:
-                at = p["last_buy"] * (1 - ADD_DROP)
+                at = _to_tick(p["last_buy"] * (1 - ADD_DROP))   # 추가매수가 호가단위 반올림
                 _skip = (p["buy_count"] >= NL_AFTER and at <= p["min_low"])
                 if not _skip and lo <= at:
                     sh = int(p["tranche"] // at)
@@ -239,7 +265,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             # 시초 매도(op) 와 다음 영업일 hi 기반 매도는 그대로 작동.
             if not bought:
                 # 평단 갱신됐을 수 있으므로 t 재계산
-                t = [p["avg_buy"] * (1 + s) for s in S]
+                t = [_to_tick(p["avg_buy"] * (1 + s)) for s in S]   # 목표가 호가단위 반올림
                 for stg in range(p["sell_count"] + 1, 4):
                     if hi >= t[stg - 1] and p["qty"] > 0:
                         sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
@@ -348,7 +374,7 @@ def build_order_plan(positions, d, nav):
         # 단 buy_count >= NL_AFTER (2 이후) 신저가 손절 활성 상태에서 추가매수 가격이 신저가 손절
         # 가격 이하면 broker 충돌 (신저가 손절 먼저 발동 후 추가매수 잘못 체결) → 표시 skip.
         if p["sell_count"] == 0 and p["buy_count"] < MAX_BUY:
-            at = p["last_buy"] * (1 - ADD_DROP)
+            at = _to_tick(p["last_buy"] * (1 - ADD_DROP))   # 추가매수가 호가단위 반올림
             skip_conflict = (p["buy_count"] >= NL_AFTER and at <= p["min_low"])
             if not skip_conflict:
                 sh = int(p["tranche"] // at)
@@ -356,7 +382,7 @@ def build_order_plan(positions, d, nav):
                     stage=p["buy_count"] + 1, trigger_price=round(at), qty=sh,
                     port_pct=round(p["tranche"] / nav * 100, 2) if nav > 0 else None, diff=diff,
                     note=f"{p['buy_count']+1}차 매수(직전매수가 -{ADD_DROP*100:g}%)"))
-        t = [p["avg_buy"] * (1 + s) for s in S]                       # 매도 감시(미체결 단계)
+        t = [_to_tick(p["avg_buy"] * (1 + s)) for s in S]   # 목표가 호가단위 반올림                       # 매도 감시(미체결 단계)
         for stg in range(p["sell_count"] + 1, 4):
             sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
             plan.append(dict(d=d, ticker=tk, name=p["name"], market=p["market"], order_type="sell",
