@@ -42,11 +42,12 @@ MAX_BUY = 3
 # env S2_SIZE_ABOVE / S2_SIZE_BELOW (예: 0.18 / 0.09)
 SIZE_ABOVE = float(os.environ.get("S2_SIZE_ABOVE", "0.15"))
 SIZE_BELOW = float(os.environ.get("S2_SIZE_BELOW", "0.075"))
-# KR 거래비용 — 매수 수수료 0.015% / 매도 수수료 + 거래세 0.015% + 0.25% = 0.265%
+# KR 거래비용 — 매수 수수료 0.015% / 매도 수수료 0.015% + 세금 0.20% = 0.215%
+#   매도 세금 0.20% = 증권거래세 0.05% + 농어촌특별세 0.15%
 # 환경변수 S2_COSTS=1 일 때만 적용 (기본 0 = 비활성, 백테스트 비교 호환성 유지).
 COSTS_ON = os.environ.get("S2_COSTS", "0") == "1"
 BUY_FEE  = 0.00015
-SELL_FEE = 0.00015 + 0.0025
+SELL_FEE = 0.00015 + 0.0020
 BUY_MULT  = 1 + BUY_FEE  if COSTS_ON else 1.0
 SELL_MULT = 1 - SELL_FEE if COSTS_ON else 1.0
 # 매도 차수별 비중 — 1차/2차는 SELL_STAGE_PCT, 3차는 잔량(=1 - 2*SELL_STAGE_PCT).
