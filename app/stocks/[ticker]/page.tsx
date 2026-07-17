@@ -5,6 +5,10 @@ import type { Trade, TradeLeg } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
+// R = 기준 사이징 9%(120일선 아래). 18%(위)면 2R. 포트% 를 R 배수로 환산해 소수1자리로.
+const R_PCT = 9;
+const toR = (portPct: number) => `${(portPct / R_PCT).toFixed(1)}R`;
+
 export default async function StockDetail({ params }: { params: Promise<{ ticker: string }> }) {
   const { ticker } = await params;
   const { data: tdata } = await supabase.from("trades").select("*")
@@ -48,7 +52,11 @@ export default async function StockDetail({ params }: { params: Promise<{ ticker
                 </span>
                 <span className="tnum">
                   {won(l.price)}원 · {l.qty.toLocaleString("ko-KR")}주
-                  {l.port_pct != null && <span className="ml-2 text-xs text-muted">{l.port_pct.toFixed(1)}%</span>}
+                  {l.port_pct != null && (
+                    <span className="ml-2 text-xs text-muted" title={`포트 ${l.port_pct.toFixed(1)}% · R=${R_PCT}%`}>
+                      {toR(l.port_pct)}
+                    </span>
+                  )}
                 </span>
               </li>
             ))}

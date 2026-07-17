@@ -6,9 +6,9 @@ import { IS_RS96 } from "@/lib/site";
 type Tab = { href: string; label: string; match: (p: string) => boolean };
 
 // 마감지기: 왼편 RS96+ / 오른편 S2
+// (RS96+ 규칙 링크는 선두지기 전용 → 마감지기 상단에서는 제거. 페이지 자체는 유지)
 const MARGINKI_LEFT: Tab[] = [
   { href: "/rs96",       label: "RS96+",       match: (p) => p.startsWith("/rs96") },
-  { href: "/rules/rs96", label: "규칙(RS96+)", match: (p) => p === "/rules/rs96" },
 ];
 const MARGINKI_RIGHT: Tab[] = [
   { href: "/",         label: "오늘",       match: (p) => p === "/" || p.startsWith("/day") },
