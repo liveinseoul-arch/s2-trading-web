@@ -42,6 +42,21 @@ export default function RulesPage() {
         </ul>
       </Section>
 
+      <Section title="거래비용 (실측)">
+        <p className="mb-2 text-sm">
+          <b>매수</b> 수수료 0.015% · <b>매도</b> 수수료 0.015% + 세금 0.20% = <b>0.215%</b>
+          <span className="text-muted"> (세금 = 증권거래세 0.05% + 농어촌특별세 0.15%)</span>
+        </p>
+        <ul className="flex flex-col gap-2 text-sm">
+          <li>본 서비스 표시값(무비용) 대비 비용 반영 시 <b>CAGR −1.25%p</b>:
+            <span className="tnum"> 5.84% → <b className="text-accent">4.59%</b></span>
+            <span className="text-muted"> (MDD −33.8% · 평균수익 +2.84% · 승률 86.4%, 11.9년)</span></li>
+          <li className="text-muted">자본을 11.9년간 63회 회전(연 5.3회)하지만 매도 비용이 0.215%라
+            연 드래그는 ~1.2%p 수준. 고회전이지만 비용이 엣지를 삼키지는 않음.</li>
+          <li className="text-muted">세율은 2026-07 기준. 세법 개정 시 달라짐.</li>
+        </ul>
+      </Section>
+
       <Section title="한계·주의">
         <ul className="flex flex-col gap-2 text-sm text-muted">
           <li>• 당일 −1% 손절(1차 매도일의 ~49%)은 장중 이벤트라 저녁 감시주문만으론 못 따라감 → 텔레그램 알림(Phase 2)으로 보완 예정.</li>
