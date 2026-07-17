@@ -5,9 +5,12 @@ import type { Trade, TradeLeg } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-// R = 기준 사이징 9%(120일선 아래). 18%(위)면 2R. 포트% 를 R 배수로 환산해 소수1자리로.
-const R_PCT = 9;
-const toR = (portPct: number) => `${(portPct / R_PCT).toFixed(1)}R`;
+// R = 그 거래의 신규매수(buy_new) 금액 = 1R. 각 회차 금액을 R 배수로(소수1자리).
+// 신규매수 금액 기준이라 매수 R 합 = 매도 R 합이 맞아떨어짐(port_pct 는 그날 NAV 대비라 불일치).
+function rOf(amount: number | null, baseAmt: number): string | null {
+  if (amount == null || baseAmt <= 0) return null;
+  return `${(amount / baseAmt).toFixed(1)}R`;
+}
 
 export default async function StockDetail({ params }: { params: Promise<{ ticker: string }> }) {
   const { ticker } = await params;
@@ -30,7 +33,12 @@ export default async function StockDetail({ params }: { params: Promise<{ ticker
         {trades[0] && <MarketBadge market={trades[0].market} />}
         <span className="text-sm text-muted tnum">{ticker}</span>
       </div>
-      {trades.length === 0 ? <Empty>거래 내역 없음</Empty> : trades.map((t) => (
+      {trades.length === 0 ? <Empty>거래 내역 없음</Empty> : trades.map((t) => {
+        const tlegs = legsByTrade.get(t.id) ?? [];
+        // 1R = 신규매수(buy_new) 금액. 없으면 첫 매수 금액.
+        const baseLeg = tlegs.find((l) => l.leg_type === "buy_new") ?? tlegs.find((l) => l.leg_type.startsWith("buy"));
+        const baseAmt = baseLeg?.amount ?? 0;
+        return (
         <Section key={t.id}
           title={`${t.entry_date} ~ ${t.exit_date ?? "보유중"}`}
           sub={`매수 ${t.buy_count}회 · ${t.status === "closed"
@@ -44,7 +52,7 @@ export default async function StockDetail({ params }: { params: Promise<{ ticker
             )}
           </div>
           <ul className="divide-y divide-[var(--color-borderc)]">
-            {(legsByTrade.get(t.id) ?? []).map((l) => (
+            {tlegs.map((l) => (
               <li key={l.id} className="flex items-center justify-between py-1.5 text-sm">
                 <span className="flex items-center gap-1.5">
                   <Tag tone={l.leg_type.startsWith("buy") ? "up" : "down"}>{actionLabel[l.leg_type] ?? l.leg_type}</Tag>
@@ -52,9 +60,9 @@ export default async function StockDetail({ params }: { params: Promise<{ ticker
                 </span>
                 <span className="tnum">
                   {won(l.price)}원 · {l.qty.toLocaleString("ko-KR")}주
-                  {l.port_pct != null && (
-                    <span className="ml-2 text-xs text-muted" title={`포트 ${l.port_pct.toFixed(1)}% · R=${R_PCT}%`}>
-                      {toR(l.port_pct)}
+                  {rOf(l.amount, baseAmt) != null && (
+                    <span className="ml-2 text-xs text-muted" title={`금액 ${won(l.amount)} · 1R=신규매수 ${won(baseAmt)}`}>
+                      {rOf(l.amount, baseAmt)}
                     </span>
                   )}
                 </span>
@@ -62,7 +70,8 @@ export default async function StockDetail({ params }: { params: Promise<{ ticker
             ))}
           </ul>
         </Section>
-      ))}
+        );
+      })}
     </>
   );
 }
