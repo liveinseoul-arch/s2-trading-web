@@ -7,9 +7,14 @@ import { marketLabel } from "@/lib/format";
 //   정반대로 읽히므로, 상승·하락과 충돌하지 않는 --color-warn(주황, "주의")을 쓴다.
 export type SectionTone = "danger" | "warning";
 
+// 주황 배경 위에서는 기본 muted(#868e96, 회색)가 대비 1.9~2.6:1 로 전혀 안 읽힌다
+// (배경 투명도를 25%까지 낮춰도 미달 — 회색·주황의 명도가 비슷해서). 그래서 박스 안에서만
+// --color-muted 를 진한 갈색으로 덮어쓴다. .text-muted{color:var(--color-muted)} 라 하위에 상속됨.
 const TONE_BOX: Record<SectionTone, string> = {
-  danger: "border-warn bg-warn/60",    // 둘 다 이탈 — 배경 전체를 주황 60%로 확실히 경고
-  warning: "border-warn/70 bg-warn/30", // 하나만 이탈 — 절반 강도
+  // 둘 다 이탈 — 주황 40%(#f9d199). muted→#4a3b12 대비 7.4:1, 본문 10.7:1
+  danger: "border-warn bg-warn/40 [--color-muted:#4a3b12]",
+  // 하나만 이탈 — 절반 강도
+  warning: "border-warn/70 bg-warn/20 [--color-muted:#5c4a1a]",
 };
 
 export function Section({ title, sub, children, tone, badge }: {
