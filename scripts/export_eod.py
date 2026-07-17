@@ -333,14 +333,14 @@ def build_order_plan(positions, d, nav):
                 plan.append(dict(d=d, ticker=tk, name=p["name"], market=p["market"], order_type="buy_add",
                     stage=p["buy_count"] + 1, trigger_price=round(at), qty=sh,
                     port_pct=round(p["tranche"] / nav * 100, 2) if nav > 0 else None, diff=diff,
-                    note=f"{p['buy_count']+1}차 매수(직전매수가 -10%)"))
+                    note=f"{p['buy_count']+1}차 매수(직전매수가 -{ADD_DROP*100:g}%)"))
         t = [p["avg_buy"] * (1 + s) for s in S]                       # 매도 감시(미체결 단계)
         for stg in range(p["sell_count"] + 1, 4):
             sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
             plan.append(dict(d=d, ticker=tk, name=p["name"], market=p["market"], order_type="sell",
                 stage=stg, trigger_price=round(t[stg - 1]), qty=int(sq),
                 port_pct=round(sq * t[stg - 1] / nav * 100, 2) if nav > 0 else None, diff=diff,
-                note=f"{stg}차 매도(+{[3,5,7][stg-1]}%)"))
+                note=f"{stg}차 매도(+{S[stg-1]*100:g}%)"))
         if p["sell_count"] >= 1:                                      # 손절 감시
             plan.append(dict(d=d, ticker=tk, name=p["name"], market=p["market"], order_type="stop",
                 stage=p["sell_count"], trigger_price=round(p["stop"]), qty=int(p["qty"]),
@@ -518,8 +518,9 @@ def notify_eod(data):
                 lines.append(f"  · {o['stage']}차 매수 {o['trigger_price']:,}원{pf(o.get('port_pct'))}")
             sells = sorted([x for x in os_ if x["order_type"] == "sell"], key=lambda x: x["stage"])
             if sells:
-                lines.append("  · 매도(10/10/80) " + " / ".join(
-                    f"+{[3,5,7][o['stage']-1]}% {o['trigger_price']:,}" for o in sells))
+                _p1 = SELL_STAGE_PCT * 100          # 1·2차 비중, 3차는 잔량
+                lines.append(f"  · 매도({_p1:g}/{_p1:g}/{100-2*_p1:g}) " + " / ".join(
+                    f"+{S[o['stage']-1]*100:g}% {o['trigger_price']:,}" for o in sells))
             for o in [x for x in os_ if x["order_type"] in ("stop", "newlow_stop")]:
                 lab = "손절" if o["order_type"] == "stop" else "신저가손절"
                 lines.append(f"  · {lab} {o['trigger_price']:,}원")
