@@ -34,14 +34,25 @@ from notify import telegram_send                  # noqa: E402
 MUSEOB = 0.80   # 음봉 스파이크 시 사이즈 × 0.8
 PROX = 0.05                      # 예비후보 근접 허용폭(지지선 위 5%까지 포함)
 MA_LONG, WINDOW, NL_AFTER, MAX_LEV = 120, 60, 2, 1.3
-S = tuple(float(x)/100 for x in os.environ.get("S2_SELL_TARGETS", "3,5,7").split(","))
-# 추가매수 drop: 직전 매수가 × (1 - ADD_DROP). 기본 -10%. env S2_ADD_DROP (예: 0.08 = -8%)
-ADD_DROP = float(os.environ.get("S2_ADD_DROP", "0.10"))
-MAX_BUY = 3
-# 사이징 (NAV %) — 120일선 위 SIZE_ABOVE / 아래 SIZE_BELOW. 기본 0.15 / 0.075.
-# env S2_SIZE_ABOVE / S2_SIZE_BELOW (예: 0.18 / 0.09)
-SIZE_ABOVE = float(os.environ.get("S2_SIZE_ABOVE", "0.15"))
-SIZE_BELOW = float(os.environ.get("S2_SIZE_BELOW", "0.075"))
+# ── 운용 파라미터 (2026-07-17 갱신) ─────────────────────────────────
+# 규칙 페이지(/rules/s2)가 설명하는 최적안으로 통일. 기존 운영값(3/5/7 · -10% · 15/7.5 ·
+# 기간손절 없음)은 하위기간 검증에서 **전반기 6.4년 CAGR -2.03%** 로 원금을 까먹었다.
+# 실측(11.9년, 비용 0.215% 반영, 손절=매도가 상향):
+#   설정                                   CAGR    MDD      Calmar
+#   3/5/7 · -10% · 15/7.5 · 손절없음(구)   4.59%  -33.82%   0.14
+#   2/6/14 · -7% · 18/9 · 기간손절 15d     16.05% -11.55%   1.39
+# 하위기간: 전반 6.4년 +10.00%/-10.41% (구 -2.03%/-33.82%) · 후반 7.8년 20.87%/-11.67% (구 9.88%/-10.94%)
+# → 세 기간 모두 우위. MDD 개선은 기간손절 기여가 지배적(구조적 개선).
+# ⚠ 2/6/14 · -7% 는 12년 전체 그리드 최적해라 표본내 편향 가능. 하위기간 일관성은 확인했으나
+#   최적화에 두 기간이 모두 쓰였으므로 진정한 OOS 는 미래 데이터뿐.
+S = tuple(float(x)/100 for x in os.environ.get("S2_SELL_TARGETS", "2,6,14").split(","))
+# 추가매수 drop: 직전 매수가 × (1 - ADD_DROP). 기본 -7%. env S2_ADD_DROP (예: 0.10 = -10%)
+ADD_DROP = float(os.environ.get("S2_ADD_DROP", "0.07"))
+MAX_BUY = 3          # 1차 포함 총 3회 = 추가매수 최대 2회
+# 사이징 (NAV %) — 120일선 위 SIZE_ABOVE / 아래 SIZE_BELOW. 기본 0.18 / 0.09.
+# env S2_SIZE_ABOVE / S2_SIZE_BELOW (예: 0.15 / 0.075 = 구 설정)
+SIZE_ABOVE = float(os.environ.get("S2_SIZE_ABOVE", "0.18"))
+SIZE_BELOW = float(os.environ.get("S2_SIZE_BELOW", "0.09"))
 # KR 거래비용 — 매수 수수료 0.015% / 매도 수수료 0.015% + 세금 0.20% = 0.215%
 #   매도 세금 0.20% = 증권거래세 0.05% + 농어촌특별세 0.15%
 # 환경변수 S2_COSTS=1 일 때만 적용 (기본 0 = 비활성, 백테스트 비교 호환성 유지).
@@ -54,8 +65,9 @@ SELL_MULT = 1 - SELL_FEE if COSTS_ON else 1.0
 # 기본 10/10/80. 환경변수 S2_SELL_STAGE_PCT 로 변경 가능 (예: 0.30 → 30/30/40).
 SELL_STAGE_PCT = float(os.environ.get("S2_SELL_STAGE_PCT", "0.10"))
 # 기간 손절 — N영업일 경과해도 분할매도 한 단계도 못 찍으면 강제 청산.
-# 0 = 비활성. 환경변수 S2_TIME_STOP_DAYS 로 활성화 (예: 15 ≈ 3주).
-TIME_STOP_DAYS = int(os.environ.get("S2_TIME_STOP_DAYS", "0"))
+# 기본 15(≈3주). 화석 포지션을 끊어 자본 회전 ↑ — MDD 개선의 지배적 요인
+# (2/6/14·-7% 만으론 MDD -28.8%, 기간손절 추가 시 -11.6%). 0 = 비활성(구 설정).
+TIME_STOP_DAYS = int(os.environ.get("S2_TIME_STOP_DAYS", "15"))
 # 기간 손절 기준 시점: "entry" = 1차 매수일 (기본·엄격) / "last_buy" = 마지막 매수일 (매수마다 reset·관대)
 TIME_STOP_REF = os.environ.get("S2_TIME_STOP_REF", "entry").lower()
 # 신저가 손절 트리거 기준: "intraday" = 그날 lo (장중) / "close" = 그날 cl (종가만)
