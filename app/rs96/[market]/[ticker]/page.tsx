@@ -99,6 +99,8 @@ export default async function RsTickerHistory({
   const market = parseMarket(marketParam);
   if (!market) notFound();
 
+  // ticker 는 대소문자 무관하게 조회 (영어 ticker 를 소문자로 입력해도 매칭). DB 에는
+  // 대문자로 저장되므로 .ilike(정확값·와일드카드 없음)로 대소문자 무시 정확 일치.
   const ticker = decodeURIComponent(tickerParam);
 
   // 시계열 — rs_universe_weekly (메타 정보 풍부) + rs_history_weekly (mktcap 무관 전체 시계열)
@@ -108,13 +110,13 @@ export default async function RsTickerHistory({
       .from("rs_universe_weekly")
       .select("*")
       .eq("market", market)
-      .eq("ticker", ticker)
+      .ilike("ticker", ticker)
       .order("week_date", { ascending: true }),
     supabase
       .from("rs_history_weekly")
       .select("*")
       .eq("market", market)
-      .eq("ticker", ticker)
+      .ilike("ticker", ticker)
       .order("week_date", { ascending: true }),
     supabase
       .from("rs_top_weekly")
@@ -122,7 +124,7 @@ export default async function RsTickerHistory({
         "week_date,name,name_en,close,mktcap,price_ma_4,price_ma_13,price_ma_26,price_ma_52,vol_ma_4,vol_ma_13,vol_ma_26,ema_21,ema_50,climax_warn,climax_week,climax_vol_mult,climax_ret",
       )
       .eq("market", market)
-      .eq("ticker", ticker)
+      .ilike("ticker", ticker)
       .order("week_date", { ascending: false })
       .limit(1)
       .maybeSingle(),
@@ -135,6 +137,8 @@ export default async function RsTickerHistory({
     price_ma_26?: number | null; price_ma_52?: number | null;
   }> | null) ?? [];
   const histRows = (histRes.data as RsHistoryWeekly[]) ?? [];
+  // 표시는 DB 에 저장된 정식 표기(대문자) 사용 — URL 을 소문자로 들어와도 TSLA 로 표기.
+  const displayTicker = univRows[0]?.ticker ?? histRows[0]?.ticker ?? ticker;
 
   // week_date → universe row (있을 때) Map
   const univByWeek = new Map(univRows.map((r) => [r.week_date, r] as const));
@@ -235,8 +239,8 @@ export default async function RsTickerHistory({
       </form>
 
       <h1 className="mb-1 text-xl font-bold">
-        {meta?.name_en || meta?.name || ticker}
-        <span className="ml-2 text-sm font-normal text-muted">{ticker}</span>
+        {meta?.name_en || meta?.name || displayTicker}
+        <span className="ml-2 text-sm font-normal text-muted">{displayTicker}</span>
       </h1>
       {market === "JP" && meta?.name_en && meta?.name && meta.name !== meta.name_en && (
         <p className="mb-1 text-sm text-muted">{meta.name}</p>
@@ -358,9 +362,24 @@ export default async function RsTickerHistory({
             </Section>
           )}
 
-          {maSnap?.ema_21 != null && (
+          {maSnap?.ema_21 != null && (() => {
+            // 종가가 EMA 아래 = 트레일링 손절선 이탈. 둘 다 이탈이면 적색, 하나면 주황.
+            const c = maSnap.close;
+            const belowEma = (ema: number | null | undefined) =>
+              ema != null && ema > 0 && c != null && c < ema;
+            const nBelow = [maSnap.ema_21, maSnap.ema_50].filter(belowEma).length;
+            const tone = nBelow >= 2 ? "danger" : nBelow === 1 ? "warning" : undefined;
+            // 배지는 제목 옆(주황 배경 밖)이라 solid 주황 + 흰 글자로 대비 확보
+            const badge = nBelow > 0 && (
+              <span className="rounded-full bg-warn px-2 py-0.5 text-[11px] font-semibold text-white">
+                {nBelow >= 2 ? "21·50 EMA 모두 이탈" : "EMA 1개 이탈"}
+              </span>
+            );
+            return (
             <Section
               title="일봉 트레일링 손절선 (21·50 EMA)"
+              tone={tone}
+              badge={badge}
               sub={`미너비니 추적손절 기준선 — 일봉 EMA(주봉 아님). 수익 +20%↑→21EMA, +50%↑→50EMA 이탈 시 청산${
                 maSnap.week_date ? ` · ${maSnap.week_date} 금요일 종가 기준` : ""
               }`}
@@ -384,7 +403,8 @@ export default async function RsTickerHistory({
                 계산됩니다(그 외 종목은 표시 안 됨).
               </p>
             </Section>
-          )}
+            );
+          })()}
 
           <Section title="주차별 RS 추이" sub="막대 — RS96+ 진한 강조색 · 90~95 중간 강조색 · 89 이하 옅은 회색(관심 외)">
             <RsBars data={hist} market={market} />

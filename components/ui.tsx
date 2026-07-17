@@ -1,13 +1,35 @@
 import { marketLabel } from "@/lib/format";
 
-export function Section({ title, sub, children }: {
+// tone: 본문 박스에 위험도 배경/테두리를 입힌다. 미지정 시 기존과 동일(중립).
+//   danger  = 진한 주황 (예: 종가가 21·50 EMA 둘 다 이탈)
+//   warning = 옅은 주황 (예: 둘 중 하나만 이탈)
+// ⚠ 한국식 색관례상 이 앱은 빨강=상승/이익, 파랑=하락/손실. 위험 표시에 빨강을 쓰면
+//   정반대로 읽히므로, 상승·하락과 충돌하지 않는 --color-warn(주황, "주의")을 쓴다.
+export type SectionTone = "danger" | "warning";
+
+const TONE_BOX: Record<SectionTone, string> = {
+  danger: "border-warn bg-warn/60",    // 둘 다 이탈 — 배경 전체를 주황 60%로 확실히 경고
+  warning: "border-warn/70 bg-warn/30", // 하나만 이탈 — 절반 강도
+};
+
+export function Section({ title, sub, children, tone, badge }: {
   title: string; sub?: string; children: React.ReactNode;
+  tone?: SectionTone; badge?: React.ReactNode;
 }) {
   return (
     <section className="mb-5">
-      <h2 className="mb-1 text-base font-bold">{title}</h2>
+      <h2 className="mb-1 flex items-center gap-2 text-base font-bold">
+        {title}
+        {badge}
+      </h2>
       {sub && <p className="mb-2 text-xs text-muted">{sub}</p>}
-      <div className="rounded-xl border border-[var(--color-borderc)] bg-surface p-3">{children}</div>
+      <div
+        className={`rounded-xl border p-3 ${
+          tone ? TONE_BOX[tone] : "border-[var(--color-borderc)] bg-surface"
+        }`}
+      >
+        {children}
+      </div>
     </section>
   );
 }
