@@ -8,7 +8,21 @@
 .env.local 에 TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID 추가하면 Config()가 자동 로드.
 """
 from __future__ import annotations
-import os, json, urllib.request, urllib.error
+import os, json, ssl, urllib.request, urllib.error
+
+
+def _ssl_context() -> ssl.SSLContext:
+    """SSL 검증 컨텍스트. Windows 인증서 저장소에 (백신/방화벽의) 자체서명 루트가
+    끼어들면 기본 검증이 CERTIFICATE_VERIFY_FAILED 로 실패하므로, 설치돼 있으면
+    certifi 의 CA 번들을 우선 사용한다(검증 자체는 유지 → 안전)."""
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+_SSL_CTX = _ssl_context()
 
 
 def telegram_send(text: str) -> bool:
@@ -22,7 +36,7 @@ def telegram_send(text: str) -> bool:
                        "disable_web_page_preview": True}).encode("utf-8")
     req = urllib.request.Request(url, data=body, headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with urllib.request.urlopen(req, timeout=20, context=_SSL_CTX) as r:
             r.read()
         print("[notify] 텔레그램 전송 완료")
         return True
