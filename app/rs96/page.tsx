@@ -2,6 +2,7 @@ import Link from "next/link";
 import { supabase, getMeta } from "@/lib/supabase";
 import { Section, Empty } from "@/components/ui";
 import { pct, signClass } from "@/lib/format";
+import { EMA_BADGE, emaBreakBits, EmaBreakBadge } from "@/components/EmaBreak";
 import type { RsMarket, RsTopWeekly } from "@/lib/types";
 import type { RsThemeWeekly } from "@/lib/types";
 
@@ -263,6 +264,7 @@ export default async function RsScreen({
                       <th className="py-1.5 pl-1 text-left">#</th>
                       <th className="text-left">종목</th>
                       <th>RS</th>
+                      <th className="pl-3" title="종가의 EMA21·EMA50 이탈 (연빨=21 하향, 진빨=50 하향)">MA↓</th>
                       <th>52주 모멘텀</th>
                       <th title="주봉 정배열(4>13>26>52주) 연속 유지 주수(트렌드 나이). 적색 = 정배열이 N주 전 깨짐">정배열</th>
                       <th>종가</th>
@@ -297,10 +299,11 @@ export default async function RsScreen({
                           )}
                         </td>
                         <td className="font-bold text-accent">{r.rs}</td>
+                        <td className="pl-3 tnum">
+                          <EmaBreakBadge bits={emaBreakBits(r.close, r.ema_21, r.ema_50)} />
+                        </td>
                         <td className={signClass(r.comp_return ? r.comp_return * 100 : null)}>
-                          {r.comp_return != null
-                            ? `${r.comp_return >= 0 ? "+" : ""}${Math.round(r.comp_return * 100)}%`
-                            : "-"}
+                          {r.comp_return != null ? Math.round(r.comp_return * 100) : "-"}
                         </td>
                         <td>
                           {r.align_weeks == null ? (
@@ -327,6 +330,11 @@ export default async function RsScreen({
           </Section>
 
           <div className="space-y-1.5 text-xs text-muted">
+            <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
+              <b className="text-textc">MA↓</b> 는 종가의 일봉 EMA 이탈:
+              <span className={`${EMA_BADGE} bg-red-400`}>-</span> 21EMA 아래 ·
+              <span className={`${EMA_BADGE} bg-red-700`}>-</span> 50EMA 아래 (둘 다면 나란히). RS96+ 여도 추세 약화 신호이며, 데이터 없으면 공백.
+            </p>
             <p>
               <b>RS</b>는 IBD/Minervini 정의의 상대강도 백분위(0~99). RS 96 = 상위 4%.
               <b className="ml-2">52주 모멘텀</b>은 백테스트 본체의 composite return —

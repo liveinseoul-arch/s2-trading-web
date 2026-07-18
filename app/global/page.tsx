@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Section, Empty } from "@/components/ui";
 import { loadGlobalThemes, fetchGlobalWeeks } from "@/lib/globalTheme";
+import { EMA_BADGE, EmaBreakBadge } from "@/components/EmaBreak";
 import type { GlobalThemeStock, GlobalSubcategory } from "@/lib/globalTheme";
 import type { RsMarket } from "@/lib/types";
 
@@ -51,29 +52,6 @@ function DeltaBadge({
   );
 }
 
-const EMA_BADGE =
-  "inline-flex items-center justify-center rounded px-1 py-0.5 text-[10px] font-bold leading-none tracking-tight text-white";
-
-function EmaBreakCell({ v }: { v?: number | null }) {
-  if (v == null || v === 0) return null; // 둘 다 위 또는 데이터 없음
-  const below21 = (v & 1) !== 0; // 연한 빨강
-  const below50 = (v & 2) !== 0; // 진한 빨강
-  return (
-    <span className="inline-flex gap-0.5">
-      {below21 && (
-        <span className={`${EMA_BADGE} bg-red-400`} title="종가가 21EMA 아래">
-          -
-        </span>
-      )}
-      {below50 && (
-        <span className={`${EMA_BADGE} bg-red-700`} title="종가가 50EMA 아래">
-          -
-        </span>
-      )}
-    </span>
-  );
-}
-
 const MARKET_BADGE: Record<RsMarket, string> = {
   KR: "bg-blue-500/15 text-blue-400",
   US: "bg-emerald-500/15 text-emerald-400",
@@ -113,7 +91,7 @@ function StockRow({ s }: { s: GlobalThemeStock }) {
       </td>
       <td className="font-semibold text-accent">{s.rs}</td>
       <td className="pl-3 tnum">
-        <EmaBreakCell v={s.emaBreak} />
+        <EmaBreakBadge bits={s.emaBreak} />
       </td>
       <td className={signClass(s.comp_return == null ? null : s.comp_return * 100)}>
         {fmtCompReturn(s.comp_return)}
