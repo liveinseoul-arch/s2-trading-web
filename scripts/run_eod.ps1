@@ -6,7 +6,7 @@ $log = Join-Path $PSScriptRoot "eod.log"
 "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') eod =====" | Out-File -Append -Encoding utf8 $log
 & C:\Python314\python.exe "main.py" --no-gsheets *>> $log               # 당일 EOD 캐시 갱신
 $env:S2_TIME_STOP_DAYS = "15"                                          # 기간 손절 3주
-$env:S2_SELL_TARGETS = "2,6,14"                                        # 분할매도 +2/+6/+14
+$env:S2_SELL_TARGETS = "3,5,7"                                         # 분할매도 +3/+5/+7 (분봉 재검증 채택: 넓은목표는 되밀림 손절多)
 $env:S2_ADD_DROP = "0.07"                                              # 추가매수 -7% (Calmar 1.13)
 $env:S2_SIZE_ABOVE = "0.18"                                            # 120일선 위 사이즈 18% NAV
 $env:S2_SIZE_BELOW = "0.09"                                            # 120일선 아래 사이즈 9% NAV
