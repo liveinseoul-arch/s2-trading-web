@@ -21,6 +21,10 @@ export interface GlobalThemeStock {
 export interface GlobalSubcategory {
   label: string;
   stocks: GlobalThemeStock[];
+  /** 4주전 대비 종목 수 변화 (세분은 라벨 변동이 커 티커 재분류 기준). null = 비교 불가 */
+  deltaTotal?: number | null;
+  /** 이번주 세분 종목 중 4주전에도 RS96+ 였던 수 */
+  prevTotal?: number | null;
 }
 
 export interface GlobalThemeGroup {
@@ -534,6 +538,16 @@ export async function loadGlobalThemes(
           g.prevTotal = c;
         }
         g.deltaTotal = g.total - g.prevTotal;
+
+        // 세분(서브카테고리)은 라벨 변동이 커 항상 티커 재분류로 비교
+        if (g.subcategories) {
+          for (const sub of g.subcategories) {
+            let c = 0;
+            for (const s of sub.stocks) if (prevUniverse.has(s.ticker)) c++;
+            sub.prevTotal = c;
+            sub.deltaTotal = sub.stocks.length - c;
+          }
+        }
       }
     }
   }

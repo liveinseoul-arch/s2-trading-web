@@ -190,6 +190,7 @@ function ThemeCard({
               <h4 className="mb-1.5 text-xs font-semibold text-textc">
                 {sub.label}
                 <span className="ml-1.5 font-normal text-muted">{sub.stocks.length}</span>
+                <DeltaBadge delta={sub.deltaTotal} prevTotal={sub.prevTotal} />
               </h4>
               <StockTable stocks={sub.stocks} />
             </div>
