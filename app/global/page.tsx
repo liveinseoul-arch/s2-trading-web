@@ -51,20 +51,23 @@ function DeltaBadge({
   );
 }
 
+const EMA_BADGE =
+  "inline-flex items-center justify-center rounded px-1 py-0.5 text-[10px] font-bold leading-none tracking-tight text-white";
+
 function EmaBreakCell({ v }: { v?: number | null }) {
   if (v === 2)
     return (
       <span
-        className="font-bold text-down"
+        className={`${EMA_BADGE} bg-red-600`}
         title="종가가 EMA21·EMA50 모두 아래 (추세 약화)"
       >
-        —
+        - -
       </span>
     );
   if (v === 1)
     return (
       <span
-        className="font-semibold text-amber-500"
+        className={`${EMA_BADGE} bg-amber-500`}
         title="종가가 EMA21·EMA50 중 하나 아래"
       >
         -
@@ -111,7 +114,7 @@ function StockRow({ s }: { s: GlobalThemeStock }) {
         )}
       </td>
       <td className="font-semibold text-accent">{s.rs}</td>
-      <td className="tnum">
+      <td className="pl-3 tnum">
         <EmaBreakCell v={s.emaBreak} />
       </td>
       <td className={signClass(s.comp_return == null ? null : s.comp_return * 100)}>
@@ -134,7 +137,7 @@ function StockTable({ stocks, limit = DEFAULT_LIMIT }: { stocks: GlobalThemeStoc
             <th className="py-1 text-left">국</th>
             <th className="text-left">종목</th>
             <th>RS</th>
-            <th title="종가의 EMA21·EMA50 이탈">EMA↓</th>
+            <th className="pl-3" title="종가의 EMA21·EMA50 이탈">EMA↓</th>
             <th>모멘텀</th>
           </tr>
         </thead>
@@ -262,10 +265,10 @@ export default async function GlobalThemes({
         </p>
       )}
 
-      <p className="mb-4 -mt-2 text-[11px] text-muted">
-        <b className="text-textc">EMA↓</b> 칸:{" "}
-        <span className="font-bold text-down">—</span> 종가가 EMA21·50 모두 아래 ·{" "}
-        <span className="font-semibold text-amber-500">-</span> 하나 아래 (RS96+ 여도 추세 약화 신호).
+      <p className="mb-4 -mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-muted">
+        <b className="text-textc">EMA↓</b> 칸:
+        <span className={`${EMA_BADGE} bg-red-600`}>- -</span> 종가가 EMA21·50 모두 아래 ·
+        <span className={`${EMA_BADGE} bg-amber-500`}>-</span> 하나 아래 (RS96+ 여도 추세 약화 신호).
       </p>
 
       {availWeeks.length > 0 && (
