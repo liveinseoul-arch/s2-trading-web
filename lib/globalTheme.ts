@@ -7,6 +7,19 @@ import type { RsMarket, RsThemeWeekly, RsTopWeekly } from "@/lib/types";
 
 const MARKETS: RsMarket[] = ["KR", "US", "JP"];
 
+/** 종가가 일봉 EMA21/EMA50 아래로 이탈한 개수(0/1/2). 값 없으면 null. */
+function emaBreak(
+  close: number | null | undefined,
+  e21: number | null | undefined,
+  e50: number | null | undefined,
+): 0 | 1 | 2 | null {
+  if (close == null || e21 == null || e50 == null) return null;
+  let n = 0;
+  if (close < e21) n++;
+  if (close < e50) n++;
+  return n as 0 | 1 | 2;
+}
+
 export interface GlobalThemeStock {
   market: RsMarket;
   ticker: string;
@@ -16,6 +29,8 @@ export interface GlobalThemeStock {
   comp_return: number | null;
   rank_in_week: number;
   small?: string | null;
+  /** 종가의 일봉 EMA 이탈 상태: 2=EMA21·50 모두 아래, 1=하나 아래, 0=둘 다 위, null=데이터없음 */
+  emaBreak?: 0 | 1 | 2 | null;
 }
 
 export interface GlobalSubcategory {
@@ -168,6 +183,7 @@ async function loadUnifiedGroups(
         comp_return: hit.row.comp_return,
         rank_in_week: hit.row.rank_in_week,
         small: cat.small ?? undefined,
+        emaBreak: emaBreak(hit.row.close, hit.row.ema_21, hit.row.ema_50),
       });
     }
   }
@@ -412,6 +428,7 @@ export async function loadGlobalThemes(
           comp_return: r.comp_return,
           rank_in_week: r.rank_in_week,
           small: cat.small ?? undefined,
+          emaBreak: emaBreak(r.close, r.ema_21, r.ema_50),
         });
         g.total += 1;
       }
