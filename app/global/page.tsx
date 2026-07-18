@@ -55,25 +55,23 @@ const EMA_BADGE =
   "inline-flex items-center justify-center rounded px-1 py-0.5 text-[10px] font-bold leading-none tracking-tight text-white";
 
 function EmaBreakCell({ v }: { v?: number | null }) {
-  if (v === 2)
-    return (
-      <span
-        className={`${EMA_BADGE} bg-red-600`}
-        title="종가가 EMA21·EMA50 모두 아래 (추세 약화)"
-      >
-        - -
-      </span>
-    );
-  if (v === 1)
-    return (
-      <span
-        className={`${EMA_BADGE} bg-amber-500`}
-        title="종가가 EMA21·EMA50 중 하나 아래"
-      >
-        -
-      </span>
-    );
-  return null; // 0(둘 다 위) 또는 데이터 없음 → 표시 안 함
+  if (v == null || v === 0) return null; // 둘 다 위 또는 데이터 없음
+  const below21 = (v & 1) !== 0; // 연한 빨강
+  const below50 = (v & 2) !== 0; // 진한 빨강
+  return (
+    <span className="inline-flex gap-0.5">
+      {below21 && (
+        <span className={`${EMA_BADGE} bg-red-400`} title="종가가 21EMA 아래">
+          -
+        </span>
+      )}
+      {below50 && (
+        <span className={`${EMA_BADGE} bg-red-700`} title="종가가 50EMA 아래">
+          -
+        </span>
+      )}
+    </span>
+  );
 }
 
 const MARKET_BADGE: Record<RsMarket, string> = {
@@ -267,8 +265,8 @@ export default async function GlobalThemes({
 
       <p className="mb-4 -mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-muted">
         <b className="text-textc">MA↓</b> 칸:
-        <span className={`${EMA_BADGE} bg-red-600`}>- -</span> 종가가 EMA21·50 모두 아래 ·
-        <span className={`${EMA_BADGE} bg-amber-500`}>-</span> 하나 아래 (RS96+ 여도 추세 약화 신호).
+        <span className={`${EMA_BADGE} bg-red-400`}>-</span> 종가가 21EMA 아래 ·
+        <span className={`${EMA_BADGE} bg-red-700`}>-</span> 50EMA 아래 (둘 다면 나란히, RS96+ 여도 추세 약화 신호).
       </p>
 
       {availWeeks.length > 0 && (

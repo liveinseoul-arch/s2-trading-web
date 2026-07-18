@@ -7,17 +7,18 @@ import type { RsMarket, RsThemeWeekly, RsTopWeekly } from "@/lib/types";
 
 const MARKETS: RsMarket[] = ["KR", "US", "JP"];
 
-/** 종가가 일봉 EMA21/EMA50 아래로 이탈한 개수(0/1/2). 값 없으면 null. */
+/** 종가의 일봉 EMA 이탈 비트마스크. bit0(=1)=EMA21 하향, bit1(=2)=EMA50 하향.
+ *  0=둘 다 위, 1=21만 아래, 2=50만 아래, 3=둘 다 아래. 값 없으면 null. */
 function emaBreak(
   close: number | null | undefined,
   e21: number | null | undefined,
   e50: number | null | undefined,
-): 0 | 1 | 2 | null {
+): 0 | 1 | 2 | 3 | null {
   if (close == null || e21 == null || e50 == null) return null;
-  let n = 0;
-  if (close < e21) n++;
-  if (close < e50) n++;
-  return n as 0 | 1 | 2;
+  let b = 0;
+  if (close < e21) b |= 1;
+  if (close < e50) b |= 2;
+  return b as 0 | 1 | 2 | 3;
 }
 
 export interface GlobalThemeStock {
@@ -29,8 +30,8 @@ export interface GlobalThemeStock {
   comp_return: number | null;
   rank_in_week: number;
   small?: string | null;
-  /** 종가의 일봉 EMA 이탈 상태: 2=EMA21·50 모두 아래, 1=하나 아래, 0=둘 다 위, null=데이터없음 */
-  emaBreak?: 0 | 1 | 2 | null;
+  /** 종가의 일봉 EMA 이탈 비트마스크: bit0=EMA21 하향, bit1=EMA50 하향 (0~3, null=데이터없음) */
+  emaBreak?: 0 | 1 | 2 | 3 | null;
 }
 
 export interface GlobalSubcategory {
