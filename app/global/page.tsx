@@ -29,6 +29,28 @@ function signClass(v: number | null): string {
   return v > 0 ? "text-up" : "text-down";
 }
 
+function DeltaBadge({
+  delta,
+  prevTotal,
+}: {
+  delta?: number | null;
+  prevTotal?: number | null;
+}) {
+  if (delta == null) return null;
+  if (delta === 0)
+    return <span className="ml-1 text-[10px] text-muted">±0</span>;
+  const up = delta > 0;
+  const isNew = up && (prevTotal ?? 0) === 0;
+  return (
+    <span
+      className={`ml-1 text-[10px] font-semibold tnum ${up ? "text-up" : "text-down"}`}
+      title={`4주전 ${prevTotal ?? 0} → 현재`}
+    >
+      {isNew ? "신규" : `${up ? "▲" : "▼"}${Math.abs(delta)}`}
+    </span>
+  );
+}
+
 const MARKET_BADGE: Record<RsMarket, string> = {
   KR: "bg-blue-500/15 text-blue-400",
   US: "bg-emerald-500/15 text-emerald-400",
@@ -122,6 +144,8 @@ function ThemeCard({
   isGlobal,
   stocks,
   subcategories,
+  delta,
+  prevTotal,
 }: {
   label: string;
   total: number;
@@ -129,6 +153,8 @@ function ThemeCard({
   isGlobal: boolean;
   stocks: GlobalThemeStock[];
   subcategories?: GlobalSubcategory[];
+  delta?: number | null;
+  prevTotal?: number | null;
 }) {
   const hasSubs = subcategories && subcategories.length > 0;
   return (
@@ -157,6 +183,7 @@ function ThemeCard({
             <span className="mx-1">·</span>
             <span className="text-rose-400">JP {countByMarket.JP}</span>
             <span className="ml-1.5 font-semibold text-textc">총 {total}</span>
+            <DeltaBadge delta={delta} prevTotal={prevTotal} />
           </span>
         </div>
       </header>
@@ -191,7 +218,7 @@ export default async function GlobalThemes({
     sp.week && availWeeks.includes(sp.week) ? sp.week : (availWeeks[0] ?? null);
 
   const data = await loadGlobalThemes(selectedWeek);
-  const { groups, weeks, totals, unmatched, marketSummaries, unifiedModel, subdivisionModel } = data;
+  const { groups, weeks, totals, unmatched, marketSummaries, unifiedModel, subdivisionModel, compareWeek } = data;
 
   const noData = Object.values(weeks).every((w) => !w);
   const hasAnySummary = Object.values(marketSummaries).some((s) => s);
@@ -203,6 +230,15 @@ export default async function GlobalThemes({
         3개 시장의 RS96+ 종목을 Gemini 가 분류한 테마로 묶어 한 화면에. <b className="text-textc">3국 동시</b> 가동되는 테마가 위쪽,
         총 종목 수 내림차순. 종목 클릭으로 주차별 RS 추이.
       </p>
+
+      {compareWeek && (
+        <p className="mb-4 -mt-2 text-[11px] text-muted">
+          각 테마 <b className="text-textc">총</b> 옆{" "}
+          <span className="font-semibold text-up">▲</span>/
+          <span className="font-semibold text-down">▼</span> 는 약 4주전(
+          <span className="tnum">{compareWeek.slice(2)}</span> 기준) 대비 종목 수 변화입니다.
+        </p>
+      )}
 
       {availWeeks.length > 0 && (
         <div className="mb-4 flex items-center gap-2 text-sm">
@@ -348,6 +384,8 @@ export default async function GlobalThemes({
               isGlobal={g.isGlobal}
               stocks={g.allStocks}
               subcategories={g.subcategories}
+              delta={g.deltaTotal}
+              prevTotal={g.prevTotal}
             />
           ))}
         </div>

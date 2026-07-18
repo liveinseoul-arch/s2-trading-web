@@ -37,6 +37,10 @@ export interface GlobalThemeGroup {
   isGlobal: boolean;
   /** Gemini 가 50+ 테마를 서브카테고리로 세분 (있을 때만) */
   subcategories?: GlobalSubcategory[];
+  /** 4주전 대비 총 종목 수 변화 (기준 주차 존재 시). null = 비교 불가 */
+  deltaTotal?: number | null;
+  /** 4주전 총 종목 수 (없던 테마면 0) */
+  prevTotal?: number | null;
 }
 
 export interface GlobalThemeData {
@@ -53,6 +57,8 @@ export interface GlobalThemeData {
   unifiedModel: string | null;
   /** 50+ 테마 서브디비전 Gemini 모델 (있을 경우) */
   subdivisionModel: string | null;
+  /** 델타 계산에 사용한 4주전 기준 주차 (없으면 null) */
+  compareWeek: string | null;
 }
 
 /** 전 시장 합쳐 분류 가능한 주차 목록 (최신 → 과거). */
@@ -219,6 +225,105 @@ function normalizeBig(s: string): string {
   ];
   for (const [re, rep] of replacements) v = v.replace(re, rep);
   return v;
+}
+
+/** 특정 주차의 테마 key→총종목수 맵 (delta 계산용).
+ *  본 경로와 동일하게 통합분류(rs_global_theme_weekly) 우선, 없으면 시장별 머지 카운트. */
+async function loadGroupTotalsForWeek(week: string): Promise<Map<string, number>> {
+  const unified = await loadUnifiedGroups(week);
+  if (unified && unified.groups.length > 0) {
+    return new Map(unified.groups.map((g) => [g.key, g.total]));
+  }
+  const themePromises = MARKETS.map(async (m) => {
+    const r = await supabase
+      .from("rs_theme_weekly")
+      .select("*")
+      .eq("market", m)
+      .eq("week_date", week)
+      .maybeSingle();
+    return { market: m, theme: (r.data as RsThemeWeekly | null) ?? null };
+  });
+  const themes = await Promise.all(themePromises);
+  const validPromises = themes.map(async ({ market, theme }) => {
+    if (!theme) return { market, valid: new Set<string>() };
+    const r = await supabase
+      .from("rs_top_weekly")
+      .select("ticker")
+      .eq("market", market)
+      .eq("week_date", theme.week_date);
+    const rows = (r.data as { ticker: string }[]) ?? [];
+    return { market, valid: new Set(rows.map((x) => x.ticker)) };
+  });
+  const validList = await Promise.all(validPromises);
+  const validByMarket = new Map(validList.map((v) => [v.market, v.valid]));
+
+  const totalByKey = new Map<string, number>();
+  for (const { market, theme } of themes) {
+    if (!theme) continue;
+    const valid = validByMarket.get(market) ?? new Set<string>();
+    for (const cat of theme.categories) {
+      const key = normalizeBig(cat.big);
+      if (!key) continue;
+      let n = 0;
+      for (const tk of cat.tickers) if (valid.has(tk)) n++;
+      totalByKey.set(key, (totalByKey.get(key) ?? 0) + n);
+    }
+  }
+  return totalByKey;
+}
+
+/** 해당 주차의 RS96+ 유니버스(rs_top_weekly 전 종목 티커 집합). */
+async function fetchRsUniverse(week: string): Promise<Set<string>> {
+  const rows = await Promise.all(
+    MARKETS.map(async (m) => {
+      const r = await supabase
+        .from("rs_top_weekly")
+        .select("ticker")
+        .eq("market", m)
+        .eq("week_date", week);
+      return (r.data as { ticker: string }[]) ?? [];
+    }),
+  );
+  return new Set(rows.flat().map((x) => x.ticker));
+}
+
+/** 통합분류(rs_global_theme_weekly)가 존재하는 주차 집합. */
+async function fetchUnifiedWeeks(): Promise<Set<string>> {
+  const r = await supabase.from("rs_global_theme_weekly").select("week_date");
+  const rows = (r.data as { week_date: string }[]) ?? [];
+  return new Set(rows.map((x) => x.week_date));
+}
+
+/** primary 주차 기준 ~28일 전(4주전, 18~38일 창) 에서 비교 기준 주차 선택.
+ *  현재 주차가 통합분류를 쓰면 비교도 통합분류 주차로 맞춘다(라벨 어휘 일치 → 델타 왜곡 방지).
+ *  창 안에 후보가 없으면 null → 델타 미표시. */
+function pickCompareWeek(
+  primary: string,
+  availWeeks: string[],
+  unifiedWeeks: Set<string>,
+  preferUnified: boolean,
+): string | null {
+  const pT = Date.parse(primary);
+  const target = pT - 28 * 86400000;
+  const cand = availWeeks.filter((w) => {
+    const t = Date.parse(w);
+    if (t >= pT) return false; // 과거 주차만
+    const days = Math.round((pT - t) / 86400000);
+    return days >= 18 && days <= 38;
+  });
+  if (cand.length === 0) return null;
+  let pool = cand;
+  if (preferUnified) {
+    const uni = cand.filter((w) => unifiedWeeks.has(w));
+    if (uni.length > 0) pool = uni; // 통합분류 주차만 사용(어휘 일치)
+  }
+  pool.sort((a, b) => {
+    const da = Math.abs(Date.parse(a) - target);
+    const db = Math.abs(Date.parse(b) - target);
+    if (da !== db) return da - db; // 28일에 가장 가까운 순
+    return Date.parse(b) - Date.parse(a); // 동률이면 더 최근
+  });
+  return pool[0];
 }
 
 export async function loadGlobalThemes(
@@ -403,5 +508,44 @@ export async function loadGlobalThemes(
     }
   }
 
-  return { groups, weeks, totals, unmatched, marketSummaries, unifiedModel, subdivisionModel };
+  // 4주전 대비 총 종목 수 변화 (테마 key 기준)
+  let compareWeek: string | null = null;
+  if (subWeek) {
+    const [availWeeks, unifiedWeeks] = await Promise.all([
+      fetchGlobalWeeks(),
+      fetchUnifiedWeeks(),
+    ]);
+    compareWeek = pickCompareWeek(subWeek, availWeeks, unifiedWeeks, unifiedModel != null);
+    if (compareWeek) {
+      const [prev, prevUniverse] = await Promise.all([
+        loadGroupTotalsForWeek(compareWeek),
+        fetchRsUniverse(compareWeek),
+      ]);
+      for (const g of groups) {
+        const labelPrev = prev.get(g.key) ?? 0;
+        if (labelPrev > 0) {
+          // 4주전에도 같은 테마가 존재 → 그 주차 테마 종목 수로 비교(증·감 모두)
+          g.prevTotal = labelPrev;
+        } else {
+          // 4주전 분류목록엔 없던 테마 → 그 테마의 이번주 종목 중 4주전에도
+          // RS96+ 였던 수로 재계산(라벨 드리프트로 인한 허위 "신규" 방지)
+          let c = 0;
+          for (const s of g.allStocks) if (prevUniverse.has(s.ticker)) c++;
+          g.prevTotal = c;
+        }
+        g.deltaTotal = g.total - g.prevTotal;
+      }
+    }
+  }
+
+  return {
+    groups,
+    weeks,
+    totals,
+    unmatched,
+    marketSummaries,
+    unifiedModel,
+    subdivisionModel,
+    compareWeek,
+  };
 }
