@@ -1,8 +1,9 @@
 // 종가의 일봉 EMA21/EMA50 이탈 표시 — 테마(/global) · 국가별(/rs96) 화면 공용.
 // 21EMA 하향 = 연한 빨강 "-", 50EMA 하향 = 진한 빨강 "-", 둘 다면 나란히.
 
+// 고정폭 슬롯 — 채워진 슬롯과 빈 슬롯의 크기가 같아 세로 정렬이 유지된다.
 export const EMA_BADGE =
-  "inline-flex items-center justify-center rounded px-1 py-0.5 text-[10px] font-bold leading-none tracking-tight text-white";
+  "inline-flex h-4 w-4 items-center justify-center rounded text-[10px] font-bold leading-none text-white";
 
 /** 종가의 EMA 이탈 비트마스크: bit0(=1)=EMA21 하향, bit1(=2)=EMA50 하향. 0~3, 값없으면 null. */
 export function emaBreakBits(
@@ -17,23 +18,19 @@ export function emaBreakBits(
   return b as 0 | 1 | 2 | 3;
 }
 
-/** 이탈 배지. bits 0/데이터없음 → 표시 안 함. */
+/** 이탈 배지 — 21(왼)·50(오른) 고정 2슬롯. 이탈 없음/데이터없음 → 공백. */
 export function EmaBreakBadge({ bits }: { bits?: number | null }) {
   if (bits == null || bits === 0) return null;
-  const below21 = (bits & 1) !== 0; // 연한 빨강
-  const below50 = (bits & 2) !== 0; // 진한 빨강
+  const below21 = (bits & 1) !== 0; // 왼쪽 슬롯: 연한 빨강
+  const below50 = (bits & 2) !== 0; // 오른쪽 슬롯: 진한 빨강
   return (
     <span className="inline-flex gap-0.5">
-      {below21 && (
-        <span className={`${EMA_BADGE} bg-red-400`} title="종가가 21EMA 아래">
-          -
-        </span>
-      )}
-      {below50 && (
-        <span className={`${EMA_BADGE} bg-red-700`} title="종가가 50EMA 아래">
-          -
-        </span>
-      )}
+      <span className={below21 ? `${EMA_BADGE} bg-red-400` : EMA_BADGE} title={below21 ? "종가가 21EMA 아래" : undefined}>
+        {below21 ? "-" : ""}
+      </span>
+      <span className={below50 ? `${EMA_BADGE} bg-red-700` : EMA_BADGE} title={below50 ? "종가가 50EMA 아래" : undefined}>
+        {below50 ? "-" : ""}
+      </span>
     </span>
   );
 }

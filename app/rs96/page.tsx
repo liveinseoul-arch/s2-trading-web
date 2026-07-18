@@ -264,7 +264,7 @@ export default async function RsScreen({
                       <th className="py-1.5 pl-1 text-left">#</th>
                       <th className="text-left">종목</th>
                       <th>RS</th>
-                      <th className="pl-3" title="종가의 EMA21·EMA50 이탈 (연빨=21 하향, 진빨=50 하향)">MA↓</th>
+                      <th className="pl-3 text-left" title="종가의 EMA21·EMA50 이탈 (왼=21 하향, 오른=50 하향)">MA↓</th>
                       <th title="52주 가중 모멘텀(백분위 계산용 composite return)">모멘텀</th>
                       <th title="주봉 정배열(4>13>26>52주) 연속 유지 주수(트렌드 나이). 적색 = 정배열이 N주 전 깨짐">정배열</th>
                       <th>종가</th>
@@ -299,7 +299,7 @@ export default async function RsScreen({
                           )}
                         </td>
                         <td className="font-bold text-accent">{r.rs}</td>
-                        <td className="pl-3 tnum">
+                        <td className="pl-3 text-left tnum">
                           <EmaBreakBadge bits={emaBreakBits(r.close, r.ema_21, r.ema_50)} />
                         </td>
                         <td className={signClass(r.comp_return ? r.comp_return * 100 : null)}>

@@ -90,7 +90,7 @@ function StockRow({ s }: { s: GlobalThemeStock }) {
         )}
       </td>
       <td className="font-semibold text-accent">{s.rs}</td>
-      <td className="pl-3 tnum">
+      <td className="pl-3 text-left tnum">
         <EmaBreakBadge bits={s.emaBreak} />
       </td>
       <td className={signClass(s.comp_return == null ? null : s.comp_return * 100)}>
@@ -113,7 +113,7 @@ function StockTable({ stocks, limit = DEFAULT_LIMIT }: { stocks: GlobalThemeStoc
             <th className="py-1 text-left">국</th>
             <th className="text-left">종목</th>
             <th>RS</th>
-            <th className="pl-3" title="종가의 EMA21·EMA50 이탈">MA↓</th>
+            <th className="pl-3 text-left" title="종가의 EMA21·EMA50 이탈 (왼=21 하향, 오른=50 하향)">MA↓</th>
             <th>모멘텀</th>
           </tr>
         </thead>
