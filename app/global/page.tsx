@@ -171,11 +171,6 @@ function ThemeCard({
               {subcategories!.length}개 세분
             </span>
           )}
-          {isGlobal && (
-            <span className="rounded bg-accent/15 px-1.5 py-0.5 font-semibold text-accent">
-              3국 동시
-            </span>
-          )}
           <span className="tnum text-muted">
             <span className="text-blue-400">KR {countByMarket.KR}</span>
             <span className="mx-1">·</span>
