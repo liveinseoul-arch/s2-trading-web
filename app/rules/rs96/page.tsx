@@ -86,8 +86,8 @@ const SELL_RULES: { t: string; d: string }[] = [
     d: "상대강도가 87 이하로 떨어지면(주도력 상실) 가격 손절 전이라도 전량 청산. 진입 96 / 청산 87 의 히스테리시스로 잦은 회전을 억제.",
   },
   {
-    t: "③ EMA 트레일링 (HOLDTIME 옵션)",
-    d: "이익이 쌓인 종목은 손절을 이평선으로 전환: 이익 +20%↑ 또는 보유 20일↑ → −8% 고정손절 제거하고 21일 EMA 이탈로 보호, +50%↑ 또는 50일↑ → 50일 EMA로 완화. 큰 추세주를 너무 일찍 털지 않기 위한 장치(기본 OFF, 토글).",
+    t: "③ EMA 트레일링 — 수익 구간별 단계 승격",
+    d: "기본 모드: 보유 중 고점 수익(peak gain)이 +20%에 도달하면 21일 EMA 종가 이탈 트레일이 켜지고, +50% 도달 시 50일 EMA(더 느슨한 트레일)로 승격된다. 한 번 승격되면 되돌아가지 않으며, −8% 손절은 단계와 무관하게 항상 병행 활성. (HOLDTIME 토글 시 보유 20일/50일 초과가 OR 조건으로 추가되고 EMA 단계에서 −8%가 해제되지만 기본 OFF.) 아래 '매도 트리거 · 활성 조건' 표 참조.",
   },
   {
     t: "④ 상장폐지 강제 청산",
@@ -98,6 +98,48 @@ const SELL_RULES: { t: string; d: string }[] = [
     d: "피라미딩(분할 추가매수)이나 분할 익절 없이 전량 보유·전량 매도. 위 매도 트리거는 '가장 먼저 충족되는 것'이 작동한다.",
   },
 ];
+
+// 매도 트리거·활성 조건 (17_88 엔진 기본 모드). 기준값 = 보유 중 최고가 기준 수익률(peak gain).
+const SELL_STAGES = [
+  {
+    stage: "① −8% 손절",
+    arm: "항상 활성 (진입 직후부터)",
+    trigger: "장중 저가가 손절가 이하 (갭 하락 시 시가 체결)",
+    note: "이익이 나면 고점 −25% 트레일 라인이 −8%를 위로 대체",
+  },
+  {
+    stage: "② 21EMA 트레일",
+    arm: "peak gain ≥ +20% 도달 이후",
+    trigger: "일봉 종가가 21일 EMA 이하",
+    note: "+20~50% 구간의 중형 이익 회수 창구",
+  },
+  {
+    stage: "③ 50EMA 트레일",
+    arm: "peak gain ≥ +50% 도달 이후 (②를 대체)",
+    trigger: "일봉 종가가 50일 EMA 이하",
+    note: "변동성을 견디며 대시세를 끝까지 추적. 승격 후 미복귀",
+  },
+  {
+    stage: "④ RS 이탈",
+    arm: "항상 활성",
+    trigger: "주간 RS ≤ 87",
+    note: "주도력 상실 시 최후 안전망",
+  },
+];
+
+// 매도 사유별 실현 수익률 분포 — 백테스트: US, 2019-08-12~2026-04-17, 17_88 엔진,
+// 재진입 없음 · 손절 후 8주 쿨다운 · ATR 사이징(리스크 0.7%) · C/A 비활성. 총 646건, CAGR 19.5%.
+const SELL_DIST = [
+  { r: "50EMA 이탈", n: "63 (9.8%)", mean: "+75.0%", med: "+52.2%", rng: "−4.0 ~ +341%", win: "96.8%", contrib: "+158%", hold: "93일" },
+  { r: "21EMA 이탈", n: "113 (17.5%)", mean: "+12.4%", med: "+11.1%", rng: "−3.7 ~ +35%", win: "94.7%", contrib: "+61%", hold: "44일" },
+  { r: "기간종료(미청산)", n: "11 (1.7%)", mean: "+27.1%", med: "+8.6%", rng: "−1.5 ~ +181%", win: "90.9%", contrib: "+17%", hold: "18일" },
+  { r: "RS하락(≤87)", n: "9 (1.4%)", mean: "+1.5%", med: "−0.7%", rng: "−8.0 ~ +22.6%", win: "44.4%", contrib: "+0.3%", hold: "59일" },
+  { r: "손절(−8%)", n: "405 (62.7%)", mean: "−8.0%", med: "−8.0%", rng: "−8.0% 고정", win: "0%", contrib: "−117%", hold: "8일" },
+  { r: "손절(갭하락)", n: "45 (7.0%)", mean: "−11.3%", med: "−9.2%", rng: "−62.4 ~ −8.0%", win: "0%", contrib: "−20%", hold: "17일" },
+];
+
+const TH = "px-2 py-1.5 text-left font-medium whitespace-nowrap";
+const TD = "px-2 py-1.5 whitespace-nowrap";
 
 export default function RulesRsPage() {
   return (
@@ -142,6 +184,89 @@ export default function RulesRsPage() {
               <div className="text-sm text-muted leading-relaxed">{r.d}</div>
             </li>
           ))}
+        </ul>
+      </Section>
+
+      <Section title="매도 트리거 · 활성 조건 (기본 모드)">
+        <p className="mb-2 text-sm leading-relaxed text-muted">
+          매도 규칙은 수익 구간에 따라 3단계로 <b>승격</b>됩니다. 기준값은 현재 평가손익이 아니라
+          <b> 보유 중 최고가 기준 수익률(peak gain)</b> — 장중 고가로 갱신되며 단조 증가합니다.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-muted">
+            <thead>
+              <tr className="border-b border-[var(--color-borderc)] text-accent">
+                <th className={TH}>단계</th>
+                <th className={TH}>활성 조건</th>
+                <th className={TH}>매도 트리거</th>
+                <th className={TH}>비고</th>
+              </tr>
+            </thead>
+            <tbody>
+              {SELL_STAGES.map((s) => (
+                <tr key={s.stage} className="border-b border-[var(--color-borderc)] last:border-0 align-top">
+                  <td className={`${TD} font-medium`}>{s.stage}</td>
+                  <td className={TD}>{s.arm}</td>
+                  <td className={TD}>{s.trigger}</td>
+                  <td className="px-2 py-1.5">{s.note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-xs leading-relaxed text-muted">
+          0~+20% 구간은 −8% 손절만 작동. +20% 도달 후 21EMA, +50% 도달 후 50EMA로 트레일이
+          느슨해지며 대시세를 추적한다. 상장폐지 시에는 정리매매 마지막 가용 종가로 강제 청산.
+        </p>
+      </Section>
+
+      <Section title="매도 사유별 실현 수익률 분포 (백테스트)">
+        <p className="mb-2 text-sm leading-relaxed text-muted">
+          US · 2019-08-12 ~ 2026-04-17 · 17_88 엔진(재진입 없음, 손절 후 8주 쿨다운, ATR 사이징
+          리스크 0.7%, C/A 비활성) · 총 646건 · CAGR 19.5% / MDD −26.3% 런 기준.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-muted">
+            <thead>
+              <tr className="border-b border-[var(--color-borderc)] text-accent">
+                <th className={TH}>매도 사유</th>
+                <th className={TH}>건수 (비중)</th>
+                <th className={TH}>평균</th>
+                <th className={TH}>중앙값</th>
+                <th className={TH}>최소~최대</th>
+                <th className={TH}>승률</th>
+                <th className={TH}>손익 기여</th>
+                <th className={TH}>평균 보유</th>
+              </tr>
+            </thead>
+            <tbody>
+              {SELL_DIST.map((s) => (
+                <tr key={s.r} className="border-b border-[var(--color-borderc)] last:border-0">
+                  <td className={`${TD} font-medium`}>{s.r}</td>
+                  <td className={TD}>{s.n}</td>
+                  <td className={TD}>{s.mean}</td>
+                  <td className={TD}>{s.med}</td>
+                  <td className={TD}>{s.rng}</td>
+                  <td className={TD}>{s.win}</td>
+                  <td className={TD}>{s.contrib}</td>
+                  <td className={TD}>{s.hold}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <ul className="mt-2 ml-4 list-disc text-xs leading-relaxed text-muted">
+          <li>
+            이익의 원천은 50EMA 트레일까지 도달한 소수(9.8%)로, 총손익의 158%를 담당. +100% 초과
+            대박(16건)은 전부 이 그룹에서 발생.
+          </li>
+          <li>
+            거래의 약 70%는 손절(−8% 정액 + 갭하락)로 끝나며 이익의 137%를 상쇄 — 전형적인
+            저승률(28%)·고손익비(2.2) 모멘텀 구조.
+          </li>
+          <li>갭하락 손절은 평균 −11.3%로 −8% 설계선을 뚫는다(최악 −62.4%).</li>
+          <li>RS≤87 청산은 9건뿐 — 트레일이 먼저 작동해 사실상 최후 안전망으로만 기능.</li>
+          <li>손익 기여 %는 총손익 대비 비율이라 합계가 100%를 넘는 항목이 존재.</li>
         </ul>
       </Section>
 
