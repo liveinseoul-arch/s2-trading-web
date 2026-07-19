@@ -25,6 +25,14 @@ export default async function StockDetail({ params }: { params: Promise<{ ticker
   const legsByTrade = new Map<number, TradeLeg[]>();
   legs.forEach((l) => legsByTrade.set(l.trade_id, [...(legsByTrade.get(l.trade_id) ?? []), l]));
   const name = trades[0]?.name ?? ticker;
+  // 같은 날 여러 leg(예: 갭업에 1·2차매도 동시 09:01)의 표시 순서 — 논리적 매매 순서로 정렬.
+  const LEG_ORDER: Record<string, number> = {
+    buy_new: 0, buy_add: 1, sell_1: 2, sell_2: 3, sell_3: 4, stop: 5, newlow_stop: 6,
+  };
+  const sortLegs = (arr: TradeLeg[]) =>
+    [...arr].sort((a, b) =>
+      a.d < b.d ? -1 : a.d > b.d ? 1
+        : (LEG_ORDER[a.leg_type] ?? 9) - (LEG_ORDER[b.leg_type] ?? 9));
 
   return (
     <>
@@ -34,7 +42,7 @@ export default async function StockDetail({ params }: { params: Promise<{ ticker
         <span className="text-sm text-muted tnum">{ticker}</span>
       </div>
       {trades.length === 0 ? <Empty>거래 내역 없음</Empty> : trades.map((t) => {
-        const tlegs = legsByTrade.get(t.id) ?? [];
+        const tlegs = sortLegs(legsByTrade.get(t.id) ?? []);
         // 1R = 신규매수(buy_new) 금액. 없으면 첫 매수 금액.
         const baseLeg = tlegs.find((l) => l.leg_type === "buy_new") ?? tlegs.find((l) => l.leg_type.startsWith("buy"));
         const baseAmt = baseLeg?.amount ?? 0;
