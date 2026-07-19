@@ -5,11 +5,7 @@ import { IS_RS96 } from "@/lib/site";
 
 type Tab = { href: string; label: string; match: (p: string) => boolean };
 
-// 마감지기: 왼편 RS96+ / 오른편 S2
-// (RS96+ 규칙 링크는 선두지기 전용 → 마감지기 상단에서는 제거. 페이지 자체는 유지)
-const MARGINKI_LEFT: Tab[] = [
-  { href: "/rs96",       label: "RS96+",       match: (p) => p.startsWith("/rs96") },
-];
+// 마감지기: S2 전용 탭만 노출 (RS96+ 링크는 숨김 — 페이지 자체는 유지)
 const MARGINKI_RIGHT: Tab[] = [
   { href: "/",         label: "오늘",       match: (p) => p === "/" || p.startsWith("/day") },
   { href: "/dashboard",label: "대시보드",   match: (p) => p.startsWith("/dashboard") || p.startsWith("/month") },
@@ -51,8 +47,6 @@ export default function TopNav() {
 
   return (
     <nav className="hidden items-center gap-5 text-sm lg:flex">
-      {MARGINKI_LEFT.map((t) => <TabLink key={t.href} tab={t} active={t.match(p)} />)}
-      <span aria-hidden className="mx-1 h-5 w-px bg-[var(--color-borderc)]" />
       {MARGINKI_RIGHT.map((t) => <TabLink key={t.href} tab={t} active={t.match(p)} />)}
     </nav>
   );

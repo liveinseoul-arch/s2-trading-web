@@ -39,6 +39,46 @@ export default async function Dashboard() {
   const avgRet = trades.length ? trades.reduce((s, t) => s + (t.ret_pct ?? 0), 0) / trades.length : 0;
   const monthly = (monthlyRes.data as MonthlyStat[]) ?? [];
 
+  // 연도별 집계 — nav_daily 전체(1000행 캡 페이지네이션)로 연수익률·MDD, 월별통계 합산으로 거래지표
+  const navAll: NavDaily[] = [];
+  for (let pg = 0; pg < 6; pg++) {
+    const r = await supabase.from("nav_daily").select("d,nav,dd_pct")
+      .order("d", { ascending: true }).range(pg * 1000, pg * 1000 + 999);
+    const rows = (r.data as NavDaily[]) ?? [];
+    navAll.push(...rows);
+    if (rows.length < 1000) break;
+  }
+  const yrNav = new Map<string, { end: number; mdd: number }>();
+  for (const n of navAll) {
+    const y = n.d.slice(0, 4);
+    const e = yrNav.get(y) ?? { end: 0, mdd: 0 };
+    e.end = n.nav;                                   // 정렬돼 있어 마지막=연말
+    e.mdd = Math.min(e.mdd, n.dd_pct ?? 0);
+    yrNav.set(y, e);
+  }
+  const yrTrd = new Map<string, { num: number; wins: number; pnl: number; retw: number }>();
+  for (const m of monthly) {
+    const y = m.month.slice(0, 4);
+    const e = yrTrd.get(y) ?? { num: 0, wins: 0, pnl: 0, retw: 0 };
+    e.num += m.num_trades;
+    e.wins += (m.win_rate / 100) * m.num_trades;
+    e.pnl += m.realized_pnl;
+    e.retw += m.avg_ret * m.num_trades;
+    yrTrd.set(y, e);
+  }
+  let prevEnd = base;
+  const yearly = [...yrNav.keys()].sort().map((y) => {
+    const e = yrNav.get(y)!;
+    const ret = prevEnd > 0 ? (e.end / prevEnd - 1) * 100 : 0;
+    prevEnd = e.end;
+    const t = yrTrd.get(y);
+    return {
+      year: y, ret, mdd: e.mdd, num: t?.num ?? 0,
+      win: t && t.num ? (t.wins / t.num) * 100 : 0,
+      avg: t && t.num ? t.retw / t.num : 0, pnl: t?.pnl ?? 0,
+    };
+  }).reverse();
+
   return (
     <>
       <h1 className="mb-3 text-lg font-bold">월별 대시보드</h1>
@@ -51,9 +91,36 @@ export default async function Dashboard() {
         <Stat label="매수당 평균" value={pct(avgRet)} tone={signClass(avgRet)} />
       </div>
       <p className="mb-4 text-xs text-muted">
-        기준자본 1억 · 비용 적용 모델(매수 0.015% / 매도 0.215% = 증권거래세 0.05%+농특세 0.15%) · +2/+6/+14 분할매도·−7% 추가매수·18%/9% 사이징·3주 기간 손절·시초 매도·추가매수일 매도 보류·broker 충돌 시 3차 매수 skip 적용. 실거래 슬리피지 추가 있을 수 있음.
-        11.9년(2014-08~2026-07) 전체 검증 — CAGR 16.05% · MDD −11.6% · Calmar 1.39. 자세히는 규칙 화면 참고.
+        기준자본 1억 · 비용 적용 모델(매수 0.015% / 매도 0.215% = 증권거래세 0.05%+농특세 0.15%) · +3/+5/+7 분할매도(33/33/33)·−7% 추가매수·18%/9% 사이징·레버 1.2·낙주필터(ret5&lt;−30)·3주 기간 손절·시초 매도·추가매수일 매도 보류·broker 충돌 시 3차 매수 skip 적용. 실거래 슬리피지 추가 있을 수 있음. 자세히는 규칙 화면 참고.
       </p>
+
+      <Section title="연도별 성과" sub="2014·2026은 부분연도(각 8월 시작 / 7월까지).">
+        {yearly.length === 0 ? <Empty>데이터 없음</Empty> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm tnum">
+              <thead className="text-xs text-muted">
+                <tr className="border-b border-[var(--color-borderc)] text-right">
+                  <th className="py-1.5 text-left">연도</th><th>연수익률</th><th>거래</th>
+                  <th>승률</th><th>평균</th><th>실현손익</th><th>MDD</th>
+                </tr>
+              </thead>
+              <tbody>
+                {yearly.map((y) => (
+                  <tr key={y.year} className="border-b border-[var(--color-borderc)] text-right last:border-0">
+                    <td className="py-1.5 text-left font-medium">{y.year}</td>
+                    <td className={signClass(y.ret)}>{pct(y.ret)}</td>
+                    <td>{y.num}</td>
+                    <td>{y.win.toFixed(0)}%</td>
+                    <td className={signClass(y.avg)}>{pct(y.avg)}</td>
+                    <td className={signClass(y.pnl)}>{eok(y.pnl)}</td>
+                    <td className="text-down">{pct(y.mdd)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
 
       <Section title="월별 성과" sub="월을 누르면 그 달에 청산된 거래 종목 상세.">
         {monthly.length === 0 ? <Empty>데이터 없음</Empty> : (
