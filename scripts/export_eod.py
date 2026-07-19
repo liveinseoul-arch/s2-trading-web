@@ -33,7 +33,29 @@ from notify import telegram_send                  # noqa: E402
 # ── 운용안 상수 (s2_candidates 와 동일) ──────────────────────────────
 MUSEOB = 0.80   # 음봉 스파이크 시 사이즈 × 0.8
 PROX = 0.05                      # 예비후보 근접 허용폭(지지선 위 5%까지 포함)
-MA_LONG, WINDOW, NL_AFTER, MAX_LEV = 120, 60, 2, 1.3
+MA_LONG, WINDOW, NL_AFTER = 120, 60, 2
+MAX_LEV = float(os.environ.get("S2_MAX_LEV", "1.3"))   # 1.3=30% 대출 허용 / 1.0=대출없음(현금한도)
+# (실험) 현금제약 시 매수 우선순위. none=기존순서 / rise2w=최근2주 순방향 최대상승폭 큰 순.
+BUY_PRIORITY = os.environ.get("S2_BUY_PRIORITY", "none").lower()
+RISE2W_WIN   = int(os.environ.get("S2_RISE2W_WIN", "10"))   # 2주 ≈ 10 거래일
+# (실험) 낙주 진입필터 — 진입일 5거래일 수익률 < 임계면 진입 skip. None=off. (예: -0.30)
+_emr = os.environ.get("S2_ENTRY_MIN_RET5", "")
+ENTRY_MIN_RET5 = float(_emr) if _emr not in ("", "off") else None
+# 낙주 처리 모드: skip=진입 제외(기본) / deep=진입가를 3차매수 등가로 더 낮춰 1차매수(저가 진입)
+#              / deep_blend=deep 진입 + 매도목표를 (1·2·3차) 블렌드 평단 기준으로(상단 더 먹기)
+KNIFE_MODE   = os.environ.get("S2_KNIFE_MODE", "skip").lower()
+KNIFE_DEEP_N = int(os.environ.get("S2_KNIFE_DEEP_N", "2"))   # 몇 단계(−7%) 더 깊게. 2=3차매수가
+# deep_blend 목표배수: 저가진입가 대비 (가상 1·2·3차) 블렌드 평단 비율 = 목표를 그만큼 상향
+_add = float(os.environ.get("S2_ADD_DROP", "0.07"))
+KNIFE_TGT_MULT = (sum((1 - _add) ** j for j in range(KNIFE_DEEP_N + 1)) / (KNIFE_DEEP_N + 1)) / (1 - _add) ** KNIFE_DEEP_N
+# 낙주(deep) 전용 매도목표 — 설정 시 저가 진입가 기준 이 목표 사용(deep_blend 배수 무시). 예: "5,8,11"
+_kt = os.environ.get("S2_KNIFE_TARGETS", "")
+KNIFE_TARGETS = tuple(float(x) / 100 for x in _kt.split(",")) if _kt else None
+# (실험) 잠재력 종목 차등 목표가 — rise2w >= 임계 종목에 넓은 목표 적용. off=전종목 기본 S.
+POTENTIAL_TARGETS = os.environ.get("S2_POTENTIAL_TARGETS", "off").lower()   # 예: "3,6,10"
+POTENTIAL_RISE    = float(os.environ.get("S2_POTENTIAL_RISE", "0.07"))       # rise2w 임계(7%)
+_WIDE_T = (tuple(float(x) / 100 for x in POTENTIAL_TARGETS.split(","))
+           if POTENTIAL_TARGETS != "off" else None)
 # ── 운용 파라미터 (2026-07-18 확정) ─────────────────────────────────
 # 매도목표 3/5/7, 추가매수 -7%, 사이징 18/9, 기간손절 3주. (구 운영값은 -10%/15%(7.5)·기간손절 없음)
 # 개선의 핵심은 매도목표가 아니라 **기간손절+추가매수+사이징**이다:
@@ -51,11 +73,40 @@ MA_LONG, WINDOW, NL_AFTER, MAX_LEV = 120, 60, 2, 1.3
 S = tuple(float(x)/100 for x in os.environ.get("S2_SELL_TARGETS", "3,5,7").split(","))
 # 추가매수 drop: 직전 매수가 × (1 - ADD_DROP). 기본 -7%. env S2_ADD_DROP (예: 0.10 = -10%)
 ADD_DROP = float(os.environ.get("S2_ADD_DROP", "0.07"))
-MAX_BUY = 3          # 1차 포함 총 3회 = 추가매수 최대 2회
+MAX_BUY = int(os.environ.get("S2_MAX_BUY", "3"))   # 1차 포함 총 매수 횟수(기본3=추가매수 2회)
 # 사이징 (NAV %) — 120일선 위 SIZE_ABOVE / 아래 SIZE_BELOW. 기본 0.18 / 0.09.
 # env S2_SIZE_ABOVE / S2_SIZE_BELOW (예: 0.15 / 0.075 = 구 설정)
 SIZE_ABOVE = float(os.environ.get("S2_SIZE_ABOVE", "0.18"))
 SIZE_BELOW = float(os.environ.get("S2_SIZE_BELOW", "0.09"))
+
+# --- (실험) 변동성 국면 사이징 — 기본 off. S2_VOL_SIZING=highvol|lowvol|linear ---
+# KOSPI 추세 변동성(과거만) 기준으로 진입 사이즈 배수. look-ahead 방지 위해 확장중앙값 사용.
+VOL_SIZING = os.environ.get("S2_VOL_SIZING", "off").lower()
+VOL_MULT   = float(os.environ.get("S2_VOL_MULT", "1.3"))
+VOL_WIN    = int(os.environ.get("S2_VOL_WIN", "20"))
+_VOLMULT = {}
+if VOL_SIZING != "off":
+    try:
+        import FinanceDataReader as _fdr
+        _ks = _fdr.DataReader("KS11", "2013-01-01")["Close"]
+        _vol = _ks.pct_change().rolling(VOL_WIN).std() * (252 ** 0.5)
+        _med = _vol.expanding(min_periods=60).median()   # 그 시점까지의 중앙값(누수 없음)
+        for _dt, _v in _vol.items():
+            _me = _med.get(_dt)
+            if _v != _v or _me is None or _me != _me or _me == 0:
+                continue
+            _hi = _v >= _me
+            _ds = _dt.strftime("%Y-%m-%d")
+            if VOL_SIZING == "highvol":
+                _VOLMULT[_ds] = VOL_MULT if _hi else 1.0
+            elif VOL_SIZING == "lowvol":
+                _VOLMULT[_ds] = VOL_MULT if not _hi else 1.0
+            elif VOL_SIZING == "linear":
+                _VOLMULT[_ds] = max(0.5, min(2.0, _v / _me))
+        print(f"[vol-sizing] {VOL_SIZING} mult={VOL_MULT} win={VOL_WIN} → {len(_VOLMULT)}일 로드")
+    except Exception as _e:
+        print(f"[vol-sizing] 로드 실패 → off: {_e}")
+        VOL_SIZING = "off"
 # KR 거래비용 — 매수 수수료 0.015% / 매도 수수료 0.015% + 세금 0.20% = 0.215%
 #   매도 세금 0.20% = 증권거래세 0.05% + 농어촌특별세 0.15%
 # 환경변수 S2_COSTS=1 일 때만 적용 (기본 0 = 비활성, 백테스트 비교 호환성 유지).
@@ -185,6 +236,32 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
         for lg in p["legs"]:
             legs.append(dict(_tid=p["tid"], **lg))
 
+    # (실험) 낙주필터용 — 종목별 최근 5거래일 수익률 사전계산.
+    _RET5 = {}
+    if ENTRY_MIN_RET5 is not None:
+        for _tk, _g in px.groupby("ticker"):
+            _g = _g.sort_values("date")
+            _c = _g["close"].to_numpy(); _D = _g["date"].to_numpy()
+            for _e in range(5, len(_g)):
+                if _c[_e - 5] > 0:
+                    _RET5[(_tk, str(_D[_e])[:10])] = _c[_e] / _c[_e - 5] - 1
+        print(f"[entry-filter] ret5<{ENTRY_MIN_RET5} 사전계산 {len(_RET5)}건")
+
+    # (실험) 종목별 최근 RISE2W_WIN 거래일 순방향 최대상승폭(저점→이후고점) — 매수우선순위·차등목표 공용.
+    _RISE2W = {}
+    if BUY_PRIORITY == "rise2w" or _WIDE_T is not None:
+        for _tk, _g in px.groupby("ticker"):
+            _g = _g.sort_values("date")
+            _H = _g["high"].to_numpy(); _L = _g["low"].to_numpy(); _D = _g["date"].to_numpy()
+            for _e in range(len(_g)):
+                _rm = None; _best = 0.0
+                for _k in range(max(0, _e - RISE2W_WIN + 1), _e + 1):
+                    _rm = _L[_k] if _rm is None else min(_rm, _L[_k])
+                    if _rm and _rm > 0:
+                        _best = max(_best, _H[_k] / _rm - 1)
+                _RISE2W[(_tk, str(_D[_e])[:10])] = _best
+        print(f"[buy-priority] rise2w 사전계산 {len(_RISE2W)}건 (win={RISE2W_WIN})")
+
     for d in all_dates:
         day = by_date[d]; nav_today = cash + cur_hv(day); closed = set()
         for tk in list(positions):
@@ -206,7 +283,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             # 갭업이면 지정가(목표가)가 아니라 '시가'에 체결된다(더 유리). 예: 목표 168,500 인데
             # 시가 175,700 으로 갭업 → 175,700 에 팔림. 손절이 갭하락 시 시가로 체결되는 것과 대칭.
             # high/low 순서가 모호한 일봉 시뮬 결함 회피 — 시초 매도 후엔 추가매수 차단(sell_count≥1).
-            t = [_to_tick(p["avg_buy"] * (1 + s)) for s in S]   # 목표가 호가단위 반올림
+            t = [_to_tick(p["avg_buy"] * p.get("tgt_mult", 1.0) * (1 + s)) for s in p.get("targets", S)]   # 목표가 호가단위 반올림(포지션별)
             for stg in range(p["sell_count"] + 1, 4):
                 if op >= t[stg - 1] and p["qty"] > 0:
                     fill = max(op, t[stg - 1])          # 갭업이면 시가, 아니면 목표가
@@ -222,7 +299,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             bought = False
             # 추가매수 — buy_count < MAX_BUY. 단 buy_count >= NL_AFTER 이고 추가매수 가격이
             # 직전 최저가 이하면 신저가 손절 발동 시점이 더 빠르므로 추가매수 skip (broker 동일 정책).
-            if p["sell_count"] == 0 and p["buy_count"] < MAX_BUY:
+            if p["sell_count"] == 0 and p["buy_count"] < MAX_BUY and not p.get("knife"):
                 at = _to_tick(p["last_buy"] * (1 - ADD_DROP))   # 추가매수가 호가단위 반올림
                 _skip = (p["buy_count"] >= NL_AFTER and at <= p["min_low"])
                 if not _skip and lo <= at:
@@ -238,7 +315,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     elif sh > 0:
                         ex(d, p, "buy_add", p["buy_count"] + 1, at, sh, nav_today, blocked=True)
             _trigger_px = lo if NEWLOW_TRIGGER == "intraday" else cl
-            if p["sell_count"] == 0 and p["buy_count"] >= NL_AFTER and not bought and _trigger_px < p["min_low"]:
+            if p["sell_count"] == 0 and (p["buy_count"] >= NL_AFTER or p.get("knife")) and not bought and _trigger_px < p["min_low"]:
                 ex(d, p, "newlow_stop", None, cl, p["qty"], nav_today)
                 leg(p, d, "newlow_stop", None, cl, p["qty"], nav_today)
                 _net = p["qty"] * cl * SELL_MULT
@@ -265,7 +342,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             # 시초 매도(op) 와 다음 영업일 hi 기반 매도는 그대로 작동.
             if not bought:
                 # 평단 갱신됐을 수 있으므로 t 재계산
-                t = [_to_tick(p["avg_buy"] * (1 + s)) for s in S]   # 목표가 호가단위 반올림
+                t = [_to_tick(p["avg_buy"] * p.get("tgt_mult", 1.0) * (1 + s)) for s in p.get("targets", S)]   # 목표가 호가단위 반올림(포지션별)
                 for stg in range(p["sell_count"] + 1, 4):
                     if hi >= t[stg - 1] and p["qty"] > 0:
                         sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
@@ -286,12 +363,20 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 close_trade(p, d, "sell_3"); del positions[tk]; closed.add(tk); last_exit[tk] = d
         # 예비후보 스캔(근접 포함) + 신규 진입(지지선 이하만 체결)
         n_cand = n_reached = n_bought = n_blocked = 0
+        _reached = []                                  # (tk, price, sz, above, bull) — 체결 대상 수집
         for tk, r in day.items():
             if tk in positions or tk in closed:
                 continue
             if not (pd.notna(r["ma20"]) and r["date"] >= period_start):
                 continue
-            support = float(r["support"]); price = float(r["close"])
+            support = float(r["support"]); price = float(r["close"]); _is_knife = False
+            # 낙주(최근5일 급락) 처리 — skip: 진입 제외 / deep·deep_blend: 진입가를 3차매수 등가로 낮춰 단발 저가진입
+            if ENTRY_MIN_RET5 is not None and _RET5.get((tk, str(d)[:10]), 0.0) < ENTRY_MIN_RET5:
+                if KNIFE_MODE in ("deep", "deep_blend"):
+                    support = support * (1 - ADD_DROP) ** KNIFE_DEEP_N
+                    _is_knife = True
+                else:
+                    continue
             if price > support * (1 + PROX):          # 지지선에서 너무 멀면 후보 아님
                 continue
             rs = sm.get((tk, d))
@@ -301,6 +386,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             sz = SIZE_ABOVE if above else SIZE_BELOW
             if bull is False:
                 sz *= MUSEOB
+            if VOL_SIZING != "off":
+                sz *= _VOLMULT.get(str(d)[:10], 1.0)   # d 는 datetime64 → 문자열 정규화
             reached = price < support
             candidates.append(dict(d=d, ticker=tk, kind="new", name=nmap.get(tk, ""),
                 market=MKT.get(mmap.get(tk, ""), mmap.get(tk, "")), current_price=round(price),
@@ -310,6 +397,12 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             n_cand += 1
             if not reached:                            # 근접(지지선 위) → 후보만, 체결 안 함
                 continue
+            _reached.append((tk, price, sz, above, bull, _is_knife))
+        # 현금제약 시 우선순위 정렬 — rise2w 큰 종목 먼저 매수 (none=수집순=기존 동작)
+        if BUY_PRIORITY == "rise2w":
+            _dk = str(d)[:10]
+            _reached.sort(key=lambda x: _RISE2W.get((x[0], _dk), -1.0), reverse=True)
+        for tk, price, sz, above, bull, _kn in _reached:
             n_reached += 1
             amt = sz * nav_today; sh = int(amt // price)
             if sh <= 0:
@@ -323,8 +416,20 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             tid_seq += 1
             _cost = sh * price * BUY_MULT
             cash -= _cost
+            # 잠재력 종목(2주 순방향 상승 rise2w >= 임계)이면 넓은 목표가, 아니면 기본 S
+            if _WIDE_T is not None and _RISE2W.get((tk, str(d)[:10]), 0.0) >= POTENTIAL_RISE:
+                _tgts = _WIDE_T
+            else:
+                _tgts = S
+            _tmult = 1.0
+            if _kn:                                        # 낙주 deep 진입: 전용 목표/배수
+                if KNIFE_TARGETS is not None:
+                    _tgts = KNIFE_TARGETS
+                elif KNIFE_MODE == "deep_blend":
+                    _tmult = KNIFE_TGT_MULT
             p = dict(tk=tk, name=stub["name"], market=stub["market"], entry_date=d,
-                last_buy_idx=didx[d],
+                last_buy_idx=didx[d], targets=_tgts,
+                knife=_kn, tgt_mult=_tmult,
                 tranche=amt, avg_buy=price, last_buy=price, buy_count=1, sell_count=0, stop=None,
                 qty=sh, total_qty=sh, min_low=price, last_close=price,
                 entry_above=above, entry_bull=bull, tid=tid_seq, cost=_cost, proc=0.0, legs=[])
@@ -382,7 +487,7 @@ def build_order_plan(positions, d, nav):
                     stage=p["buy_count"] + 1, trigger_price=round(at), qty=sh,
                     port_pct=round(p["tranche"] / nav * 100, 2) if nav > 0 else None, diff=diff,
                     note=f"{p['buy_count']+1}차 매수(직전매수가 -{ADD_DROP*100:g}%)"))
-        t = [_to_tick(p["avg_buy"] * (1 + s)) for s in S]   # 목표가 호가단위 반올림                       # 매도 감시(미체결 단계)
+        t = [_to_tick(p["avg_buy"] * p.get("tgt_mult", 1.0) * (1 + s)) for s in p.get("targets", S)]   # 목표가 호가단위 반올림(포지션별)                       # 매도 감시(미체결 단계)
         for stg in range(p["sell_count"] + 1, 4):
             sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
             plan.append(dict(d=d, ticker=tk, name=p["name"], market=p["market"], order_type="sell",
