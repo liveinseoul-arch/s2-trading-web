@@ -270,6 +270,39 @@ export default function RulesRsPage() {
         </ul>
       </Section>
 
+      <Section title="재무(C) 필터 검증 — 미국·한국 상반된 결론 (2026-07)">
+        <p className="mb-2 text-sm leading-relaxed text-muted">
+          오닐 CANSLIM의 C(분기 이익성장) 필터를 point-in-time 재무 데이터(미국 Sharadar SF1,
+          한국 DART 접수일 기준)로 정식 검증한 결과, <b>두 시장의 결론이 정반대</b>로 나왔다.
+        </p>
+        <ul className="ml-4 list-disc text-sm leading-relaxed text-muted">
+          <li>
+            <b>미국</b>: 평범한 성장 확인(+25%)은 오히려 독이고, <b>극단적 성장(EPS 배증·흑자전환)만
+            매수</b>하면 알파 — 시총 상위 20%와 결합 시 2002~2026(생존편향 보정)에서 Sharpe 0.57로
+            S&amp;P500(0.52)을 위험조정 기준 상회, MDD는 지수의 절반 이하(−24% vs −56%).
+            walk-forward(2002~14 선택 → 2015~26 검증)도 통과. 단 아래 한국 미재현으로
+            <b> 정식 채택이 아닌 미국 한정 참고 전략</b>.
+          </li>
+          <li>
+            <b>한국</b>: 같은 게이트가 <b>모든 임계값에서 파괴적</b>(2017~2026 기준선 +14.5% →
+            게이트 시 −1% 수준). 진입 시점 사후 분류에서 이익 배증 통과 그룹이 평균 −1.5%로
+            미통과 그룹(+4.1%)보다 오히려 나빴고, +50% 대박 29건 중 16건이 재무 미통과
+            종목이었다 — 방향 자체가 역신호.
+          </li>
+          <li>
+            <b>이유</b>: 한국 상장사의 이익 급증은 반도체·화학·조선 같은 <b>사이클 산업의 피크
+            신호</b>인 경우가 많다. 실적 배증이 공시로 확인되는 시점이 사이클 정점 부근이라,
+            RS96 모멘텀과 겹치면 꼭대기 매수가 된다. 미국의 배증이 구조적 성장주(신제품·플랫폼)의
+            초입 신호인 것과 대조적이며, 한국 주도주의 연료는 실적보다 기대·테마·수급이다.
+          </li>
+        </ul>
+        <p className="mt-2 text-sm font-medium leading-relaxed text-accent">
+          한 줄 요약: 미국은 &ldquo;실적이 주가를 끌고&rdquo;, 한국은 &ldquo;기대가 주가를 끌고
+          실적은 뒤늦게 도착&rdquo;하는 시장이라, 실적 확인형 게이트가 미국에선 조기 신호,
+          한국에선 후행 신호가 된다. 한국 규칙에는 재무 필터를 적용하지 않는다.
+        </p>
+      </Section>
+
       <Section title="해석 가이드">
         <p className="text-sm leading-relaxed text-muted">
           이 화면은 <b>후보 풀</b>이지 자동 매수 신호가 아닙니다. 다음 단계는 사용자가 직접 봅니다:
