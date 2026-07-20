@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function PerfYear({ params }: { params: Promise<{ year: string }> }) {
   const { year } = await params;
   const y = rs96Perf.yearly.find((r) => String(r.year) === year) ?? null;
-  const months = rs96Perf.monthly.filter((m) => m.month.slice(0, 4) === year);
+  const months = rs96Perf.monthly.filter((m) => m.month.slice(0, 4) === year).reverse();  // 최근 월이 위
   // 그 해 청산된 거래 중 수익률 상위(대박 승자 부각) — 저승률·고손익비 전략 특성.
   const trades = rs96Perf.trades
     .filter((t) => t.exit.slice(0, 4) === year)
@@ -46,7 +46,7 @@ export default async function PerfYear({ params }: { params: Promise<{ year: str
             <table className="w-full text-sm tnum">
               <thead className="text-xs text-muted">
                 <tr className="border-b border-[var(--color-borderc)] text-right">
-                  <th className="py-1.5 text-left">월</th><th>월수익률</th><th>거래</th>
+                  <th className="py-1.5 text-left">월</th><th>월수익률</th><th>거래</th><th>보유</th>
                   <th>승률</th><th>평균</th><th>실현손익</th><th>MDD</th>
                 </tr>
               </thead>
@@ -58,6 +58,7 @@ export default async function PerfYear({ params }: { params: Promise<{ year: str
                     </td>
                     <td className={signClass(m.ret)}>{pct(m.ret)}</td>
                     <td>{m.num}</td>
+                    <td className="text-muted">{rs96Perf.held[m.month]?.length ?? 0}</td>
                     <td>{m.num > 0 ? `${m.win.toFixed(0)}%` : "-"}</td>
                     <td className={signClass(m.avg)}>{m.num > 0 ? pct(m.avg) : "-"}</td>
                     <td className={signClass(m.pnl)}>{m.num > 0 ? eok(m.pnl) : "-"}</td>

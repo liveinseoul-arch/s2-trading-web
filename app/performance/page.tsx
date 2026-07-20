@@ -72,7 +72,7 @@ export default function Performance() {
             <table className="w-full text-sm tnum">
               <thead className="text-xs text-muted">
                 <tr className="border-b border-[var(--color-borderc)] text-right">
-                  <th className="py-1.5 text-left">월</th><th>월수익률</th><th>거래</th>
+                  <th className="py-1.5 text-left">월</th><th>월수익률</th><th>거래</th><th>보유</th>
                   <th>승률</th><th>평균</th><th>실현손익</th><th>MDD</th>
                 </tr>
               </thead>
@@ -84,6 +84,7 @@ export default function Performance() {
                     </td>
                     <td className={signClass(m.ret)}>{pct(m.ret)}</td>
                     <td>{m.num}</td>
+                    <td className="text-muted">{rs96Perf.held[m.month]?.length ?? 0}</td>
                     <td>{m.num > 0 ? `${m.win.toFixed(0)}%` : "-"}</td>
                     <td className={signClass(m.avg)}>{m.num > 0 ? pct(m.avg) : "-"}</td>
                     <td className={signClass(m.pnl)}>{m.num > 0 ? eok(m.pnl) : "-"}</td>
