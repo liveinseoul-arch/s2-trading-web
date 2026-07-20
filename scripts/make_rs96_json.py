@@ -15,7 +15,7 @@ BASE = nav["equity"].iloc[0]
 try:
     hld = pd.read_csv(f"{SP}/rs96_held.csv")
 except Exception:
-    hld = pd.DataFrame(columns=["month","ticker","name","entry","entryPx","meClose","evalPct","evalPnl","rs"])
+    hld = pd.DataFrame(columns=["month","ticker","name","entry","entryPx","meClose","evalPct","evalPnl","mEvalPct","mEvalPnl","rs"])
 
 def d(x): return None if pd.isna(x) else round(float(x), 2)
 def i(x): return None if pd.isna(x) else int(x)
@@ -55,10 +55,11 @@ trades = [dict(ticker=str(r.ticker), name=str(r["name"]),
 # 월말 보유종목 → {YYYY-MM: [포지션...]} (평가손익 큰 순)
 held = {}
 for m, g in hld.groupby("month"):
-    g = g.sort_values("evalPnl", ascending=False)
+    g = g.sort_values("mEvalPnl", ascending=False)   # 이번달 기여 큰 순
     held[str(m)] = [dict(ticker=str(r.ticker), name=str(r["name"]), entry=str(r.entry),
                          entryPx=d(r.entryPx), close=d(r.meClose), evalPct=d(r.evalPct),
-                         evalPnl=int(r.evalPnl), rs=i(r.rs)) for _, r in g.iterrows()]
+                         evalPnl=int(r.evalPnl), mEvalPct=d(r.mEvalPct), mEvalPnl=int(r.mEvalPnl),
+                         rs=i(r.rs)) for _, r in g.iterrows()]
 
 out = dict(meta=meta, yearly=yearly, monthly=monthly, trades=trades, held=held)
 with open(APP, "w", encoding="utf-8") as f:

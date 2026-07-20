@@ -45,8 +45,8 @@ export default async function PerfMonth({ params }: { params: Promise<{ month: s
       <Section
         title={`월말 보유종목 ${held.length}건`}
         sub={isLast
-          ? "백테스트 최근 거래일 종가 기준 평가손익(진입가 대비)."
-          : "월말 마지막 거래일 종가 기준 평가손익(진입가 대비). 다음 달로 넘어가는 미청산 포지션."}>
+          ? "최근 거래일 종가 기준. 큰 수치=이번달 평가손익(전월말 대비), 아래=누적(진입가 대비)."
+          : "월말 종가 기준. 큰 수치=이번달 평가손익(전월말 대비, 그달 기여), 아래=누적(진입가 대비). 다음 달로 넘어가는 미청산 포지션."}>
         {held.length === 0 ? <Empty>월말 보유 포지션이 없습니다.</Empty> : (
           <ul className="divide-y divide-[var(--color-borderc)]">
             {held.map((h, i) => (
@@ -63,9 +63,12 @@ export default async function PerfMonth({ params }: { params: Promise<{ month: s
                   </span>
                 </span>
                 <span className="text-right tnum">
-                  <span className={`font-medium ${signClass(h.evalPct)}`}>{pct(h.evalPct)}</span>
-                  <span className={`block text-xs ${signClass(h.evalPnl)}`}>
-                    {h.evalPnl >= 0 ? "+" : ""}{won(h.evalPnl)}
+                  <span className={`font-medium ${signClass(h.mEvalPct)}`}>{pct(h.mEvalPct)}</span>
+                  <span className={`ml-1 text-xs ${signClass(h.mEvalPnl)}`}>
+                    ({h.mEvalPnl >= 0 ? "+" : ""}{won(h.mEvalPnl)})
+                  </span>
+                  <span className="block text-xs text-muted">
+                    누적 <span className={signClass(h.evalPct)}>{pct(h.evalPct)}</span>
                   </span>
                 </span>
               </li>

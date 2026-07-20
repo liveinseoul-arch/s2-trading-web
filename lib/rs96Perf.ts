@@ -22,7 +22,10 @@ export interface RsPerfTrade {
 }
 export interface RsPerfHeld {
   ticker: string; name: string; entry: string;
-  entryPx: number; close: number; evalPct: number; evalPnl: number; rs: number;
+  entryPx: number; close: number;
+  evalPct: number; evalPnl: number;       // 누적(진입가 대비)
+  mEvalPct: number; mEvalPnl: number;      // 이번달(전월말 대비)
+  rs: number;
 }
 
 export const rs96Perf = raw as {

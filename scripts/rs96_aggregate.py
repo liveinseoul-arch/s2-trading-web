@@ -95,8 +95,9 @@ try:
     # 거래일 캘린더: 유동성 큰 삼성전자 인덱스(없으면 자산곡선 날짜) → 월말 산출
     cal = dcache["005930.KS"].index if "005930.KS" in dcache else pd.DatetimeIndex(eq["date"])
     cals = pd.Series(cal)
-    me = cals.groupby(cals.dt.to_period("M")).max()   # 월 → 마지막 거래일
+    me = cals.groupby(cals.dt.to_period("M")).max().sort_index()   # 월 → 마지막 거래일(시간순)
     last_d = eq["date"].iloc[-1]                        # 데이터 마지막(최근)
+    prev_med = None                                     # 직전 월말 거래일
     for per, med in me.items():
         med = min(med, last_d)                          # 백테스트 종료 이후 미래 방지
         ym = str(per)
@@ -104,13 +105,22 @@ try:
             if t["entry_date"] <= med < t["exit_date"]:  # 월말 종가 시점 보유
                 c = close_at(t["ticker"], med)
                 if c is None: continue
+                ep = float(t["entry_price"]); sh = float(t["shares"])
+                # 이번달 평가손익: 전월말에도 보유했으면 전월말 종가, 이번달 진입이면 진입가 기준
+                if prev_med is not None and t["entry_date"] <= prev_med:
+                    ref = close_at(t["ticker"], prev_med) or ep
+                else:
+                    ref = ep
                 held_rows.append(dict(
                     month=ym, ticker=t["ticker"], name=t["name"],
                     entry=t["entry_date"].strftime("%Y-%m-%d"),
-                    entryPx=round(float(t["entry_price"]), 2), meClose=round(c, 2),
-                    evalPct=round((c / t["entry_price"] - 1) * 100, 2),
-                    evalPnl=int(round(float(t["shares"]) * (c - t["entry_price"]))),
+                    entryPx=round(ep, 2), meClose=round(c, 2),
+                    evalPct=round((c / ep - 1) * 100, 2),            # 누적(진입가 대비)
+                    evalPnl=int(round(sh * (c - ep))),
+                    mEvalPct=round((c / ref - 1) * 100, 2),          # 이번달(전월말 대비)
+                    mEvalPnl=int(round(sh * (c - ref))),
                     rs=int(t["entry_rs"])))
+        prev_med = med
     print(f"월말 보유종목: {len(held_rows)}건 ({len(set(h['month'] for h in held_rows))}개월)")
 except Exception as e:
     print(f"⚠ 월말 보유종목 계산 생략: {e}")
