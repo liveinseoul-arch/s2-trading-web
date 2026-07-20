@@ -150,6 +150,18 @@ export default function RulesRsPage() {
         종목 리스트는 모두 이 규칙으로 산출됩니다.
       </p>
 
+      <Section title="실제 전략 성과 (한국)">
+        <p className="text-sm leading-relaxed text-muted">
+          아래 규칙으로 한국 시장을 백테스트한 <b>월별·연도별 성과</b>는{" "}
+          <a href="/performance" className="text-accent hover:underline">성과 화면(/performance)</a>에서 확인할 수 있습니다.
+          채택 구성: <b>RS96+ ∩ 영업이익 C≥25% ∩ 거래대금 상위 20%</b> + ATR 리스크 0.7%(2×ATR) 사이징
+          + −8% 손절 · 21/50일 EMA 트레일링. 2017~2026 결과 <b>CAGR 12.7% · MDD −24.9% · Calmar 0.51</b>
+          (원화 기준 3.12배). 저승률(31%)·고손익비 순정 모멘텀 — 청산의 65%가 −8% 손절로 빠르게 잘리고
+          살아남은 소수 승자를 EMA 트레일로 크게 태운다. 시총 상위 20/25% 게이트는 이미 거래대금·복합필터에
+          포함돼 무효과였고, <b>거래대금 상위 20%</b>가 유효했다.
+        </p>
+      </Section>
+
       <Section title="규칙 상세">
         <ul className="flex flex-col gap-3">
           {RULES.map((r) => (
