@@ -2,15 +2,25 @@
 """RS-KR 최종구성 백테스트 Excel → 월별/연도별 성과 집계 + CSV 저장.
 성과 대시보드(/performance) 갱신 1단계. 이후 make_rs96_json.py 로 lib/rs96Perf.json 생성.
 입력 Excel(F)은 quantBacktest 17_88_cmp_sf1 엔진 산출물(채택 구성). 환경변수로 경로 오버라이드 가능."""
-import os
+import os, pickle
 import pandas as pd, numpy as np
 F = os.environ.get("RS96_XLSX", r"C:/quantBacktest/screen/backtest_result_17_88_dash_final.xlsx")
+DAILY = os.environ.get("BT_DAILY_CACHE_KR", r"C:/quantBacktest/screen/_bt_daily_cache_kr.pkl")
 OUT = os.path.dirname(os.path.abspath(__file__))   # 중간 CSV 는 scripts/ 에 생성
+
+# 엔진 이름매핑 누락 종목 보정(우선주 등). 필요 시 추가.
+NAME_FIX = {"005935.KS": "삼성전자우"}
 
 xl = pd.ExcelFile(F)
 tr = xl.parse("KR_거래"); eq = xl.parse("KR_자산")
 eq["date"] = pd.to_datetime(eq["date"]); eq = eq.sort_values("date").reset_index(drop=True)
 tr["entry_date"] = pd.to_datetime(tr["entry_date"]); tr["exit_date"] = pd.to_datetime(tr["exit_date"])
+# 종목명 보정: NAME_FIX 우선, 그래도 없으면 티커코드로 대체(nan 방지)
+def _fixname(r):
+    if r["ticker"] in NAME_FIX: return NAME_FIX[r["ticker"]]
+    nm = r["name"]
+    return str(r["ticker"]).split(".")[0] if (pd.isna(nm) or str(nm) == "nan") else nm
+tr["name"] = tr.apply(_fixname, axis=1)
 
 # ── NAV + dd (자산곡선) ──
 eq["dd"] = eq["equity"] / eq["equity"].cummax() - 1
@@ -71,8 +81,43 @@ for _, r in yearly.iterrows():
 # 청산사유 분포
 print("\n청산사유:", " · ".join(f"{k} {v}" for k,v in tr["exit_reason"].str.replace(r'\(.*\)','',regex=True).value_counts().items()))
 
+# ── 월말 보유종목 (mark-to-month-end, 엔진 일봉캐시로 평가) ──
+# 각 월 마지막 거래일(월말)에 보유 중(entry ≤ 월말 < exit)이던 포지션을 그날 종가로 평가.
+# 마지막 월은 데이터 마지막 거래일 기준(=최근 종가).
+held_rows = []
+try:
+    dcache = pickle.load(open(DAILY, "rb"))
+    def close_at(tk, d):
+        df = dcache.get(tk)
+        if df is None: return None
+        s = df["close"]; s = s[s.index <= d]
+        return float(s.iloc[-1]) if len(s) else None
+    # 거래일 캘린더: 유동성 큰 삼성전자 인덱스(없으면 자산곡선 날짜) → 월말 산출
+    cal = dcache["005930.KS"].index if "005930.KS" in dcache else pd.DatetimeIndex(eq["date"])
+    cals = pd.Series(cal)
+    me = cals.groupby(cals.dt.to_period("M")).max()   # 월 → 마지막 거래일
+    last_d = eq["date"].iloc[-1]                        # 데이터 마지막(최근)
+    for per, med in me.items():
+        med = min(med, last_d)                          # 백테스트 종료 이후 미래 방지
+        ym = str(per)
+        for _, t in tr.iterrows():
+            if t["entry_date"] <= med < t["exit_date"]:  # 월말 종가 시점 보유
+                c = close_at(t["ticker"], med)
+                if c is None: continue
+                held_rows.append(dict(
+                    month=ym, ticker=t["ticker"], name=t["name"],
+                    entry=t["entry_date"].strftime("%Y-%m-%d"),
+                    entryPx=round(float(t["entry_price"]), 2), meClose=round(c, 2),
+                    evalPct=round((c / t["entry_price"] - 1) * 100, 2),
+                    evalPnl=int(round(float(t["shares"]) * (c - t["entry_price"]))),
+                    rs=int(t["entry_rs"])))
+    print(f"월말 보유종목: {len(held_rows)}건 ({len(set(h['month'] for h in held_rows))}개월)")
+except Exception as e:
+    print(f"⚠ 월말 보유종목 계산 생략: {e}")
+pd.DataFrame(held_rows).to_csv(f"{OUT}/rs96_held.csv", index=False)
+
 monthly.to_csv(f"{OUT}/rs96_monthly.csv", index=False)
 yearly.to_csv(f"{OUT}/rs96_yearly.csv", index=False)
 eq[["date","equity","dd","positions","cash","KOSPI","KOSDAQ"]].to_csv(f"{OUT}/rs96_nav.csv", index=False)
 tr.to_csv(f"{OUT}/rs96_trades.csv", index=False)
-print(f"\n저장: rs96_monthly/yearly/nav/trades.csv")
+print(f"\n저장: rs96_monthly/yearly/nav/trades/held.csv")

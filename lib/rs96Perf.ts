@@ -20,10 +20,18 @@ export interface RsPerfTrade {
   entryPx: number; exitPx: number; retPct: number; pnl: number;
   days: number; reason: string; rs: number; ca: string;
 }
+export interface RsPerfHeld {
+  ticker: string; name: string; entry: string;
+  entryPx: number; close: number; evalPct: number; evalPnl: number; rs: number;
+}
 
 export const rs96Perf = raw as {
-  meta: RsPerfMeta; yearly: RsPerfYear[]; monthly: RsPerfMonth[]; trades: RsPerfTrade[];
+  meta: RsPerfMeta; yearly: RsPerfYear[]; monthly: RsPerfMonth[];
+  trades: RsPerfTrade[]; held: Record<string, RsPerfHeld[]>;
 };
+
+// 티커(.KS/.KQ) → 6자리 코드 표시용
+export const tickerCode = (t: string) => t.split(".")[0];
 
 // 청산사유 → 표시 톤(이익=상승/손실=하락). 사유 문자열은 엔진 원본 유지.
 export const reasonShort = (r: string) =>

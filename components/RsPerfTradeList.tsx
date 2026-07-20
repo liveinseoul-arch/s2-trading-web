@@ -1,6 +1,6 @@
 import { won, pct, signClass, shortName } from "@/lib/format";
 import { Empty, MarketBadge } from "@/components/ui";
-import { reasonShort, type RsPerfTrade } from "@/lib/rs96Perf";
+import { reasonShort, tickerCode, type RsPerfTrade } from "@/lib/rs96Perf";
 
 const mkt = (ticker: string) => (ticker.endsWith(".KQ") ? "KOSDAQ" : "KOSPI");
 
@@ -14,6 +14,7 @@ export function RsPerfTradeList({ trades }: { trades: RsPerfTrade[] }) {
           <span className="min-w-0">
             <span className="flex items-center gap-1.5">
               <span className="font-medium">{shortName(t.name)}</span>
+              <span className="text-xs text-muted tnum">{tickerCode(t.ticker)}</span>
               <MarketBadge market={mkt(t.ticker)} />
               <span className="text-xs text-muted">{reasonShort(t.reason)}</span>
             </span>

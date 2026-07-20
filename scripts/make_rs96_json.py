@@ -12,6 +12,10 @@ tr  = pd.read_csv(f"{SP}/rs96_trades.csv")
 nav = pd.read_csv(f"{SP}/rs96_nav.csv")
 nav["date"] = pd.to_datetime(nav["date"])
 BASE = nav["equity"].iloc[0]
+try:
+    hld = pd.read_csv(f"{SP}/rs96_held.csv")
+except Exception:
+    hld = pd.DataFrame(columns=["month","ticker","name","entry","entryPx","meClose","evalPct","evalPnl","rs"])
 
 def d(x): return None if pd.isna(x) else round(float(x), 2)
 def i(x): return None if pd.isna(x) else int(x)
@@ -48,10 +52,17 @@ trades = [dict(ticker=str(r.ticker), name=str(r["name"]),
                reason=str(r.exit_reason), rs=i(r.entry_rs), ca=str(r.ca_pass))
           for _, r in tr.iterrows()]
 
-out = dict(meta=meta, yearly=yearly, monthly=monthly, trades=trades)
+# 월말 보유종목 → {YYYY-MM: [포지션...]} (평가손익 큰 순)
+held = {}
+for m, g in hld.groupby("month"):
+    g = g.sort_values("evalPnl", ascending=False)
+    held[str(m)] = [dict(ticker=str(r.ticker), name=str(r["name"]), entry=str(r.entry),
+                         entryPx=d(r.entryPx), close=d(r.meClose), evalPct=d(r.evalPct),
+                         evalPnl=int(r.evalPnl), rs=i(r.rs)) for _, r in g.iterrows()]
+
+out = dict(meta=meta, yearly=yearly, monthly=monthly, trades=trades, held=held)
 with open(APP, "w", encoding="utf-8") as f:
     json.dump(out, f, ensure_ascii=False, separators=(",", ":"))
-import os
 print(f"저장: {APP}  ({os.path.getsize(APP)//1024} KB)")
 print(f"meta: {meta}")
-print(f"yearly {len(yearly)} · monthly {len(monthly)} · trades {len(trades)}")
+print(f"yearly {len(yearly)} · monthly {len(monthly)} · trades {len(trades)} · 보유월 {len(held)}")
