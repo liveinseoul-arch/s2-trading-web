@@ -121,11 +121,11 @@ function DetailPanel({ title, d, variant, year }: { title: string; d: { sold: So
             <div className="mb-1 text-xs font-medium text-muted">
               월말 보유 종목 ({d.held.length}) — 평가는 매수가 대비 월말 종가
             </div>
-            <HeldTable rows={d.held} />
+            <HeldTable rows={d.held} stripYear={year} />
           </div>
           <div>
             <div className="mb-1 text-xs font-medium text-muted">청산 거래 ({d.sold.length})</div>
-            <SoldTable rows={d.sold} />
+            <SoldTable rows={d.sold} stripYear={year} />
           </div>
         </div>
       ) : (
@@ -233,7 +233,7 @@ export default function JpBacktestClient() {
             </tbody>
           </table>
         </div>
-        {md && selMonth && <DetailPanel variant="month" title={`${selMonth} 보유·청산`} d={md} />}
+        {md && selMonth && <DetailPanel variant="month" year={selMonth.slice(0, 4)} title={`${selMonth} 보유·청산`} d={md} />}
       </Section>
     </>
   );
