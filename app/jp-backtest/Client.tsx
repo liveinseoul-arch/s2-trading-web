@@ -55,9 +55,36 @@ function DetailPanel({ title, d }: { title: string; d: { sold: SoldRow[]; held: 
   return (
     <div className="mt-3 rounded-xl border border-[var(--color-borderc)] bg-surface p-3">
       <div className="mb-2 text-sm font-bold text-accent">{title}</div>
-      <div className="mb-1 text-xs font-medium text-muted">매도 종목 ({d.sold.length})</div>
+      <div className="mb-1 text-xs font-medium text-muted">
+        기말 보유 종목 ({d.held.length}) — 평가수익률은 매수가 대비 기말 종가
+      </div>
+      {d.held.length ? (
+        <div className="max-h-72 overflow-auto">
+          <table className="w-full text-xs text-muted">
+            <thead>
+              <tr className="border-b border-[var(--color-borderc)]">
+                <th className="px-2 py-1 text-left font-medium">종목</th>
+                <th className={TH}>매수일</th>
+                <th className={TH}>평가수익률 (%)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.held.map((h, i) => (
+                <tr key={i} className="border-b border-[var(--color-borderc)] last:border-0">
+                  <td className="px-2 py-1 whitespace-nowrap">{nm(h[0])}</td>
+                  <td className={TD}>{h[1]}</td>
+                  <td className={`${TD} ${signClass(h[2] ?? 0)}`}>{fmt(h[2])}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="text-xs text-muted">없음</div>
+      )}
+      <div className="mb-1 mt-3 text-xs font-medium text-muted">매도 종목 ({d.sold.length})</div>
       {d.sold.length ? (
-        <div className="overflow-x-auto">
+        <div className="max-h-96 overflow-auto">
           <table className="w-full text-xs text-muted">
             <thead>
               <tr className="border-b border-[var(--color-borderc)]">
@@ -76,33 +103,6 @@ function DetailPanel({ title, d }: { title: string; d: { sold: SoldRow[]; held: 
                   <td className={TD}>{s[2]}</td>
                   <td className={`${TD} ${signClass(s[3])}`}>{fmt(s[3])}</td>
                   <td className="px-2 py-1 whitespace-nowrap">{s[4]}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div className="mb-2 text-xs text-muted">없음</div>
-      )}
-      <div className="mb-1 mt-3 text-xs font-medium text-muted">
-        기말 보유 종목 ({d.held.length}) — 평가수익률은 매수가 대비 기말 종가
-      </div>
-      {d.held.length ? (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs text-muted">
-            <thead>
-              <tr className="border-b border-[var(--color-borderc)]">
-                <th className="px-2 py-1 text-left font-medium">종목</th>
-                <th className={TH}>매수일</th>
-                <th className={TH}>평가수익률 (%)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.held.map((h, i) => (
-                <tr key={i} className="border-b border-[var(--color-borderc)] last:border-0">
-                  <td className="px-2 py-1 whitespace-nowrap">{nm(h[0])}</td>
-                  <td className={TD}>{h[1]}</td>
-                  <td className={`${TD} ${signClass(h[2] ?? 0)}`}>{fmt(h[2])}</td>
                 </tr>
               ))}
             </tbody>
