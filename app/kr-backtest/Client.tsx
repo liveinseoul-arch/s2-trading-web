@@ -12,31 +12,31 @@ const NAMES = detail.names as Record<string, string>;
 const MDETAIL = detail.mdetail as unknown as Record<string, { sold: SoldRow[]; held: HeldRow[] }>;
 const YDETAIL = detail.ydetail as unknown as Record<string, { sold: SoldRow[]; held: HeldRow[] }>;
 
-// iret/imdd = 니케이225 동일 규칙(부분연도 반영, 연중 고점 대비 MDD)
+// iret/imdd = KOSPI 동일 규칙(부분연도 반영, 연중 고점 대비 MDD)
 const YEARLY: { year: number; ret: number; mdd: number; iret: number; imdd: number; n: number; win: number; avg: number }[] = [
-  { year: 2017, ret: 3.0, mdd: -5.2, iret: 15.6, imdd: -4.0, n: 11, win: 45, avg: 3.0 },
-  { year: 2018, ret: -9.2, mdd: -14.7, iret: -12.1, imdd: -21.1, n: 35, win: 17, avg: -2.9 },
-  { year: 2019, ret: 7.8, mdd: -5.6, iret: 18.2, imdd: -9.2, n: 34, win: 44, avg: 1.1 },
-  { year: 2020, ret: 4.0, mdd: -10.9, iret: 16.0, imdd: -31.3, n: 45, win: 33, avg: 1.9 },
-  { year: 2021, ret: -8.7, mdd: -17.4, iret: 4.9, imdd: -11.3, n: 52, win: 25, avg: -1.6 },
-  { year: 2022, ret: -1.0, mdd: -10.4, iret: -9.4, imdd: -15.7, n: 46, win: 28, avg: 1.8 },
-  { year: 2023, ret: 6.9, mdd: -13.0, iret: 28.2, imdd: -9.6, n: 38, win: 32, avg: 0.6 },
-  { year: 2024, ret: 22.1, mdd: -9.5, iret: 19.2, imdd: -25.5, n: 58, win: 45, avg: 4.4 },
-  { year: 2025, ret: 26.4, mdd: -15.3, iret: 26.2, imdd: -22.3, n: 55, win: 33, avg: 3.3 },
-  { year: 2026, ret: 59.3, mdd: -17.6, iret: 39.2, imdd: -13.2, n: 46, win: 46, avg: 19.7 },
+  { year: 2017, ret: 5.0, mdd: -10.4, iret: 21.8, imdd: -5.4, n: 89, win: 21, avg: -2.1 },
+  { year: 2018, ret: -5.9, mdd: -5.9, iret: -17.3, imdd: -23.2, n: 17, win: 35, avg: 0.9 },
+  { year: 2019, ret: 0.4, mdd: -6.7, iret: 7.7, imdd: -14.6, n: 8, win: 50, avg: 2.8 },
+  { year: 2020, ret: 20.6, mdd: -15.5, iret: 27.8, imdd: -34.5, n: 76, win: 28, avg: 2.0 },
+  { year: 2021, ret: -15.8, mdd: -23.1, iret: 6.0, imdd: -11.9, n: 60, win: 18, avg: -2.4 },
+  { year: 2022, ret: -26.3, mdd: -28.5, iret: -24.9, imdd: -27.9, n: 79, win: 16, avg: -5.2 },
+  { year: 2023, ret: 60.9, mdd: -15.5, iret: 18.7, imdd: -12.8, n: 46, win: 28, avg: 13.8 },
+  { year: 2024, ret: 8.6, mdd: -43.0, iret: -9.6, imdd: -17.5, n: 158, win: 22, avg: 1.0 },
+  { year: 2025, ret: 27.2, mdd: -13.3, iret: 75.9, imdd: -12.3, n: 141, win: 30, avg: -0.2 },
+  { year: 2026, ret: 118.2, mdd: -26.4, iret: 99.3, imdd: -15.9, n: 115, win: 40, avg: 19.1 },
 ];
 
 const MONTHLY: Record<string, Record<number, number>> = {
-  "2017": { 9: -0.3, 10: 2.5, 11: 6.5, 12: -5.2 },
-  "2018": { 1: -0.8, 2: -0.2, 3: -1.0, 4: 0.6, 5: 4.7, 6: 0.1, 7: -2.1, 8: -1.8, 9: 4.3, 10: -5.5, 11: -0.7, 12: -6.6 },
-  "2019": { 1: 0.5, 2: -1.9, 3: 0.5, 4: 2.7, 5: -5.6, 6: 1.4, 7: 2.8, 8: 1.2, 9: 3.4, 10: 5.4, 11: -3.3, 12: 0.8 },
-  "2020": { 1: 1.1, 2: -6.1, 3: -2.4, 4: 0.6, 5: 9.0, 6: 2.9, 7: -2.0, 8: 1.9, 9: 0.9, 10: -1.8, 11: 0.6, 12: -0.2 },
-  "2021": { 1: 1.1, 2: -1.4, 3: -1.6, 4: -0.3, 5: -2.5, 6: -0.5, 7: -4.3, 8: -3.1, 9: 1.8, 10: 0.3, 11: -0.3, 12: 2.1 },
-  "2022": { 1: -2.8, 2: 0.6, 3: 13.0, 4: -8.5, 5: 0.2, 6: 0.5, 7: 0.3, 8: 1.5, 9: -4.0, 10: 1.7, 11: 0.5, 12: -2.7 },
-  "2023": { 1: -0.7, 2: 0.6, 3: 2.1, 4: -4.1, 5: 2.0, 6: 8.4, 7: 0.5, 8: 0.5, 9: 1.2, 10: -5.2, 11: 4.4, 12: -2.3 },
-  "2024": { 1: 0.1, 2: 14.1, 3: 4.7, 4: -8.4, 5: 5.0, 6: 2.6, 7: -3.9, 8: 2.0, 9: 3.6, 10: -3.0, 11: 1.6, 12: 3.4 },
-  "2025": { 1: -4.1, 2: -1.8, 3: -0.8, 4: -4.1, 5: 6.6, 6: 6.8, 7: 0.7, 8: 3.9, 9: 5.2, 10: 30.6, 11: -11.2, 12: -3.1 },
-  "2026": { 1: 15.2, 2: 35.0, 3: -10.4, 4: -4.6, 5: 22.0, 6: -1.7 },
+  "2017": { 1: -1.4, 2: -2.2, 3: -3.4, 4: -1.6, 5: 1.4, 6: 14.2, 7: -2.4, 8: -0.3, 9: -4.9, 10: 2.2, 11: 10.3, 12: -5.2 },
+  "2018": { 1: -2.4, 2: -1.0, 3: 0.0, 4: 0.0, 5: 0.0, 6: 0.0, 7: 0.0, 8: 0.0, 9: 0.0, 10: 0.0, 11: -1.9, 12: -0.7 },
+  "2019": { 1: 0.3, 2: -0.4, 3: 0.0, 4: 0.0, 5: 0.0, 6: 0.0, 7: 0.0, 8: 0.0, 9: 0.2, 10: 4.4, 11: -4.0, 12: 0.0 },
+  "2020": { 1: 0.0, 2: -0.8, 3: -2.0, 4: -0.6, 5: 3.3, 6: 4.0, 7: 11.2, 8: 13.3, 9: -11.2, 10: -1.3, 11: 0.8, 12: 4.3 },
+  "2021": { 1: -10.4, 2: -1.2, 3: -1.2, 4: 0.0, 5: 0.0, 6: 0.0, 7: 0.0, 8: 0.0, 9: 6.1, 10: -10.0, 11: 2.1, 12: -1.3 },
+  "2022": { 1: 0.0, 2: 0.0, 3: 2.1, 4: -5.3, 5: -6.8, 6: -7.1, 7: -2.0, 8: 2.2, 9: -4.3, 10: -1.0, 11: 0.2, 12: -7.4 },
+  "2023": { 1: 0.6, 2: 14.6, 3: 17.6, 4: 11.1, 5: -9.6, 6: 10.8, 7: 20.9, 8: 1.8, 9: -7.7, 10: -8.0, 11: 1.1, 12: 0.7 },
+  "2024": { 1: -1.6, 2: 22.8, 3: 6.0, 4: 4.3, 5: 14.9, 6: 11.4, 7: -5.0, 8: -20.1, 9: -4.8, 10: 2.8, 11: -14.2, 12: -0.3 },
+  "2025": { 1: 0.5, 2: -3.2, 3: -2.6, 4: -1.6, 5: -0.2, 6: 16.1, 7: -4.1, 8: 5.7, 9: -0.7, 10: 21.0, 11: -6.8, 12: 3.5 },
+  "2026": { 1: 22.6, 2: 30.8, 3: -18.5, 4: 14.5, 5: 42.2, 6: 2.6 },
 };
 
 const TH = "px-2 py-1.5 text-right font-medium whitespace-nowrap";
@@ -45,10 +45,10 @@ const fmt = (n: number | null | undefined) =>
   n === null || n === undefined ? "—" : `${n > 0 ? "+" : ""}${n.toFixed(1)}`;
 const nm = (code: string) => {
   const n = NAMES[code];
-  const c4 = code.replace(/0$/, "");
-  if (!n) return c4;
+  const c6 = code.replace(/\.(KS|KQ)$/, "");
+  if (!n) return c6;
   const short = n.length > 10 ? n.slice(0, 10) + "…" : n;
-  return `${short} (${c4})`;
+  return `${short} (${c6})`;
 };
 
 function DetailPanel({ title, d }: { title: string; d: { sold: SoldRow[]; held: HeldRow[] } }) {
@@ -115,7 +115,7 @@ function DetailPanel({ title, d }: { title: string; d: { sold: SoldRow[]; held: 
   );
 }
 
-export default function JpBacktestClient() {
+export default function KrBacktestClient() {
   const [selYear, setSelYear] = useState<string | null>(null);
   const [selMonth, setSelMonth] = useState<string | null>(null);
   const years = Object.keys(MONTHLY).sort().reverse();
@@ -132,7 +132,7 @@ export default function JpBacktestClient() {
                 <th className="px-2 py-1.5 text-left font-medium">연도</th>
                 <th className={TH}>수익률 (%)</th>
                 <th className={TH}>연중 MDD (%)</th>
-                <th className={TH}>니케이225 (%)</th>
+                <th className={TH}>KOSPI (%)</th>
                 <th className={TH}>지수 MDD (%)</th>
                 <th className={TH}>거래수</th>
                 <th className={TH}>승률 (%)</th>
