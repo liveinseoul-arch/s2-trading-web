@@ -66,6 +66,43 @@ export default function Performance() {
         )}
       </Section>
 
+      <Section title="월별 수익률 (%)" sub="월을 누르면 그 달의 상세(청산 거래·보유 현황).">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm tnum">
+            <thead className="text-xs text-muted">
+              <tr className="border-b border-[var(--color-borderc)] text-right">
+                <th className="py-1.5 text-left">연도</th>
+                {Array.from({ length: 12 }, (_, i) => (
+                  <th key={i}>{i + 1}월</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {[...new Set(monthly.map((m) => m.month.slice(0, 4)))].sort().reverse().map((y) => (
+                <tr key={y} className="border-b border-[var(--color-borderc)] text-right last:border-0">
+                  <td className="py-1.5 text-left font-medium">{y}</td>
+                  {Array.from({ length: 12 }, (_, i) => {
+                    const key = `${y}-${String(i + 1).padStart(2, "0")}`;
+                    const m = monthly.find((x) => x.month === key);
+                    return (
+                      <td key={i} className={m ? signClass(m.ret) : "text-muted"}>
+                        {m ? (
+                          <Link href={`/performance/${key}`} className="hover:underline">
+                            {pct(m.ret)}
+                          </Link>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Section>
+
       <Section title="월별 성과" sub="월을 누르면 그 달에 청산된 거래 상세.">
         {months.length === 0 ? <Empty>데이터 없음</Empty> : (
           <div className="overflow-x-auto">
