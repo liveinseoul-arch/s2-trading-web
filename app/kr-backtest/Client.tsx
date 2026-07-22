@@ -51,7 +51,7 @@ const nm = (code: string) => {
   return `${short} (${c6})`;
 };
 
-const dshort = (d: string, y?: string) => (y && d.startsWith(y) ? d.slice(5) : d);
+const dshort = (d: string, y?: string) => (y ? d.slice(5) : d);   // 연도 패널: 항상 MM-DD
 
 function HeldTable({ rows, stripYear }: { rows: HeldRow[]; stripYear?: string }) {
   if (!rows.length) return <div className="text-xs text-muted">없음</div>;
