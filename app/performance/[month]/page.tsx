@@ -42,6 +42,7 @@ export default async function PerfMonth({ params }: { params: Promise<{ month: s
         </div>
       )}
 
+      <div className="grid items-start gap-4 md:grid-cols-2">
       <Section
         title={`월말 보유종목 ${held.length}건`}
         sub={isLast
@@ -81,6 +82,7 @@ export default async function PerfMonth({ params }: { params: Promise<{ month: s
         sub="RS96+ 진입 → −8% 손절 또는 21/50일 EMA 트레일 이탈로 청산.">
         <RsPerfTradeList trades={trades} />
       </Section>
+      </div>
     </>
   );
 }
