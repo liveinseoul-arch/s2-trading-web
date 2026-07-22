@@ -282,11 +282,44 @@ export default function RulesRsPage() {
         </ul>
       </Section>
 
-      <Section title="재무(C) 필터 검증 — 미국·한국 상반된 결론 (2026-07)">
+      <Section title="재무(C)·시총 필터 검증 — 3개 시장 상이한 결론 (2026-07)">
         <p className="mb-2 text-sm leading-relaxed text-muted">
-          오닐 CANSLIM의 C(분기 이익성장) 필터를 point-in-time 재무 데이터(미국 Sharadar SF1,
-          한국 DART 접수일 기준)로 정식 검증한 결과, <b>두 시장의 결론이 정반대</b>로 나왔다.
+          오닐 CANSLIM의 C(분기 이익성장) 필터와 시총 상위 필터를 point-in-time 데이터(미국
+          Sharadar SF1, 한국 DART 접수일, 일본 J-Quants 결산단신 공시일 기준)로 정식 검증한
+          결과, <b>세 시장의 결론이 전부 다르게</b> 나왔다.
         </p>
+        <div className="mb-3 overflow-x-auto">
+          <table className="w-full text-sm text-muted">
+            <thead>
+              <tr className="border-b border-[var(--color-borderc)] text-accent">
+                <th className={TH}>시장</th>
+                <th className={TH}>유효한 필터</th>
+                <th className={TH}>핵심 성과 (생존편향 보정)</th>
+                <th className={TH}>검증 수준</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b border-[var(--color-borderc)] last:border-0 align-top">
+                <td className={`${TD} font-medium`}>미국</td>
+                <td className={TD}>시총 상위 20% + EPS 배증</td>
+                <td className="px-2 py-1.5">2002~26 Sharpe 0.57 vs S&amp;P500 0.52, MDD −24% vs −56%</td>
+                <td className={TD}>walk-forward 통과</td>
+              </tr>
+              <tr className="border-b border-[var(--color-borderc)] last:border-0 align-top">
+                <td className={`${TD} font-medium`}>한국</td>
+                <td className={TD}>영업이익 배증 (순이익은 역신호)</td>
+                <td className="px-2 py-1.5">2017~26 Sharpe 0.72 vs 기준선 0.49, MDD −21% vs −47%</td>
+                <td className={TD}>walk-forward 통과</td>
+              </tr>
+              <tr className="border-b border-[var(--color-borderc)] last:border-0 align-top">
+                <td className={`${TD} font-medium`}>일본</td>
+                <td className={TD}>없음 — 기준선 유지</td>
+                <td className="px-2 py-1.5">기준선 14.4%/Sharpe 0.63. 시총·유동성·재무 게이트 전부 열위</td>
+                <td className={TD}>게이트 전수 기각</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
         <ul className="ml-4 list-disc text-sm leading-relaxed text-muted">
           <li>
             <b>미국</b>: 평범한 성장 확인(+25%)은 오히려 독이고, <b>극단적 성장(EPS 배증·흑자전환)만
@@ -317,12 +350,19 @@ export default function RulesRsPage() {
             기준선(0.77)을 넘고 MDD는 −16~−26%(기준선 −44%)에 그쳤다. 순이익의 일회성 노이즈를
             제거하면 한국에서도 &ldquo;진짜 이익 폭발&rdquo;은 알파다.
           </li>
+          <li>
+            <b>일본 — 모든 필터 무효 (기준선 유지)</b>: J-Quants 10년(상폐 212종목 포함) 검증에서
+            개별주 RS96 기준선은 CAGR 14.4%/Sharpe 0.63으로 한국형 알파가 실재하지만, 시총 상위
+            20%(6.9%)·유동성 상위 20%(12.3%)·재무 게이트(영업이익/순이익, +25%/+100% 전부
+            3.7~8.1%)가 <b>예외 없이 기준선보다 나빴다</b>. 미국·한국에서 통한 극단 이익성장
+            게이트도 일본에서는 위험조정까지 훼손 — 일본 규칙에는 어떤 게이트도 적용하지 않는다.
+          </li>
         </ul>
         <p className="mt-2 text-sm font-medium leading-relaxed text-accent">
-          한 줄 요약: 실적 확인형 게이트는 지표를 시장에 맞출 때 작동한다 — 미국은 EPS(순이익)
-          배증, 한국은 <b>영업이익</b> 배증. 한국에서 순이익 기준 필터는 일회성 손익 노이즈 탓에
-          역신호이므로 적용하지 않는다. 영업이익 게이트는 양 시장 walk-forward를 통과해 채택
-          후보이며, 수익 극대(게이트 없음) vs 위험조정 극대(게이트)의 성향 선택지로 운용한다.
+          한 줄 요약: 필터의 효용은 보편 법칙이 아니라 시장 체질에 종속된다 — 미국은 &ldquo;대형 +
+          EPS 배증&rdquo;, 한국은 &ldquo;영업이익 배증&rdquo;(순이익은 일회성 노이즈로 역신호),
+          일본은 &ldquo;게이트 없는 기준선&rdquo;이 각각 최선이다. 미국·한국 게이트는
+          walk-forward 통과, 일본은 전수 기각.
         </p>
       </Section>
 
