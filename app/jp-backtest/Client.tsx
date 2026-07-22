@@ -9,8 +9,8 @@ type SoldRow = [string, string, string, number, string]; // code, 매수일, 매
 type HeldRow = [string, string, number | null];          // code, 매수일, 평가수익률%
 
 const NAMES = detail.names as Record<string, string>;
-const MDETAIL = detail.mdetail as unknown as Record<string, { sold: SoldRow[]; held: HeldRow[] }>;
-const YDETAIL = detail.ydetail as unknown as Record<string, { sold: SoldRow[]; held: HeldRow[] }>;
+const MDETAIL = detail.mdetail as unknown as Record<string, { sold: SoldRow[]; held: HeldRow[]; cash?: number | null }>;
+const YDETAIL = detail.ydetail as unknown as Record<string, { sold: SoldRow[]; held: HeldRow[]; cash?: number | null }>;
 
 // iret/imdd = 니케이225 동일 규칙(부분연도 반영, 연중 고점 대비 MDD)
 const YEARLY: { year: number; ret: number; mdd: number; iret: number; imdd: number; n: number; win: number; avg: number }[] = [
@@ -109,7 +109,17 @@ function SoldTable({ rows, stripYear }: { rows: SoldRow[]; stripYear?: string })
   );
 }
 
-function DetailPanel({ title, d, variant, year }: { title: string; d: { sold: SoldRow[]; held: HeldRow[] }; variant: "month" | "year"; year?: string }) {
+function CashLine({ cash }: { cash?: number | null }) {
+  if (cash === undefined || cash === null) return null;
+  return (
+    <div className="mb-1 text-xs text-muted">
+      기말 현금 비중: <span className="tnum font-medium">{cash.toFixed(1)}%</span>
+      {cash < 0 && " (마진 차입 사용 중)"}
+    </div>
+  );
+}
+
+function DetailPanel({ title, d, variant, year }: { title: string; d: { sold: SoldRow[]; held: HeldRow[]; cash?: number | null }; variant: "month" | "year"; year?: string }) {
   const wins = d.sold.filter((s) => s[3] > 0);
   const losses = d.sold.filter((s) => s[3] <= 0);
   return (
@@ -121,6 +131,7 @@ function DetailPanel({ title, d, variant, year }: { title: string; d: { sold: So
             <div className="mb-1 text-xs font-medium text-muted">
               월말 보유 종목 ({d.held.length}) — 평가는 매수가 대비 월말 종가
             </div>
+            <CashLine cash={d.cash} />
             <HeldTable rows={d.held} stripYear={year} />
           </div>
           <div>
@@ -133,6 +144,7 @@ function DetailPanel({ title, d, variant, year }: { title: string; d: { sold: So
           <div className="mb-1 text-xs font-medium text-muted">
             기말 보유 종목 ({d.held.length}) — 평가는 매수가 대비 기말 종가
           </div>
+          <CashLine cash={d.cash} />
           <HeldTable rows={d.held} stripYear={year} />
           <div className="mt-3 grid gap-4 md:grid-cols-2">
             <div>
