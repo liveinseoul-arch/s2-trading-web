@@ -71,8 +71,21 @@ export default async function PerfYear({ params }: { params: Promise<{ year: str
         )}
       </Section>
 
-      <Section title={`${year}년 청산 거래 ${trades.length}건`} sub="수익률 순 — 저승률·고손익비(소수 대박 승자가 견인).">
-        <RsPerfTradeList trades={trades} />
+      <Section title={`${year}년 청산 거래 ${trades.length}건`} sub="왼쪽 수익 청산(수익률 큰 순) · 오른쪽 손실 청산(손실 큰 순) — 저승률·고손익비(소수 대박 승자가 견인).">
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <div className="mb-1 text-xs font-medium text-muted">
+              수익 청산 ({trades.filter((t) => t.retPct > 0).length})
+            </div>
+            <RsPerfTradeList trades={trades.filter((t) => t.retPct > 0)} />
+          </div>
+          <div>
+            <div className="mb-1 text-xs font-medium text-muted">
+              손실 청산 ({trades.filter((t) => t.retPct <= 0).length})
+            </div>
+            <RsPerfTradeList trades={[...trades.filter((t) => t.retPct <= 0)].sort((a, b) => a.retPct - b.retPct)} />
+          </div>
+        </div>
       </Section>
     </>
   );
