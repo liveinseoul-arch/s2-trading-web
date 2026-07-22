@@ -51,7 +51,9 @@ const nm = (code: string) => {
   return `${short} (${c4})`;
 };
 
-function HeldTable({ rows }: { rows: HeldRow[] }) {
+const dshort = (d: string, y?: string) => (y && d.startsWith(y) ? d.slice(5) : d);
+
+function HeldTable({ rows, stripYear }: { rows: HeldRow[]; stripYear?: string }) {
   if (!rows.length) return <div className="text-xs text-muted">없음</div>;
   return (
     <div className="max-h-80 overflow-auto">
@@ -67,7 +69,7 @@ function HeldTable({ rows }: { rows: HeldRow[] }) {
           {rows.map((h, i) => (
             <tr key={i} className="border-b border-[var(--color-borderc)] last:border-0">
               <td className="px-2 py-1 whitespace-nowrap">{nm(h[0])}</td>
-              <td className={TD}>{h[1]}</td>
+              <td className={TD}>{dshort(h[1], stripYear)}</td>
               <td className={`${TD} ${signClass(h[2] ?? 0)}`}>{fmt(h[2])}</td>
             </tr>
           ))}
@@ -77,7 +79,7 @@ function HeldTable({ rows }: { rows: HeldRow[] }) {
   );
 }
 
-function SoldTable({ rows }: { rows: SoldRow[] }) {
+function SoldTable({ rows, stripYear }: { rows: SoldRow[]; stripYear?: string }) {
   if (!rows.length) return <div className="text-xs text-muted">없음</div>;
   return (
     <div className="max-h-80 overflow-auto">
@@ -95,8 +97,8 @@ function SoldTable({ rows }: { rows: SoldRow[] }) {
           {rows.map((s, i) => (
             <tr key={i} className="border-b border-[var(--color-borderc)] last:border-0">
               <td className="px-2 py-1 whitespace-nowrap">{nm(s[0])}</td>
-              <td className={TD}>{s[1]}</td>
-              <td className={TD}>{s[2]}</td>
+              <td className={TD}>{dshort(s[1], stripYear)}</td>
+              <td className={TD}>{dshort(s[2], stripYear)}</td>
               <td className={`${TD} ${signClass(s[3])}`}>{fmt(s[3])}</td>
               <td className="px-2 py-1 whitespace-nowrap">{s[4]}</td>
             </tr>
@@ -107,7 +109,7 @@ function SoldTable({ rows }: { rows: SoldRow[] }) {
   );
 }
 
-function DetailPanel({ title, d, variant }: { title: string; d: { sold: SoldRow[]; held: HeldRow[] }; variant: "month" | "year" }) {
+function DetailPanel({ title, d, variant, year }: { title: string; d: { sold: SoldRow[]; held: HeldRow[] }; variant: "month" | "year"; year?: string }) {
   const wins = d.sold.filter((s) => s[3] > 0);
   const losses = d.sold.filter((s) => s[3] <= 0);
   return (
@@ -131,15 +133,15 @@ function DetailPanel({ title, d, variant }: { title: string; d: { sold: SoldRow[
           <div className="mb-1 text-xs font-medium text-muted">
             기말 보유 종목 ({d.held.length}) — 평가는 매수가 대비 기말 종가
           </div>
-          <HeldTable rows={d.held} />
+          <HeldTable rows={d.held} stripYear={year} />
           <div className="mt-3 grid gap-4 md:grid-cols-2">
             <div>
               <div className="mb-1 text-xs font-medium text-muted">수익 청산 ({wins.length})</div>
-              <SoldTable rows={wins} />
+              <SoldTable rows={wins} stripYear={year} />
             </div>
             <div>
               <div className="mb-1 text-xs font-medium text-muted">손실 청산 ({losses.length})</div>
-              <SoldTable rows={losses} />
+              <SoldTable rows={losses} stripYear={year} />
             </div>
           </div>
         </>
@@ -193,7 +195,7 @@ export default function JpBacktestClient() {
           </table>
         </div>
         {yd && selYear && (
-          <DetailPanel variant="year" title={`${selYear}년 거래기록 · ${selYear === "2026" ? "2026-06-30" : "연말"} 보유`} d={yd} />
+          <DetailPanel variant="year" year={selYear} title={`${selYear}년 거래기록 · ${selYear === "2026" ? "2026-06-30" : "연말"} 보유`} d={yd} />
         )}
       </Section>
 
