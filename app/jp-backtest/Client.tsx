@@ -12,17 +12,18 @@ const NAMES = detail.names as Record<string, string>;
 const MDETAIL = detail.mdetail as unknown as Record<string, { sold: SoldRow[]; held: HeldRow[] }>;
 const YDETAIL = detail.ydetail as unknown as Record<string, { sold: SoldRow[]; held: HeldRow[] }>;
 
-const YEARLY: { year: number; ret: number; mdd: number }[] = [
-  { year: 2017, ret: 3.0, mdd: -5.2 },
-  { year: 2018, ret: -9.2, mdd: -14.7 },
-  { year: 2019, ret: 7.8, mdd: -5.6 },
-  { year: 2020, ret: 4.0, mdd: -10.9 },
-  { year: 2021, ret: -8.7, mdd: -17.4 },
-  { year: 2022, ret: -1.0, mdd: -10.4 },
-  { year: 2023, ret: 6.9, mdd: -13.0 },
-  { year: 2024, ret: 22.1, mdd: -9.5 },
-  { year: 2025, ret: 26.4, mdd: -15.3 },
-  { year: 2026, ret: 59.3, mdd: -17.6 },
+// iret/imdd = 니케이225 동일 규칙(부분연도 반영, 연중 고점 대비 MDD)
+const YEARLY: { year: number; ret: number; mdd: number; iret: number; imdd: number }[] = [
+  { year: 2017, ret: 3.0, mdd: -5.2, iret: 15.6, imdd: -4.0 },
+  { year: 2018, ret: -9.2, mdd: -14.7, iret: -12.1, imdd: -21.1 },
+  { year: 2019, ret: 7.8, mdd: -5.6, iret: 18.2, imdd: -9.2 },
+  { year: 2020, ret: 4.0, mdd: -10.9, iret: 16.0, imdd: -31.3 },
+  { year: 2021, ret: -8.7, mdd: -17.4, iret: 4.9, imdd: -11.3 },
+  { year: 2022, ret: -1.0, mdd: -10.4, iret: -9.4, imdd: -15.7 },
+  { year: 2023, ret: 6.9, mdd: -13.0, iret: 28.2, imdd: -9.6 },
+  { year: 2024, ret: 22.1, mdd: -9.5, iret: 19.2, imdd: -25.5 },
+  { year: 2025, ret: 26.4, mdd: -15.3, iret: 26.2, imdd: -22.3 },
+  { year: 2026, ret: 59.3, mdd: -17.6, iret: 39.2, imdd: -13.2 },
 ];
 
 const MONTHLY: Record<string, Record<number, number>> = {
@@ -45,7 +46,9 @@ const fmt = (n: number | null | undefined) =>
 const nm = (code: string) => {
   const n = NAMES[code];
   const c4 = code.replace(/0$/, "");
-  return n ? `${n} (${c4})` : c4;
+  if (!n) return c4;
+  const short = n.length > 10 ? n.slice(0, 10) + "…" : n;
+  return `${short} (${c4})`;
 };
 
 function DetailPanel({ title, d }: { title: string; d: { sold: SoldRow[]; held: HeldRow[] } }) {
@@ -129,6 +132,8 @@ export default function JpBacktestClient() {
                 <th className="px-2 py-1.5 text-left font-medium">연도</th>
                 <th className={TH}>수익률 (%)</th>
                 <th className={TH}>연중 MDD (%)</th>
+                <th className={TH}>니케이225 (%)</th>
+                <th className={TH}>지수 MDD (%)</th>
               </tr>
             </thead>
             <tbody>
@@ -141,6 +146,8 @@ export default function JpBacktestClient() {
                   <td className="px-2 py-1.5 font-medium text-accent">{y.year}</td>
                   <td className={`${TD} ${signClass(y.ret)}`}>{fmt(y.ret)}</td>
                   <td className={TD}>{y.mdd.toFixed(1)}</td>
+                  <td className={`${TD} ${signClass(y.iret)}`}>{fmt(y.iret)}</td>
+                  <td className={TD}>{y.imdd.toFixed(1)}</td>
                 </tr>
               ))}
             </tbody>
