@@ -6,7 +6,7 @@ import { signClass } from "@/lib/format";
 import detail from "./detail.json";
 
 type SoldRow = [string, string, string, number, string]; // code, 매수일, 매도일, 수익률%, 사유
-type HeldRow = [string, string, number | null];          // code, 매수일, 평가수익률%
+type HeldRow = [string, string, number | null, number | null];  // code, 매수일, 평가%, 비중%
 
 const NAMES = detail.names as Record<string, string>;
 const MDETAIL = detail.mdetail as unknown as Record<string, { sold: SoldRow[]; held: HeldRow[]; cash?: number | null }>;
@@ -84,6 +84,7 @@ const dshort = (d: string, y?: string) => (y ? d.slice(5) : d);   // 연도 패�
 
 function HeldTable({ rows, stripYear }: { rows: HeldRow[]; stripYear?: string }) {
   if (!rows.length) return <div className="text-xs text-muted">없음</div>;
+  const wsum = rows.reduce((s, h) => s + (h[3] ?? 0), 0);
   return (
     <div className="max-h-80 overflow-auto">
       <table className="w-full text-xs text-muted">
@@ -92,6 +93,7 @@ function HeldTable({ rows, stripYear }: { rows: HeldRow[]; stripYear?: string })
             <th className="px-2 py-1 text-left font-medium">종목</th>
             <th className={TH}>매수일</th>
             <th className={TH}>평가 (%)</th>
+            <th className={TH}>비중 (%)</th>
           </tr>
         </thead>
         <tbody>
@@ -100,9 +102,16 @@ function HeldTable({ rows, stripYear }: { rows: HeldRow[]; stripYear?: string })
               <td className="px-2 py-1 whitespace-nowrap">{nm(h[0])}</td>
               <td className={TD}>{dshort(h[1], stripYear)}</td>
               <td className={`${TD} ${signClass(h[2] ?? 0)}`}>{fmt(h[2])}</td>
+              <td className={`${TD} font-medium`}>{h[3] === null ? "—" : h[3].toFixed(1)}</td>
             </tr>
           ))}
         </tbody>
+        <tfoot>
+          <tr className="border-t border-[var(--color-borderc)]">
+            <td className="px-2 py-1 text-muted" colSpan={3}>표시 보유 합계</td>
+            <td className={`${TD} font-medium`}>{wsum.toFixed(1)}</td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   );

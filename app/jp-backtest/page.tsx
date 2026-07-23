@@ -10,13 +10,13 @@ export const metadata = {
 };
 
 // 백테스트 산출 정적 데이터 — 17_88 엔진, JP 유동주 1,633종목(상폐 212 포함),
-// N225 M필터 gate · ATR 사이징 0.7% · 마진 한도 1.3배 (채택 구성)
+// N225 M필터 gate · ATR 사이징 0.7% · 마진 한도 1.2배 (채택 구성)
 const SUMMARY = [
-  { label: "총수익률", value: "+485.7%" },
+  { label: "총수익률", value: "+484.5%" },
   { label: "CAGR", value: "+22.2%" },
-  { label: "최대 낙폭", value: "−38.1%" },
-  { label: "Sharpe", value: "0.86" },
-  { label: "거래 수", value: "847건" },
+  { label: "최대 낙폭", value: "−35.3%" },
+  { label: "Sharpe", value: "0.89" },
+  { label: "거래 수", value: "817건" },
   { label: "니케이225 (동기간)", value: "+15.5% / −31.8%" },
 ];
 
@@ -26,7 +26,7 @@ export default function JpBacktestPage() {
       <h1 className="mb-1 text-lg font-bold">일본 백테스트 — RS96 채택 구성 (N225 M필터 gate)</h1>
       <p className="mb-4 text-xs text-muted">
         조건: 주간 RS≥96 진입 · <b>니케이225 M필터 gate</b>(분산일·FTD 판정, OFF 주 신규 매수 금지 —
-        기간의 37% 차단) · ATR 사이징(리스크 0.7%) · −8%/21·50EMA/RS≤87 청산 · 손절 후 8주 쿨다운 · 마진 한도 1.3배.
+        기간의 37% 차단) · ATR 사이징(리스크 0.7%) · −8%/21·50EMA/RS≤87 청산 · 손절 후 8주 쿨다운 · <b>마진 한도 1.2배</b>.
         데이터: J-Quants 10년(상폐 212종목 포함, 생존편향 보정), 2017-09-01 ~ 2026-06-30.
         ※ 백테스트이며 수수료·슬리피지 미반영. 자동매매·투자권유 아님.
       </p>

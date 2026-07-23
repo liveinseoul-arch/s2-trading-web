@@ -6,7 +6,7 @@ import { signClass } from "@/lib/format";
 import detail from "./detail.json";
 
 type SoldRow = [string, string, string, number, string]; // code, 매수일, 매도일, 수익률%, 사유
-type HeldRow = [string, string, number | null];          // code, 매수일, 평가수익률%
+type HeldRow = [string, string, number | null, number | null];  // code, 매수일, 평가%, 비중%
 
 const NAMES = detail.names as Record<string, string>;
 const MDETAIL = detail.mdetail as unknown as Record<string, { sold: SoldRow[]; held: HeldRow[]; cash?: number | null }>;
@@ -14,29 +14,29 @@ const YDETAIL = detail.ydetail as unknown as Record<string, { sold: SoldRow[]; h
 
 // iret/imdd = 니케이225 동일 규칙(부분연도 반영, 연중 고점 대비 MDD)
 const YEARLY: { year: number; ret: number; mdd: number; iret: number; imdd: number; n: number; win: number; avg: number }[] = [
-  { year: 2017, ret: 31.4, mdd: -4.7, iret: 15.6, imdd: -4.0, n: 34, win: 35, avg: 0.9 },
-  { year: 2018, ret: -11.7, mdd: -25.4, iret: -12.1, imdd: -21.1, n: 59, win: 39, avg: 4.2 },
-  { year: 2019, ret: 6.8, mdd: -21.4, iret: 18.2, imdd: -9.2, n: 83, win: 20, avg: -3.3 },
-  { year: 2020, ret: 40.9, mdd: -15.1, iret: 16.0, imdd: -31.3, n: 159, win: 39, avg: 3.8 },
-  { year: 2021, ret: -5.1, mdd: -19.1, iret: 4.9, imdd: -11.3, n: 138, win: 34, avg: 1.8 },
-  { year: 2022, ret: -1.0, mdd: -13.4, iret: -9.4, imdd: -15.7, n: 84, win: 27, avg: 0.4 },
-  { year: 2023, ret: 24.4, mdd: -13.6, iret: 28.2, imdd: -9.6, n: 78, win: 22, avg: 2.6 },
-  { year: 2024, ret: 32.8, mdd: -19.7, iret: 19.2, imdd: -25.5, n: 72, win: 29, avg: 5.5 },
-  { year: 2025, ret: 33.5, mdd: -13.6, iret: 26.2, imdd: -22.3, n: 70, win: 49, avg: 8.2 },
-  { year: 2026, ret: 61.9, mdd: -14.5, iret: 39.2, imdd: -13.2, n: 70, win: 50, avg: 12.9 },
+  { year: 2017, ret: 23.8, mdd: -4.3, iret: 15.6, imdd: -4.0, n: 34, win: 32, avg: 0.5 },
+  { year: 2018, ret: -11.8, mdd: -27.3, iret: -12.1, imdd: -21.1, n: 56, win: 39, avg: 2.0 },
+  { year: 2019, ret: 12.7, mdd: -16.0, iret: 18.2, imdd: -9.2, n: 79, win: 18, avg: -3.4 },
+  { year: 2020, ret: 36.0, mdd: -14.5, iret: 16.0, imdd: -31.3, n: 145, win: 39, avg: 4.6 },
+  { year: 2021, ret: 3.8, mdd: -17.0, iret: 4.9, imdd: -11.3, n: 131, win: 35, avg: 2.3 },
+  { year: 2022, ret: 0.1, mdd: -14.0, iret: -9.4, imdd: -15.7, n: 88, win: 31, avg: 0.8 },
+  { year: 2023, ret: 27.5, mdd: -12.1, iret: 28.2, imdd: -9.6, n: 78, win: 23, avg: 3.1 },
+  { year: 2024, ret: 31.5, mdd: -17.5, iret: 19.2, imdd: -25.5, n: 70, win: 33, avg: 5.9 },
+  { year: 2025, ret: 21.3, mdd: -11.8, iret: 26.2, imdd: -22.3, n: 65, win: 40, avg: 5.7 },
+  { year: 2026, ret: 65.2, mdd: -12.8, iret: 39.2, imdd: -13.2, n: 71, win: 48, avg: 16.1 },
 ];
 
 const MONTHLY: Record<string, Record<number, number>> = {
-  "2017": { 9: 6.6, 10: 3.5, 11: 8.7, 12: 9.6 },
-  "2018": { 1: 14.7, 2: -14.4, 3: 0.9, 4: -1.7, 5: 0.0, 6: 0.0, 7: -1.3, 8: -6.6, 9: 2.5, 10: -4.1, 11: 0.0, 12: 0.0 },
-  "2019": { 1: 0.0, 2: 0.0, 3: 1.2, 4: -3.1, 5: -6.1, 6: -3.3, 7: -7.6, 8: -0.3, 9: 2.7, 10: 4.6, 11: 10.4, 12: 9.8 },
-  "2020": { 1: -2.1, 2: 1.3, 3: -1.4, 4: 5.0, 5: 6.1, 6: 14.3, 7: -9.3, 8: 4.5, 9: 10.9, 10: -5.2, 11: 13.0, 12: 0.7 },
-  "2021": { 1: -3.9, 2: 3.0, 3: -2.3, 4: -0.5, 5: 0.4, 6: 10.1, 7: -6.1, 8: -3.7, 9: 9.6, 10: -11.5, 11: 8.1, 12: -6.0 },
-  "2022": { 1: -12.4, 2: 2.1, 3: 11.6, 4: -3.5, 5: 2.9, 6: 1.3, 7: -2.9, 8: 9.6, 9: -4.0, 10: 0.7, 11: 3.3, 12: -7.4 },
-  "2023": { 1: -1.5, 2: 15.0, 3: 9.8, 4: -0.2, 5: -1.0, 6: 8.2, 7: -7.5, 8: 0.4, 9: -1.4, 10: -3.0, 11: 5.5, 12: -0.2 },
-  "2024": { 1: 4.9, 2: 18.5, 3: 16.6, 4: -13.1, 5: 1.7, 6: -0.2, 7: -8.6, 8: 5.7, 9: 0.1, 10: -5.8, 11: 7.4, 12: 6.2 },
-  "2025": { 1: -2.3, 2: -2.8, 3: 0.3, 4: -1.0, 5: 6.1, 6: 7.5, 7: 3.2, 8: 5.6, 9: 1.2, 10: 27.3, 11: -7.9, 12: -4.0 },
-  "2026": { 1: 21.1, 2: 26.7, 3: -8.9, 4: -3.2, 5: 20.7, 6: -0.9 },
+  "2017": { 9: 6.1, 10: 2.7, 11: 5.9, 12: 7.3 },
+  "2018": { 1: 15.5, 2: -16.4, 3: -0.2, 4: 0.0, 5: 0.0, 6: 0.0, 7: -2.9, 8: -4.2, 9: 2.6, 10: -4.0, 11: 0.0, 12: 0.0 },
+  "2019": { 1: 0.0, 2: 0.0, 3: 0.6, 4: -5.5, 5: 0.2, 6: -6.4, 7: -5.0, 8: 9.6, 9: -1.4, 10: 1.3, 11: 10.4, 12: 10.1 },
+  "2020": { 1: -1.6, 2: 0.6, 3: -0.6, 4: 4.1, 5: 6.7, 6: 13.9, 7: -9.1, 8: 4.4, 9: 8.3, 10: -5.4, 11: 11.0, 12: 1.1 },
+  "2021": { 1: -2.2, 2: 3.2, 3: 0.7, 4: 0.9, 5: -4.2, 6: 12.1, 7: -2.6, 8: -1.6, 9: 8.8, 10: -11.1, 11: 8.2, 12: -6.0 },
+  "2022": { 1: -13.1, 2: 3.2, 3: 13.1, 4: -4.4, 5: 2.2, 6: 1.3, 7: -2.5, 8: 10.5, 9: -3.9, 10: 1.1, 11: 2.2, 12: -6.7 },
+  "2023": { 1: -1.8, 2: 12.8, 3: 13.4, 4: -0.4, 5: 1.5, 6: 8.0, 7: -8.1, 8: 1.2, 9: -2.1, 10: -3.1, 11: 5.5, 12: -0.2 },
+  "2024": { 1: 4.9, 2: 16.1, 3: 14.5, 4: -10.0, 5: 3.9, 6: -0.3, 7: -7.9, 8: 5.4, 9: -0.1, 10: -6.5, 11: 8.8, 12: 2.5 },
+  "2025": { 1: -3.2, 2: -1.3, 3: 0.4, 4: -1.2, 5: 3.5, 6: 4.0, 7: 1.5, 8: 1.6, 9: 4.0, 10: 22.8, 11: -7.1, 12: -2.7 },
+  "2026": { 1: 20.6, 2: 19.7, 3: -8.2, 4: -0.3, 5: 23.4, 6: 1.4 },
 };
 
 const TH = "px-2 py-1.5 text-right font-medium whitespace-nowrap";
@@ -55,6 +55,7 @@ const dshort = (d: string, y?: string) => (y ? d.slice(5) : d);   // 연도 패�
 
 function HeldTable({ rows, stripYear }: { rows: HeldRow[]; stripYear?: string }) {
   if (!rows.length) return <div className="text-xs text-muted">없음</div>;
+  const wsum = rows.reduce((s, h) => s + (h[3] ?? 0), 0);
   return (
     <div className="max-h-80 overflow-auto">
       <table className="w-full text-xs text-muted">
@@ -63,6 +64,7 @@ function HeldTable({ rows, stripYear }: { rows: HeldRow[]; stripYear?: string })
             <th className="px-2 py-1 text-left font-medium">종목</th>
             <th className={TH}>매수일</th>
             <th className={TH}>평가 (%)</th>
+            <th className={TH}>비중 (%)</th>
           </tr>
         </thead>
         <tbody>
@@ -71,9 +73,16 @@ function HeldTable({ rows, stripYear }: { rows: HeldRow[]; stripYear?: string })
               <td className="px-2 py-1 whitespace-nowrap">{nm(h[0])}</td>
               <td className={TD}>{dshort(h[1], stripYear)}</td>
               <td className={`${TD} ${signClass(h[2] ?? 0)}`}>{fmt(h[2])}</td>
+              <td className={`${TD} font-medium`}>{h[3] === null ? "—" : h[3].toFixed(1)}</td>
             </tr>
           ))}
         </tbody>
+        <tfoot>
+          <tr className="border-t border-[var(--color-borderc)]">
+            <td className="px-2 py-1 text-muted" colSpan={3}>표시 보유 합계</td>
+            <td className={`${TD} font-medium`}>{wsum.toFixed(1)}</td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   );
