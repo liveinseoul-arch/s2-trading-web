@@ -301,8 +301,12 @@ export default function RulesRsPage() {
             <tbody>
               <tr className="border-b border-[var(--color-borderc)] last:border-0 align-top">
                 <td className={`${TD} font-medium`}>미국</td>
-                <td className={TD}>시총 상위 20% + EPS 배증</td>
-                <td className="px-2 py-1.5">2002~26 Sharpe 0.57 vs S&amp;P500 0.52, MDD −24% vs −56%</td>
+                <td className={TD}>결합안: 시총 상위 20% + EPS 배증</td>
+                <td className="px-2 py-1.5">
+                  2002~26 Sharpe 0.57 vs S&amp;P500 0.52, MDD −24% vs −56% · 최근 10년(2016~)
+                  CAGR 10.9%/MDD −21.9%/Sharpe 0.85 (지수 13.0%/−31.8%/0.80). 성과(US) 페이지는
+                  이 결합안의 최근 10년 백테스트로 작성.
+                </td>
                 <td className={TD}>walk-forward 통과</td>
               </tr>
               <tr className="border-b border-[var(--color-borderc)] last:border-0 align-top">
