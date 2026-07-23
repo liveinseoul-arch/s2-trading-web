@@ -18,6 +18,7 @@ const RS96_TABS = [
   { href: "/rs/search",      label: "조회", match: (p: string) => p.startsWith("/rs/search") },
   { href: "/performance",    label: "성과(KR)", match: (p: string) => p.startsWith("/performance") },
   { href: "/jp-backtest",    label: "성과(JP)", match: (p: string) => p.startsWith("/jp-backtest") },
+  { href: "/us-backtest",    label: "성과(US)", match: (p: string) => p.startsWith("/us-backtest") },
   { href: "/rules/rs96",     label: "규칙", match: (p: string) => p.startsWith("/rules") },
 ];
 

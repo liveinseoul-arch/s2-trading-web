@@ -10,7 +10,7 @@ export const metadata = {
 };
 
 // 백테스트 산출 정적 데이터 — 17_88 엔진, JP 유동주 1,633종목(상폐 212 포함),
-// 유동성 상위 10% 게이트(월말 point-in-time) · MAX_EXPOSURE 1.0(무레버리지) · ATR 사이징 0.7%
+// N225 M필터 gate · ATR 사이징 0.7% · 마진 한도 1.3배 (채택 구성)
 const SUMMARY = [
   { label: "총수익률", value: "+485.7%" },
   { label: "CAGR", value: "+22.2%" },
