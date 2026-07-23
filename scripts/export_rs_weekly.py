@@ -81,7 +81,14 @@ def _normalize_weekly_cache(weekly_cache):
         s2 = s2[~s2.index.duplicated(keep="last")].sort_index()
         # 2) corporate action 보정
         s2 = adjust_for_corporate_action(s2)
-        norm[tk] = {"close": s2}
+        entry = {"close": s2}
+        # 거래량도 W-FRI 정규화해 유지 (매수가능 필터의 주간 거래대금 계산용)
+        vol = v.get("volume") if isinstance(v, dict) else None
+        if vol is not None and len(vol) > 0:
+            vi = vol.index + pd.to_timedelta(4 - vol.index.weekday.values, unit="D")
+            v2 = pd.Series(vol.values, index=pd.DatetimeIndex(vi))
+            entry["volume"] = v2[~v2.index.duplicated(keep="last")].sort_index()
+        norm[tk] = entry
     return norm
 
 
@@ -120,6 +127,47 @@ from rs_query import (                                                # noqa: E4
 
 WEEKS_BACK_DEFAULT = 52
 RS_MIN = 96
+
+# ── 매수가능(목록 표시) 필터 — 각 시장 스크리너의 4-필터와 동일 ──
+# RS 백분위는 광의 유동주 전체로 계산하되, RS96+ 목록(rs_top_weekly)에는
+# 매수 대상(필터 통과 종목)만 노출한다. 주차별로 그 주 기준으로 판정.
+BUY_FILTER = {
+    "US": {"min_price": 5.0,    "min_wk_dvol": 200_000_000},        # $5 · $200M
+    "KR": {"min_price": 3000.0, "min_wk_dvol": 50_000_000_000},     # ₩3,000 · 500억
+    "JP": {"min_price": 300.0,  "min_wk_dvol": 20_000_000_000},     # ¥300 · 200억엔
+}
+BUY_MIN_LISTING_WEEKS = 52     # 상장 52주 이상
+BUY_MAX_FROM_HIGH = 0.30       # 52주 고가 대비 -30% 이내
+BUY_LOOKBACK_VOL_WEEKS = 13    # 거래대금 13주 평균
+
+
+def buyable_at(market, wdf, week_ts):
+    """그 주차 기준 매수가능(스크리너 4-필터) 여부. 거래량 없으면 거래대금 필터 생략."""
+    f = BUY_FILTER.get(market)
+    if f is None:
+        return True
+    s = get_close_series(wdf)
+    if s is None:
+        return False
+    sub = s[s.index <= week_ts].dropna()
+    if len(sub) < BUY_MIN_LISTING_WEEKS:
+        return False
+    # 그 주에 거래 봉이 없으면(거래정지·상폐 추정) 목록 비노출
+    if sub.index[-1] < week_ts - pd.Timedelta(days=7):
+        return False
+    price = float(sub.iloc[-1])
+    if price < f["min_price"]:
+        return False
+    high52 = float(sub.tail(52).max())
+    if high52 > 0 and price / high52 - 1 < -BUY_MAX_FROM_HIGH:
+        return False
+    vol = wdf.get("volume") if isinstance(wdf, dict) else None
+    if vol is not None and len(vol) > 0:
+        rc = sub.tail(BUY_LOOKBACK_VOL_WEEKS)
+        rv = vol.reindex(rc.index).fillna(0)
+        if float((rc * rv).mean()) < f["min_wk_dvol"]:
+            return False
+    return True
 
 MARKETS_ALL = ("KR", "US", "JP")
 
@@ -361,6 +409,46 @@ def build_daily_ema_lookup(daily_cache, weeks):
     return out
 
 
+def fetch_daily_fallback(market, tickers, max_n=300):
+    """일봉 캐시에 없는 표시 대상 종목의 일봉을 yfinance 로 소량 수집 (EMA 폴백).
+    반환 {ticker: {'close': Series}} — build_daily_ema_lookup 호환."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        print("  ⚠ yfinance 없음 — 일봉 EMA 폴백 생략")
+        return {}
+
+    def symbols(tk):
+        if market == "KR":
+            return [f"{tk}.KS", f"{tk}.KQ"]
+        if market == "JP":
+            if tk.endswith(".T"):
+                base = tk[:-2]                     # 이미 야후 형식 ('8306.T')
+            elif len(tk) == 5 and tk.endswith("0"):
+                base = tk[:-1]                     # J-Quants 5자리 ('83060')
+            else:
+                base = tk
+            return [f"{base}.T"]
+        return [tk]
+
+    out = {}
+    for tk in tickers[:max_n]:
+        for sym in symbols(tk):
+            try:
+                h = yf.Ticker(sym).history(period="15mo", interval="1d",
+                                           auto_adjust=True)
+                if h is not None and len(h) >= 21:
+                    c = h["Close"].copy()
+                    c.index = pd.to_datetime(c.index).tz_localize(None)
+                    out[tk] = {"close": c}
+                    break
+            except Exception:
+                continue
+    if len(tickers) > max_n:
+        print(f"  ⚠ EMA 폴백 대상 {len(tickers)}개 중 상위 {max_n}개만 수집")
+    return out
+
+
 def build_signal_lookup(raw_cache, weeks):
     """주차별 보조신호(align_weeks, climax_warn) as-of 조회용 사전계산.
     반환: {ticker: (aw_series, warn_series)} — 인덱스 weeks 로 ffill 정렬.
@@ -400,7 +488,7 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
                  signal_lookup=None, ema_lookup=None):
     """한 주차 → (top96 후보, 모든 RS row, universe row).
 
-    top96     : RS ≥ 96 AND (mktcap_top 컷오프 통과) AND (mktcap_min 통과)
+    top96     : RS ≥ 96 AND (mktcap 필터 통과) AND (매수가능 4-필터 통과 — 목록 노출용)
     all_rs    : 모든 종목의 RS (mktcap 필터 없음) — RS96+ tracking 용
     universe  : mktcap 필터 통과한 모든 종목 (RS 컷오프 없음) — RS 조회 검색용
     """
@@ -528,6 +616,10 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
         if rs < RS_MIN:
             continue
 
+        # 매수 대상 아님(스크리너 4-필터 탈락) → 목록 페이지 비노출
+        if not buyable_at(market, wdf, week_ts):
+            continue
+
         top96_rows.append({
             "market": market,
             "week_date": week_str,
@@ -640,6 +732,31 @@ def fetch_market(market, weeks_back):
         if i % 10 == 0 or i == len(weeks):
             print(f"  진행 {i}/{len(weeks)}주 · top96 누적 {len(top96_all):,}건 · "
                   f"universe 누적 {len(universe_all):,}건", flush=True)
+
+    # ── 일봉 EMA 폴백 — 표시 대상(RS96 이력 + 최신주 RS86+) 중 일봉 캐시 결측분 ──
+    latest_str = weeks[-1].date().isoformat()
+    need = set(rs96_tickers)
+    for r in universe_all:
+        if r["week_date"] == latest_str and r["rs"] >= 86:
+            need.add(r["ticker"])
+    missing = sorted(tk for tk in need if tk not in ema_lookup)
+    if missing:
+        fb_daily = fetch_daily_fallback(market, missing)
+        fb_lookup = build_daily_ema_lookup(fb_daily, weeks)
+        patched = 0
+        for rows in (top96_all, universe_all):
+            for r in rows:
+                em = fb_lookup.get(r["ticker"])
+                if em is None or r.get("ema_21") is not None:
+                    continue
+                wts = pd.Timestamp(r["week_date"])
+                x21 = em[21].get(wts)
+                x50 = em[50].get(wts)
+                r["ema_21"] = round(float(x21), 2) if x21 is not None and not pd.isna(x21) else None
+                r["ema_50"] = round(float(x50), 2) if x50 is not None and not pd.isna(x50) else None
+                if r["ema_21"] is not None:
+                    patched += 1
+        print(f"  일봉 EMA 폴백: 결측 {len(missing)}개 → {len(fb_lookup)}개 수집 · {patched}행 보강")
 
     hist_rows = []
     for tk in rs96_tickers:
