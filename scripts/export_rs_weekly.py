@@ -134,7 +134,10 @@ RS_MIN = 96
 BUY_FILTER = {
     "US": {"min_price": 5.0,    "min_wk_dvol": 200_000_000},        # $5 · $200M
     "KR": {"min_price": 3000.0, "min_wk_dvol": 50_000_000_000},     # ₩3,000 · 500억
-    "JP": {"min_price": 300.0,  "min_wk_dvol": 20_000_000_000},     # ¥300 · 200억엔
+    # JP는 백테스트 진입 유니버스와 정합: 유동성(주간 ¥5억 ≈ 일 ¥1억)만 적용.
+    # 52주고가·주가·상장기간 조건은 JP 전략 성과를 절반으로 깎아 제외 (2026-07-23 분해 검증).
+    "JP": {"min_price": 0.0,    "min_wk_dvol": 500_000_000,
+           "skip_high52": True, "min_listing": 13},
 }
 BUY_MIN_LISTING_WEEKS = 52     # 상장 52주 이상
 BUY_MAX_FROM_HIGH = 0.30       # 52주 고가 대비 -30% 이내
@@ -150,7 +153,7 @@ def buyable_at(market, wdf, week_ts):
     if s is None:
         return False
     sub = s[s.index <= week_ts].dropna()
-    if len(sub) < BUY_MIN_LISTING_WEEKS:
+    if len(sub) < f.get("min_listing", BUY_MIN_LISTING_WEEKS):
         return False
     # 그 주에 거래 봉이 없으면(거래정지·상폐 추정) 목록 비노출
     if sub.index[-1] < week_ts - pd.Timedelta(days=7):
@@ -158,9 +161,10 @@ def buyable_at(market, wdf, week_ts):
     price = float(sub.iloc[-1])
     if price < f["min_price"]:
         return False
-    high52 = float(sub.tail(52).max())
-    if high52 > 0 and price / high52 - 1 < -BUY_MAX_FROM_HIGH:
-        return False
+    if not f.get("skip_high52"):
+        high52 = float(sub.tail(52).max())
+        if high52 > 0 and price / high52 - 1 < -BUY_MAX_FROM_HIGH:
+            return False
     vol = wdf.get("volume") if isinstance(wdf, dict) else None
     if vol is not None and len(vol) > 0:
         rc = sub.tail(BUY_LOOKBACK_VOL_WEEKS)
