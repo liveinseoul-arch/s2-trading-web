@@ -50,6 +50,11 @@ function fmtPrice(v: number | null, market: RsMarket) {
 
 const MARKET_LABEL: Record<RsMarket, string> = { KR: "한국", US: "미국", JP: "일본" };
 
+// 52주 고가 −30% 초과 하락 → 흐리게·하단 (표시 규칙, 3시장 공통).
+// buyable(매수 대상 여부)과 별개 — 일본은 52H 필터를 매수 조건에 안 쓰므로 buyable=true 지만
+// 표시상으로는 한국·미국과 동일하게 낙폭과대를 구분한다.
+const isDim = (r: RsTopWeekly) => r.from_high_pct != null && r.from_high_pct < -30;
+
 function ThemePanel({
   rows, theme, market,
 }: { rows: RsTopWeekly[]; theme: RsThemeWeekly; market: RsMarket }) {
@@ -94,9 +99,9 @@ function ThemePanel({
                 <li
                   key={r.ticker}
                   className={`flex items-baseline justify-between gap-2 text-xs ${
-                    r.buyable === false ? "opacity-45" : ""
+                    isDim(r) ? "opacity-45" : ""
                   }`}
-                  title={r.buyable === false ? "52주 고가 −30% 초과 하락 — 매수 대상 아닌 관찰 종목" : undefined}
+                  title={isDim(r) ? "52주 고가 −30% 초과 하락(추세 훼손) — 낙폭과대 종목" : undefined}
                 >
                   <div className="min-w-0 flex-1 truncate">
                     <Link
@@ -173,9 +178,13 @@ export default async function RsScreen({
   const meta = await getMeta();
   const lastRun = meta["last_rs_weekly_at"] as string | null;
 
-  // 매수 적격(buyable) vs 관찰(52주 고가 −30% 초과 하락 → 흐리게)
-  const buyableCount = rows.filter((r) => r.buyable !== false).length;
-  const dimCount = rows.length - buyableCount;
+  // 정상(진하게) vs 낙폭과대(52H −30% 초과 → 흐리게·하단). 3시장 공통.
+  const dimCount = rows.filter(isDim).length;
+  const normalCount = rows.length - dimCount;
+  // 낙폭과대 종목을 하단으로 (그 안에서 원래 rank 유지)
+  const displayRows = [...rows].sort(
+    (a, b) => (isDim(a) ? 1 : 0) - (isDim(b) ? 1 : 0) || a.rank_in_week - b.rank_in_week,
+  );
 
   return (
     <>
@@ -261,8 +270,8 @@ export default async function RsScreen({
           <div className={theme && theme.categories.length > 0 ? "lg:grid lg:grid-cols-[1fr_300px] lg:gap-6 lg:items-start" : ""}>
           <div className="min-w-0">
           <Section
-            title={`${MARKET_LABEL[market]} · ${selectedWeek} · 매수적격 ${buyableCount}종목${dimCount > 0 ? ` + 관찰 ${dimCount}` : ""}`}
-            sub="종목을 누르면 그 종목의 주차별 RS 추이. 흐린 행은 RS는 높으나 52주 고가 −30% 초과 하락(추세 훼손)으로 매수 대상이 아닌 관찰 종목입니다."
+            title={`${MARKET_LABEL[market]} · ${selectedWeek} · ${normalCount}종목${dimCount > 0 ? ` + 낙폭과대 ${dimCount}` : ""}`}
+            sub="종목을 누르면 그 종목의 주차별 RS 추이. 흐린 행은 RS는 높으나 52주 고가 −30% 초과 하락(추세 훼손)한 낙폭과대 종목으로, 하단에 모아 흐리게 표시합니다."
           >
             {rows.length === 0 ? (
               <Empty>해당 주차에 RS96+ 종목이 없습니다.</Empty>
@@ -283,14 +292,14 @@ export default async function RsScreen({
                     </tr>
                   </thead>
                   <tbody>
-                    {rows.map((r) => (
+                    {displayRows.map((r, i) => (
                       <tr
                         key={r.ticker}
                         className={`border-b border-[var(--color-borderc)] text-right last:border-0 hover:bg-surface ${
-                          r.buyable === false ? "opacity-45" : ""
+                          isDim(r) ? "opacity-45" : ""
                         }`}
                       >
-                        <td className="py-1.5 pl-1 text-left text-muted">{r.rank_in_week}</td>
+                        <td className="py-1.5 pl-1 text-left text-muted">{i + 1}</td>
                         <td className="text-left">
                           <Link
                             href={`/rs96/${market}/${encodeURIComponent(r.ticker)}`}
@@ -364,10 +373,9 @@ export default async function RsScreen({
               분할·액면병합 보정 누락 종목은 극단값이 나올 수 있으니 RS 등급만 기준으로 보세요.
             </p>
             <p>
-              <b>52H</b> 컬럼은 52주 최고가 대비 현재가 위치입니다. 한국·미국은 −30% 초과 하락한 종목을
-              RS(1년 모멘텀)가 높아도 추세가 훼손된 상태로 보아 <b>매수 대상에서 제외</b>하며,
-              목록에서 <span className="opacity-45">행 전체를 흐리게</span> 표시합니다(관찰용, 적색 = −30% 초과).
-              일본은 52H 필터를 쓰지 않아 값은 참고로만 표시되고 흐림·제외는 없습니다.
+              <b>52H</b> 컬럼은 52주 최고가 대비 현재가 위치입니다. −30% 초과 하락(추세 훼손)한 낙폭과대 종목은
+              <b>3시장 모두</b> 목록 하단에 <span className="opacity-45">흐리게</span> 모아 표시합니다(적색 = −30% 초과).
+              한국·미국은 이 종목을 매수 대상에서도 제외하며, 일본은 매수는 유지하되(52H 필터 미적용) 표시만 구분합니다.
             </p>
             <p>
               <b>정배열</b> 컬럼은 주봉 4&gt;13&gt;26&gt;52주 정배열이 연속 유지된 주수(트렌드의 나이) —
