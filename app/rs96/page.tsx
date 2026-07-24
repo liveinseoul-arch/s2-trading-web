@@ -91,7 +91,13 @@ function ThemePanel({
             </h4>
             <ul className="space-y-0.5">
               {g.items.map((r) => (
-                <li key={r.ticker} className="flex items-baseline justify-between gap-2 text-xs">
+                <li
+                  key={r.ticker}
+                  className={`flex items-baseline justify-between gap-2 text-xs ${
+                    r.buyable === false ? "opacity-45" : ""
+                  }`}
+                  title={r.buyable === false ? "52주 고가 −30% 초과 하락 — 매수 대상 아닌 관찰 종목" : undefined}
+                >
                   <div className="min-w-0 flex-1 truncate">
                     <Link
                       href={`/rs96/${market}/${encodeURIComponent(r.ticker)}`}
