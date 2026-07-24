@@ -144,34 +144,45 @@ BUY_MAX_FROM_HIGH = 0.30       # 52주 고가 대비 -30% 이내
 BUY_LOOKBACK_VOL_WEEKS = 13    # 거래대금 13주 평균
 
 
-def buyable_at(market, wdf, week_ts):
-    """그 주차 기준 매수가능(스크리너 4-필터) 여부. 거래량 없으면 거래대금 필터 생략."""
+def buyable_status(market, wdf, week_ts):
+    """그 주차 기준 (show, buyable, from_high_pct) 반환.
+
+    show      : 목록 노출 여부. 하드 필터(주가·거래대금·상장·거래정지) 실패면 False.
+    buyable   : 매수 적격 여부. 52주 고가 −30% 초과 하락만 실패하면 show=True·buyable=False
+                (RS는 높지만 추세 훼손 — 표시하되 매수 대상은 아님으로 마킹).
+    from_high : 52주 고가 대비 %(표시용). 항상 계산(일본 등 52주고가 필터 미적용도 포함).
+    """
     f = BUY_FILTER.get(market)
     if f is None:
-        return True
+        return True, True, None
     s = get_close_series(wdf)
     if s is None:
-        return False
+        return False, False, None
     sub = s[s.index <= week_ts].dropna()
     if len(sub) < f.get("min_listing", BUY_MIN_LISTING_WEEKS):
-        return False
+        return False, False, None
     # 그 주에 거래 봉이 없으면(거래정지·상폐 추정) 목록 비노출
     if sub.index[-1] < week_ts - pd.Timedelta(days=7):
-        return False
+        return False, False, None
     price = float(sub.iloc[-1])
     if price < f["min_price"]:
-        return False
-    if not f.get("skip_high52"):
-        high52 = float(sub.tail(52).max())
-        if high52 > 0 and price / high52 - 1 < -BUY_MAX_FROM_HIGH:
-            return False
+        return False, False, None
     vol = wdf.get("volume") if isinstance(wdf, dict) else None
     if vol is not None and len(vol) > 0:
         rc = sub.tail(BUY_LOOKBACK_VOL_WEEKS)
         rv = vol.reindex(rc.index).fillna(0)
         if float((rc * rv).mean()) < f["min_wk_dvol"]:
-            return False
-    return True
+            return False, False, None
+    # 52주 고가 대비 — soft: 표시하되 −30% 초과면 buyable=False 로 마킹
+    from_high = None
+    if len(sub) >= 52:
+        high52 = float(sub.tail(52).max())
+        if high52 > 0:
+            from_high = round((price / high52 - 1) * 100, 1)
+    buyable = True
+    if not f.get("skip_high52") and from_high is not None and from_high < -BUY_MAX_FROM_HIGH * 100:
+        buyable = False
+    return True, buyable, from_high
 
 MARKETS_ALL = ("KR", "US", "JP")
 
@@ -620,8 +631,10 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
         if rs < RS_MIN:
             continue
 
-        # 매수 대상 아님(스크리너 4-필터 탈락) → 목록 페이지 비노출
-        if not buyable_at(market, wdf, week_ts):
+        # 하드 필터(주가·거래대금·상장·거래정지) 탈락 → 비노출.
+        # 52주 고가 −30% 만 탈락 → 표시하되 buyable=False 로 마킹(흐리게 렌더).
+        show, is_buyable, from_high = buyable_status(market, wdf, week_ts)
+        if not show:
             continue
 
         top96_rows.append({
@@ -634,6 +647,8 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
             "comp_return": float(comp),
             "close": last_close,
             "mktcap": mc_clean,
+            "from_high_pct": from_high,
+            "buyable": is_buyable,
             "align_weeks": aw_val,
             "climax_warn": cw_val,
             "price_ma_4": pma_val[4], "price_ma_13": pma_val[13],
@@ -643,7 +658,8 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
             "climax_week": cx_week, "climax_vol_mult": cx_vmult, "climax_ret": cx_ret,
         })
 
-    top96_rows.sort(key=lambda r: (-r["rs"], -r["comp_return"]))
+    # 매수 적격 종목을 위로, 그 안에서 RS·모멘텀 순. 52주고가 탈락(buyable=False)은 하단.
+    top96_rows.sort(key=lambda r: (not r.get("buyable", True), -r["rs"], -r["comp_return"]))
     for i, r in enumerate(top96_rows, 1):
         r["rank_in_week"] = i
     return top96_rows, all_rs_rows, universe_rows
@@ -849,6 +865,13 @@ def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market, universe_rows=N
             for r in top_rows:
                 for k in _CX_COLS:
                     r.pop(k, None)
+    if top_rows and "from_high_pct" in top_rows[0]:
+        if not _columns_exist("rs_top_weekly", ["from_high_pct", "buyable"]):
+            print("[supabase] rs_top_weekly 에 from_high_pct/buyable 컬럼 없음 "
+                  "— 이번엔 생략(ALTER 실행 후 다음 적재부터 표시)")
+            for r in top_rows:
+                r.pop("from_high_pct", None)
+                r.pop("buyable", None)
     if hist_rows and "align_weeks" in hist_rows[0]:
         if not _columns_exist("rs_history_weekly", ["align_weeks", "vol_gap_4_26"]):
             print("[supabase] rs_history_weekly 에 align_weeks/vol_gap_4_26 컬럼 없음 "

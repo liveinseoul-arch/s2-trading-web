@@ -167,6 +167,10 @@ export default async function RsScreen({
   const meta = await getMeta();
   const lastRun = meta["last_rs_weekly_at"] as string | null;
 
+  // 매수 적격(buyable) vs 관찰(52주 고가 −30% 초과 하락 → 흐리게)
+  const buyableCount = rows.filter((r) => r.buyable !== false).length;
+  const dimCount = rows.length - buyableCount;
+
   return (
     <>
       <h1 className="mb-1 text-lg font-bold">RS96+ 주간 종목</h1>
@@ -251,8 +255,8 @@ export default async function RsScreen({
           <div className={theme && theme.categories.length > 0 ? "lg:grid lg:grid-cols-[1fr_300px] lg:gap-6 lg:items-start" : ""}>
           <div className="min-w-0">
           <Section
-            title={`${MARKET_LABEL[market]} · ${selectedWeek} · ${rows.length}종목`}
-            sub="종목을 누르면 그 종목의 주차별 RS 추이를 볼 수 있습니다."
+            title={`${MARKET_LABEL[market]} · ${selectedWeek} · 매수적격 ${buyableCount}종목${dimCount > 0 ? ` + 관찰 ${dimCount}` : ""}`}
+            sub="종목을 누르면 그 종목의 주차별 RS 추이. 흐린 행은 RS는 높으나 52주 고가 −30% 초과 하락(추세 훼손)으로 매수 대상이 아닌 관찰 종목입니다."
           >
             {rows.length === 0 ? (
               <Empty>해당 주차에 RS96+ 종목이 없습니다.</Empty>
@@ -268,6 +272,7 @@ export default async function RsScreen({
                       <th title="52주 가중 모멘텀(백분위 계산용 composite return)">모멘텀</th>
                       <th title="주봉 정배열(4>13>26>52주) 연속 유지 주수(트렌드 나이). 적색 = 정배열이 N주 전 깨짐">정배열</th>
                       <th>종가</th>
+                      <th title="52주 최고가 대비 현재가 위치. −30% 초과 하락이면 매수 대상 제외(행 흐리게)">52주고가</th>
                       <th>시총({mktcapUnit(market)})</th>
                     </tr>
                   </thead>
@@ -275,7 +280,9 @@ export default async function RsScreen({
                     {rows.map((r) => (
                       <tr
                         key={r.ticker}
-                        className="border-b border-[var(--color-borderc)] text-right last:border-0 hover:bg-surface"
+                        className={`border-b border-[var(--color-borderc)] text-right last:border-0 hover:bg-surface ${
+                          r.buyable === false ? "opacity-45" : ""
+                        }`}
                       >
                         <td className="py-1.5 pl-1 text-left text-muted">{r.rank_in_week}</td>
                         <td className="text-left">
@@ -320,6 +327,15 @@ export default async function RsScreen({
                           )}
                         </td>
                         <td>{fmtPrice(r.close, market)}</td>
+                        <td
+                          className={
+                            r.from_high_pct != null && r.from_high_pct < -30
+                              ? "font-medium text-red-500"
+                              : "text-muted"
+                          }
+                        >
+                          {r.from_high_pct != null ? `${Math.round(r.from_high_pct)}%` : "–"}
+                        </td>
                         <td className="text-muted">{fmtMktcap(r.mktcap, market)}</td>
                       </tr>
                     ))}
@@ -340,6 +356,11 @@ export default async function RsScreen({
               <b className="ml-2">52주 모멘텀</b>은 백테스트 본체의 composite return —
               12주 가중치 2배, 24·36·48주 가중치 1배의 누적 수익률.
               분할·액면병합 보정 누락 종목은 극단값이 나올 수 있으니 RS 등급만 기준으로 보세요.
+            </p>
+            <p>
+              <b>52주고가</b> 컬럼은 52주 최고가 대비 현재가 위치입니다. −30% 초과 하락한 종목은
+              RS(1년 모멘텀)가 높아도 추세가 훼손된 상태로 보아 <b>매수 대상에서 제외</b>하며,
+              목록에서 <span className="opacity-45">행 전체를 흐리게</span> 표시합니다(관찰용). 적색 = −30% 초과.
             </p>
             <p>
               <b>정배열</b> 컬럼은 주봉 4&gt;13&gt;26&gt;52주 정배열이 연속 유지된 주수(트렌드의 나이) —

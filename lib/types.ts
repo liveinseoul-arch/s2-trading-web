@@ -95,6 +95,9 @@ export interface RsTopWeekly {
   climax_week?: string | null;       // 클라이맥스 발생 주차 (ISO date)
   climax_vol_mult?: number | null;   // 거래량/13주평균 (≥2 충족)
   climax_ret?: number | null;        // 주간 수익률 % (≥5 충족)
+  // 52주 고가 대비 위치(%) 및 매수 적격 여부.
+  from_high_pct?: number | null;     // (종가/52주고가 − 1)×100. 음수 = 고점 대비 하락률.
+  buyable?: boolean | null;          // false = 52주 고가 −30% 초과 하락(추세 훼손) → 매수 대상 아님(흐리게 표시).
 }
 
 export interface RsHistoryWeekly {
