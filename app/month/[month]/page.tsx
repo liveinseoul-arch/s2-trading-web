@@ -16,13 +16,18 @@ export default async function MonthDetail({ params }: { params: Promise<{ month:
   const start = `${month}-01`;
   const next = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, "0")}-01`;
 
-  const [statRes, tradesRes] = await Promise.all([
+  const [statRes, tradesRes, heldRes] = await Promise.all([
     supabase.from("monthly_stats").select("*").eq("month", month).maybeSingle(),
     supabase.from("trades").select("*").eq("status", "closed")
       .gte("exit_date", start).lt("exit_date", next).order("exit_date", { ascending: false }),
+    // 월말 보유: 월내(이전 포함) 진입 & 다음 달 이후 청산(또는 아직 보유중)
+    supabase.from("trades").select("*").lt("entry_date", next)
+      .or(`status.eq.open,exit_date.gte.${next}`)
+      .order("entry_date", { ascending: false }),
   ]);
   const stat = statRes.data as MonthlyStat | null;
   const trades = (tradesRes.data as Trade[]) ?? [];
+  const held = (heldRes.data as Trade[]) ?? [];
 
   return (
     <>
@@ -71,6 +76,42 @@ export default async function MonthDetail({ params }: { params: Promise<{ month:
                     <span className={`block text-xs ${signClass(t.pnl)}`}>
                       {(t.pnl ?? 0) >= 0 ? "+" : ""}{won(t.pnl)}
                     </span>
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+
+      <Section title={`${month} 월말 보유 종목 ${held.length}건`}
+        sub="이 달 마지막 시점에 보유 중이던 포지션. 수익률·손익은 이후 청산 결과(보유중이면 현재 기준).">
+        {held.length === 0 ? <Empty>월말 보유 종목이 없습니다.</Empty> : (
+          <ul className="divide-y divide-[var(--color-borderc)]">
+            {held.map((t) => (
+              <li key={t.id}>
+                <Link href={`/stocks/${t.ticker}`} className="flex items-center justify-between py-2">
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1.5">
+                      <span className="font-medium">{shortName(t.name)}</span>
+                      <MarketBadge market={t.market} />
+                      <span className="text-xs text-muted">
+                        {t.status === "open"
+                          ? "보유중"
+                          : `${t.exit_date} ${EXIT_LABEL[t.exit_reason ?? ""] ?? t.exit_reason ?? "청산"}`}
+                      </span>
+                    </span>
+                    <span className="text-xs text-muted tnum">
+                      {t.entry_date} 진입 · 매수 {t.buy_count}회 · 투입 {eok(t.max_invested)}
+                    </span>
+                  </span>
+                  <span className="text-right tnum">
+                    <span className={`font-medium ${signClass(t.ret_pct)}`}>{pct(t.ret_pct)}</span>
+                    {t.pnl != null && (
+                      <span className={`block text-xs ${signClass(t.pnl)}`}>
+                        {(t.pnl ?? 0) >= 0 ? "+" : ""}{won(t.pnl)}
+                      </span>
+                    )}
                   </span>
                 </Link>
               </li>
