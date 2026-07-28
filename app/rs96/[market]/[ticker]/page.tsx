@@ -339,7 +339,7 @@ export default async function RsTickerHistory({
               </div>
               <p className="mt-2 text-[11px] text-muted">
                 세 조건이 최근 3주 내 한 주에 <b>동시 충족</b>되면 ⚡ 표시됩니다. 검증상 클라이맥스 직후
-                신규 매수는 승률 −5.6%p — 진입 타이밍 참고용 표시입니다.
+                신규 매수는 연환산 기대수익이 약 5%로 그 외(약 30%)의 6분의 1 수준 — 진입 타이밍 참고용 표시입니다.
               </p>
             </Section>
           )}
