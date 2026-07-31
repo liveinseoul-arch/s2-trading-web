@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { supabase, latestDate, getMeta } from "@/lib/supabase";
 import SummaryBar from "@/components/SummaryBar";
@@ -5,8 +6,10 @@ import CandidateList from "@/components/CandidateList";
 import WatchOrderPlan from "@/components/WatchOrderPlan";
 import ExecutionList from "@/components/ExecutionList";
 import PositionList from "@/components/PositionList";
+import RulesDisclosure from "@/components/RulesDisclosure";
 import type { NavDaily, OrderPlan, Execution, PositionSnapshot, DailyCandidate } from "@/lib/types";
 import { IS_RS96 } from "@/lib/site";
+import { S2_RULES } from "@/lib/s2rules";
 
 export const dynamic = "force-dynamic"; // 요청 시 Supabase 읽기(공개 읽기 서비스). 캐싱은 추후 ISR 전환 가능.
 
@@ -54,6 +57,21 @@ export default async function Home() {
       <ExecutionList execs={(execs.data as Execution[]) ?? []} title={`${d} 체결`}
         sub="모델 기준 당일 신규·추가 매수 및 매도·손절 체결" />
       <PositionList positions={(positions.data as PositionSnapshot[]) ?? []} />
+
+      <RulesDisclosure title="매매 규칙 요약 · 이 화면 읽는 법">
+        <ul className="flex flex-col gap-3">
+          {S2_RULES.map((r) => (
+            <li key={r.t}>
+              <div className="font-medium text-accent">{r.t}</div>
+              <div className="text-sm text-muted">{r.d}</div>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-3 text-xs text-muted">
+          검증 성과·분봉 검증·거래비용·한계 등 상세는{" "}
+          <Link href="/rules/s2" className="text-accent hover:underline">전체 규칙 페이지</Link>에서 확인하세요.
+        </p>
+      </RulesDisclosure>
     </>
   );
 }
