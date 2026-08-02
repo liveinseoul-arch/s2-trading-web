@@ -50,6 +50,11 @@ $env:BT_EARNINGS_CACHE_KR = "_bt_earnings_cache_kr_dart_op.pkl"
 $env:BT_CA_REQUIRE = "C"
 $env:BT_C_MIN_GROWTH = "0.25"
 $env:BT_ENTRY_FILTER = "1"
+# 고수익 트레일 4단 (21→50→75→100): +100%→75EMA, +200%→100EMA (2026-08-02 확정)
+$env:BT_HIGAIN_EMA = "75"
+$env:BT_HIGAIN_WMA_PCT = "100"
+$env:BT_HIGAIN2_EMA = "100"
+$env:BT_HIGAIN2_PCT = "200"
 $env:BT_RESULT_SUFFIX = "kr16_perf_live"
 
 Set-Location $qb

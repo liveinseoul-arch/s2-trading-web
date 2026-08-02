@@ -45,6 +45,7 @@ $env:BT_COOLDOWN_WEEKS = "8"
 $env:BT_MIN_DVOL_US = "100000000"
 $env:BT_DISABLE_CA_FILTER = "1"
 $env:BT_MAX_EXPOSURE = "1.2"
+# 주: 일본은 고수익 트레일 4단(75/100EMA)이 오히려 악화(19.2→13.9%, MDD −35.3→−37.5%) → 기존 2단(21→50) 유지 (2026-08-02 검증)
 $env:BT_RESULT_SUFFIX = "jp_mf_gate_e12"
 
 Log "[2 백테스트] start"
