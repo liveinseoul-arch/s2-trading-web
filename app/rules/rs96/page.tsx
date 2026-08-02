@@ -139,15 +139,26 @@ const SELL_STAGES = [
   },
 ];
 
-// 매도 사유별 실현 수익률 분포 — 백테스트: US, 2019-08-12~2026-04-17, 17_88 엔진,
-// 재진입 없음 · 손절 후 8주 쿨다운 · ATR 사이징(리스크 0.7%) · C/A 비활성. 총 646건, CAGR 19.5%.
-const SELL_DIST = [
-  { r: "50EMA 이탈", n: "63 (9.8%)", mean: "+75.0%", med: "+52.2%", rng: "−4.0 ~ +341%", win: "96.8%", contrib: "+158%", hold: "93일" },
-  { r: "21EMA 이탈", n: "113 (17.5%)", mean: "+12.4%", med: "+11.1%", rng: "−3.7 ~ +35%", win: "94.7%", contrib: "+61%", hold: "44일" },
-  { r: "기간종료(미청산)", n: "11 (1.7%)", mean: "+27.1%", med: "+8.6%", rng: "−1.5 ~ +181%", win: "90.9%", contrib: "+17%", hold: "18일" },
-  { r: "RS하락(≤87)", n: "9 (1.4%)", mean: "+1.5%", med: "−0.7%", rng: "−8.0 ~ +22.6%", win: "44.4%", contrib: "+0.3%", hold: "59일" },
-  { r: "손절(−8%)", n: "405 (62.7%)", mean: "−8.0%", med: "−8.0%", rng: "−8.0% 고정", win: "0%", contrib: "−117%", hold: "8일" },
-  { r: "손절(갭하락)", n: "45 (7.0%)", mean: "−11.3%", med: "−9.2%", rng: "−62.4 ~ −8.0%", win: "0%", contrib: "−20%", hold: "17일" },
+// 매도 사유별 실현 수익률 분포 — 4단 트레일 확정 구성(2026-08-02), 프로덕션 env 동일.
+// KR 2016-01~2026-07 총 393건(CAGR 13.8%/MDD −21.4%) · US 2016-01~2026-08 총 279건(CAGR 12.8%/MDD −27.6%).
+// 원천: quantBacktest/매도사유분포_2026-08_4단_KR_US.md (재산출: _exit_reason_table.py)
+const SELL_DIST_KR = [
+  { r: "100EMA 이탈", n: "7 (1.8%)", mean: "+261.5%", med: "+266.4%", rng: "+40.9 ~ +549%", win: "100%", contrib: "+59.4%", hold: "219일" },
+  { r: "75EMA 이탈", n: "11 (2.8%)", mean: "+61.1%", med: "+75.1%", rng: "+7.7 ~ +118%", win: "100%", contrib: "+23.1%", hold: "115일" },
+  { r: "50EMA 이탈", n: "25 (6.4%)", mean: "+25.5%", med: "+28.1%", rng: "−1.1 ~ +64.6%", win: "96.0%", contrib: "+21.8%", hold: "70일" },
+  { r: "21EMA 이탈", n: "70 (17.8%)", mean: "+10.3%", med: "+8.8%", rng: "−6.3 ~ +35.5%", win: "90.0%", contrib: "+26.6%", hold: "32일" },
+  { r: "RS하락(≤87)", n: "14 (3.6%)", mean: "+9.8%", med: "+1.0%", rng: "−5.1 ~ +76.9%", win: "50.0%", contrib: "+3.8%", hold: "49일" },
+  { r: "기간종료(미청산)", n: "5 (1.3%)", mean: "+133.2%", med: "+90.5%", rng: "+3.1 ~ +382%", win: "100%", contrib: "+42.9%", hold: "87일" },
+  { r: "손절(−8%)", n: "261 (66.4%)", mean: "−8.3%", med: "−8.0%", rng: "−32.6 ~ −8.0%", win: "0%", contrib: "−77.5%", hold: "6일" },
+];
+const SELL_DIST_US = [
+  { r: "100EMA 이탈", n: "4 (1.4%)", mean: "+229.0%", med: "+180.4%", rng: "+57.7 ~ +498%", win: "100%", contrib: "+48.5%", hold: "262일" },
+  { r: "75EMA 이탈", n: "4 (1.4%)", mean: "+54.1%", med: "+55.0%", rng: "+45.3 ~ +61.2%", win: "100%", contrib: "+10.9%", hold: "107일" },
+  { r: "50EMA 이탈", n: "14 (5.0%)", mean: "+30.9%", med: "+25.9%", rng: "+16.3 ~ +53.2%", win: "100%", contrib: "+20.1%", hold: "87일" },
+  { r: "21EMA 이탈", n: "72 (25.8%)", mean: "+15.0%", med: "+13.7%", rng: "−2.2 ~ +36.9%", win: "97.2%", contrib: "+51.1%", hold: "63일" },
+  { r: "RS하락(≤87)", n: "28 (10.0%)", mean: "−0.5%", med: "−1.1%", rng: "−7.3 ~ +8.3%", win: "42.9%", contrib: "−0.4%", hold: "70일" },
+  { r: "기간종료(미청산)", n: "4 (1.4%)", mean: "+152.6%", med: "+50.1%", rng: "+2.3 ~ +508%", win: "100%", contrib: "+30.9%", hold: "56일" },
+  { r: "손절(−8%)", n: "153 (54.8%)", mean: "−8.4%", med: "−8.0%", rng: "−20.5 ~ −8.0%", win: "0%", contrib: "−60.9%", hold: "10일" },
 ];
 
 const TH = "px-2 py-1.5 text-left font-medium whitespace-nowrap";
@@ -167,8 +178,8 @@ export default function RulesRsPage() {
           아래 규칙으로 한국 시장을 백테스트한 <b>월별·연도별 성과</b>는{" "}
           <a href="/performance" className="text-accent hover:underline">성과 화면(/performance)</a>에서 확인할 수 있습니다.
           채택 구성: <b>RS96+ ∩ 영업이익 C≥25% ∩ 거래대금 상위 20%</b> + ATR 리스크 0.7%(2×ATR) 사이징
-          + −8% 손절 · 21/50일 EMA 트레일링. 2017~2026 결과 <b>CAGR 12.7% · MDD −24.9% · Calmar 0.51</b>
-          (원화 기준 3.12배). 저승률(31%)·고손익비 순정 모멘텀 — 청산의 65%가 −8% 손절로 빠르게 잘리고
+          + −8% 손절 · 21/50/75/100일 EMA 4단 트레일링. 2016~2026 결과 <b>CAGR 13.8% · MDD −21.4% · Calmar 0.65</b>
+          (원화 기준 약 3.9배). 저승률(30%)·고손익비 순정 모멘텀 — 청산의 66%가 −8% 손절로 빠르게 잘리고
           살아남은 소수 승자를 EMA 트레일로 크게 태운다. 시총 상위 20/25% 게이트는 이미 거래대금·복합필터에
           포함돼 무효과였고, <b>거래대금 상위 20%</b>가 유효했다.
         </p>
@@ -213,7 +224,7 @@ export default function RulesRsPage() {
 
       <Section title="매도 트리거 · 활성 조건 (기본 모드)">
         <p className="mb-2 text-sm leading-relaxed text-muted">
-          매도 규칙은 수익 구간에 따라 3단계로 <b>승격</b>됩니다. 기준값은 현재 평가손익이 아니라
+          매도 규칙은 수익 구간에 따라 4단계로 <b>승격</b>됩니다. 기준값은 현재 평가손익이 아니라
           <b> 보유 중 최고가 기준 수익률(peak gain)</b> — 장중 고가로 갱신되며 단조 증가합니다.
         </p>
         <div className="overflow-x-auto">
@@ -241,55 +252,69 @@ export default function RulesRsPage() {
         <p className="mt-2 text-xs leading-relaxed text-muted">
           0~+20% 구간은 −8% 손절만 작동. +20%→21EMA, +50%→50EMA, +100%→75EMA, +200%→100EMA로
           트레일이 점점 느슨해지며 대시세를 끝까지 추적한다. 상장폐지 시에는 정리매매 마지막 가용 종가로 강제 청산.
+          4단 트레일은 한국·미국에 적용 — 일본은 검증 결과 4단이 열위(CAGR 19.2→13.9%)여서 2단(21→50EMA)을 유지한다.
         </p>
       </Section>
 
-      <Section title="매도 사유별 실현 수익률 분포 (백테스트)">
+      <Section title="매도 사유별 실현 수익률 분포 (백테스트 · 4단 트레일)">
         <p className="mb-2 text-sm leading-relaxed text-muted">
-          US · 2019-08-12 ~ 2026-04-17 · 17_88 엔진(재진입 없음, 손절 후 8주 쿨다운, ATR 사이징
-          리스크 0.7%, C/A 비활성) · 총 646건 · CAGR 19.5% / MDD −26.3% 런 기준.
+          확정 4단 트레일 구성(프로덕션 동일 env) · 17_88 엔진 · 재진입 없음, 손절 후 8주 쿨다운,
+          ATR 사이징 리스크 0.7%. 한국 2016-01~2026-07 총 393건(CAGR 13.8% / MDD −21.4%) ·
+          미국 2016-01~2026-08 총 279건(CAGR 12.8% / MDD −27.6%). 보유기간은 중앙값.
         </p>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm text-muted">
-            <thead>
-              <tr className="border-b border-[var(--color-borderc)] text-accent">
-                <th className={TH}>매도 사유</th>
-                <th className={TH}>건수 (비중)</th>
-                <th className={TH}>평균</th>
-                <th className={TH}>중앙값</th>
-                <th className={TH}>최소~최대</th>
-                <th className={TH}>승률</th>
-                <th className={TH}>손익 기여</th>
-                <th className={TH}>평균 보유</th>
-              </tr>
-            </thead>
-            <tbody>
-              {SELL_DIST.map((s) => (
-                <tr key={s.r} className="border-b border-[var(--color-borderc)] last:border-0">
-                  <td className={`${TD} font-medium`}>{s.r}</td>
-                  <td className={TD}>{s.n}</td>
-                  <td className={TD}>{s.mean}</td>
-                  <td className={TD}>{s.med}</td>
-                  <td className={TD}>{s.rng}</td>
-                  <td className={TD}>{s.win}</td>
-                  <td className={TD}>{s.contrib}</td>
-                  <td className={TD}>{s.hold}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        {[
+          { label: "한국 (KR) — 393건", rows: SELL_DIST_KR },
+          { label: "미국 (US) — 279건", rows: SELL_DIST_US },
+        ].map(({ label, rows }) => (
+          <div key={label} className="mb-4 last:mb-0">
+            <div className="mb-1 text-sm font-medium text-accent">{label}</div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm text-muted">
+                <thead>
+                  <tr className="border-b border-[var(--color-borderc)] text-accent">
+                    <th className={TH}>매도 사유</th>
+                    <th className={TH}>건수 (비중)</th>
+                    <th className={TH}>평균</th>
+                    <th className={TH}>중앙값</th>
+                    <th className={TH}>최소~최대</th>
+                    <th className={TH}>승률</th>
+                    <th className={TH}>손익 기여</th>
+                    <th className={TH}>보유(중앙)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((s) => (
+                    <tr key={s.r} className="border-b border-[var(--color-borderc)] last:border-0">
+                      <td className={`${TD} font-medium`}>{s.r}</td>
+                      <td className={TD}>{s.n}</td>
+                      <td className={TD}>{s.mean}</td>
+                      <td className={TD}>{s.med}</td>
+                      <td className={TD}>{s.rng}</td>
+                      <td className={TD}>{s.win}</td>
+                      <td className={TD}>{s.contrib}</td>
+                      <td className={TD}>{s.hold}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))}
         <ul className="mt-2 ml-4 list-disc text-xs leading-relaxed text-muted">
           <li>
-            이익의 원천은 50EMA 트레일까지 도달한 소수(9.8%)로, 총손익의 158%를 담당. +100% 초과
-            대박(16건)은 전부 이 그룹에서 발생.
+            <b>100EMA 단이 전략의 핵심 엔진</b> — 한국 7건(1.8%)이 총손익의 59.4%, 미국 4건(1.4%)이
+            48.5%를 담당. 보유 중앙 219일/262일로 &ldquo;3배 승자를 반년 이상 태우는&rdquo; 4단 설계가 실제 작동.
           </li>
           <li>
-            거래의 약 70%는 손절(−8% 정액 + 갭하락)로 끝나며 이익의 137%를 상쇄 — 전형적인
-            저승률(28%)·고손익비(2.2) 모멘텀 구조.
+            트레일 사다리는 단조 구조 — 단이 올라갈수록 수익 중앙값이 계단식 상승
+            (한국 +8.8 → +28.1 → +75.1 → +266.4%).
           </li>
-          <li>갭하락 손절은 평균 −11.3%로 −8% 설계선을 뚫는다(최악 −62.4%).</li>
-          <li>RS≤87 청산은 9건뿐 — 트레일이 먼저 작동해 사실상 최후 안전망으로만 기능.</li>
+          <li>
+            거래의 55~66%는 −8% 손절로 끝나지만 보유 6~10일에 짧게 잘려 손실 기여가 제한 —
+            전형적인 저승률(30~39%)·고손익비 모멘텀 구조.
+          </li>
+          <li>갭하락 시 손절은 −8% 설계선을 뚫는다(최악 한국 −32.6%, 미국 −20.5%).</li>
+          <li>RS≤87 청산은 중앙값 ±1% 안팎의 본전 청산 — 손익 중립, 최후 안전망 역할.</li>
           <li>손익 기여 %는 총손익 대비 비율이라 합계가 100%를 넘는 항목이 존재.</li>
         </ul>
       </Section>
