@@ -11,7 +11,9 @@ next-env.d.ts
 .env*.local
 
 # python 산출/로그/캐시 (로컬 전용)
-scripts/_dryrun/
+# ★2026-08-09 패턴 확장 — 종전 `scripts/_dryrun/` 는 정확히 그 이름만 걸러서
+#   `_dryrun_prod_vb0_2026-08-07` 같은 대조 산출 디렉터리가 계속 미추적으로 떴다.
+scripts/_dryrun*/
 scripts/*.log
 __pycache__/
 *.pyc
