@@ -10,6 +10,7 @@ import RulesDisclosure from "@/components/RulesDisclosure";
 import type { NavDaily, OrderPlan, Execution, PositionSnapshot, DailyCandidate } from "@/lib/types";
 import { IS_RS96 } from "@/lib/site";
 import { S2_RULES } from "@/lib/s2rules";
+import RuleText from "@/components/RuleText";
 
 export const dynamic = "force-dynamic"; // 요청 시 Supabase 읽기(공개 읽기 서비스). 캐싱은 추후 ISR 전환 가능.
 
@@ -63,7 +64,7 @@ export default async function Home() {
           {S2_RULES.map((r) => (
             <li key={r.t}>
               <div className="font-medium text-accent">{r.t}</div>
-              <div className="text-sm text-muted">{r.d}</div>
+              <div className="text-sm text-muted"><RuleText>{r.d}</RuleText></div>
             </li>
           ))}
         </ul>

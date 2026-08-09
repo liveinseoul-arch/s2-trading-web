@@ -1,5 +1,6 @@
 import { Section } from "@/components/ui";
-import { S2_RULES as RULES } from "@/lib/s2rules";
+import { S2_RULES as RULES, S2_CONFIG_LINE } from "@/lib/s2rules";
+import RuleText from "@/components/RuleText";
 
 export const revalidate = 3600;
 
@@ -12,7 +13,7 @@ export default function RulesPage() {
           {RULES.map((r) => (
             <li key={r.t}>
               <div className="font-medium text-accent">{r.t}</div>
-              <div className="text-sm text-muted">{r.d}</div>
+              <div className="text-sm text-muted"><RuleText>{r.d}</RuleText></div>
             </li>
           ))}
         </ul>
@@ -20,7 +21,7 @@ export default function RulesPage() {
 
       <Section title="검증 성과 (정직 공개)">
         <ul className="flex flex-col gap-2 text-sm">
-          <li><b>11.9년(2014-08~2026-07, 비용 0.215% 적용 · 현재 운용값 = 3주 기간 손절·+3/+5/+7 분할매도(33/33/33)·−7% 추가매수·18%/9% 사이징·레버 1.2·낙주필터(ret5&lt;−30)·시초 매도·추가매수일 매도 보류·broker 충돌 시 3차 매수 skip)</b>:
+          <li><b>11.9년(2014-08~2026-07, 비용 0.215% 적용 · 현재 운용값 = {S2_CONFIG_LINE})</b>:
             CAGR <b className="text-accent">11.92%</b> · MDD <b className="text-accent">−13.44%</b> ·
             Calmar <b className="text-accent">0.89</b> · 승률 84.2% <span className="text-muted">(2026-07-19 재측정)</span>.</li>
           <li className="text-muted">분할매도 +3/+5/+7 + drop −10% + size 15/7.5 + 기간손절 없음 (2026-07-17 이전 운용값): CAGR 4.59% · MDD −33.8% · Calmar 0.14. → 개선의 주역은 기간손절·−7%·18/9(매도목표 아님).</li>
