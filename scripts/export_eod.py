@@ -71,7 +71,22 @@ _WIDE_T = (tuple(float(x) / 100 for x in POTENTIAL_TARGETS.split(","))
 #   3/5/7 은 +7% 라 확실히 체결돼 실현 가능성이 높다. → 실현성 우위로 3/5/7 채택.
 #   (상세: quant_infra/IDEAS.md "2/6/14 의 우위는 터치=체결 가정에 의존")
 S = tuple(float(x)/100 for x in os.environ.get("S2_SELL_TARGETS", "3,5,7").split(","))
-# 추가매수 drop: 직전 매수가 × (1 - ADD_DROP). 기본 -7%. env S2_ADD_DROP (예: 0.10 = -10%)
+# ★조건부 매도 (2026-08-09 채택) — MA120 **위** 진입분에만 다른 목표를 준다. 아래는 S 그대로.
+#   env S2_SELL_TARGETS_ABOVE (예: "4,7,12"). **미설정이면 None = off → 전 포지션이 S 를 쓴다(종전 동작 완전 동일).**
+#   되돌리기: run_eod.ps1 에서 이 줄 한 줄만 지우면 원복된다.
+#   근거: quant_infra/2026-08/KR_S2_ADDROP_SELLTARGET_2D_2026-08-09.md
+#     결정 창(–2024) 프로덕션 무차입 Calmar 0.8810 → 1.1649 · 검증 2025 유지 ·
+#     블록 부트스트랩 12/12 유의 · F4′ 분봉 실현율 −1.3%p(위 포지션 A 87.7% vs D 86.3%).
+#   ★한국은 MA120 위 진입이 35.96% 로 미국(5.45%)의 6.6배라 이 분기가 실제로 작동한다.
+_sa = os.environ.get("S2_SELL_TARGETS_ABOVE", "").strip()
+S_ABOVE = tuple(float(x)/100 for x in _sa.split(",")) if _sa else None
+# (종목, 매도차수) -> 목표 수익률. 텔레그램 감시주문 라벨을 포지션별 목표로 찍기 위한 것.
+# Supabase 스키마를 건드리지 않으려고 plan dict 에 필드를 늘리는 대신 이 맵을 쓴다.
+ORD_TGT_PCT = {}
+# 추가매수 drop: 직전 매수가 × (1 - ADD_DROP). env S2_ADD_DROP (예: 0.10 = -10%)
+#   ★2026-08-09 운영 0.07 → 0.10 (canonical 과 일치). 조건부 매도와 **함께** 바꿔야 한다 —
+#    0.07 에서는 조건부 매도가 Calmar 를 깎는다(두 축이 회전율을 공유해 상충).
+#   ⚠️`add_drop` 자체는 **튜닝 대상이 아니다** — 0.100 → 0.105 한 스텝에 MDD −11.42 → −20.75.
 ADD_DROP = float(os.environ.get("S2_ADD_DROP", "0.07"))
 MAX_BUY = int(os.environ.get("S2_MAX_BUY", "3"))   # 1차 포함 총 매수 횟수(기본3=추가매수 2회)
 # 사이징 (NAV %) — 120일선 위 SIZE_ABOVE / 아래 SIZE_BELOW. 기본 0.18 / 0.09.
@@ -455,11 +470,13 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             tid_seq += 1
             _cost = sh * price * BUY_MULT
             cash -= _cost
-            # 잠재력 종목(2주 순방향 상승 rise2w >= 임계)이면 넓은 목표가, 아니면 기본 S
+            # ★조건부 매도 — MA120 위 진입분은 S_ABOVE. off(None)면 S 라 종전과 동일.
+            _base_t = S_ABOVE if (above and S_ABOVE is not None) else S
+            # 잠재력 종목(2주 순방향 상승 rise2w >= 임계)이면 넓은 목표가, 아니면 기본
             if _WIDE_T is not None and _RISE2W.get((tk, str(d)[:10]), 0.0) >= POTENTIAL_RISE:
                 _tgts = _WIDE_T
             else:
-                _tgts = S
+                _tgts = _base_t
             _tmult = 1.0
             if _kn:                                        # 낙주 deep 진입: 전용 목표/배수
                 if KNIFE_TARGETS is not None:
@@ -526,13 +543,15 @@ def build_order_plan(positions, d, nav):
                     stage=p["buy_count"] + 1, trigger_price=round(at), qty=sh,
                     port_pct=round(p["tranche"] / nav * 100, 2) if nav > 0 else None, diff=diff,
                     note=f"{p['buy_count']+1}차 매수(직전매수가 -{ADD_DROP*100:g}%)"))
-        t = [_to_tick(p["avg_buy"] * p.get("tgt_mult", 1.0) * (1 + s)) for s in p.get("targets", S)]   # 목표가 호가단위 반올림(포지션별)                       # 매도 감시(미체결 단계)
+        _tp = p.get("targets", S)                                     # ★포지션별 목표(조건부 매도 반영)
+        t = [_to_tick(p["avg_buy"] * p.get("tgt_mult", 1.0) * (1 + s)) for s in _tp]   # 목표가 호가단위 반올림(포지션별)                       # 매도 감시(미체결 단계)
         for stg in range(p["sell_count"] + 1, 4):
             sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
+            ORD_TGT_PCT[(tk, stg)] = _tp[stg - 1]                     # ★텔레그램 라벨용(스키마 불변)
             plan.append(dict(d=d, ticker=tk, name=p["name"], market=p["market"], order_type="sell",
                 stage=stg, trigger_price=round(t[stg - 1]), qty=int(sq),
                 port_pct=round(sq * t[stg - 1] / nav * 100, 2) if nav > 0 else None, diff=diff,
-                note=f"{stg}차 매도(+{S[stg-1]*100:g}%)"))
+                note=f"{stg}차 매도(+{_tp[stg-1]*100:g}%)"))
         if p["sell_count"] >= 1:                                      # 손절 감시
             plan.append(dict(d=d, ticker=tk, name=p["name"], market=p["market"], order_type="stop",
                 stage=p["sell_count"], trigger_price=round(p["stop"]), qty=int(p["qty"]),
@@ -725,8 +744,11 @@ def notify_eod(data):
             sells = sorted([x for x in os_ if x["order_type"] == "sell"], key=lambda x: x["stage"])
             if sells:
                 _p1 = SELL_STAGE_PCT * 100          # 1·2차 비중, 3차는 잔량
+                # ★조건부 매도 대응 — 전역 S 가 아니라 **그 포지션의 목표**를 표시한다.
+                #   안 고치면 MA120 위 종목이 가격은 맞는데 라벨만 +3/+5/+7 로 틀리게 나간다.
                 lines.append(f"  · 매도({_p1:g}/{_p1:g}/{100-2*_p1:g}) " + " / ".join(
-                    f"+{S[o['stage']-1]*100:g}% {o['trigger_price']:,}" for o in sells))
+                    f"+{ORD_TGT_PCT.get((o['ticker'], o['stage']), S[o['stage']-1])*100:g}%"
+                    f" {o['trigger_price']:,}" for o in sells))
             for o in [x for x in os_ if x["order_type"] in ("stop", "newlow_stop")]:
                 lab = "손절" if o["order_type"] == "stop" else "신저가손절"
                 lines.append(f"  · {lab} {o['trigger_price']:,}원")
