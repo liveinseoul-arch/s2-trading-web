@@ -26,7 +26,9 @@ export const bull = (b: boolean | null | undefined) =>
 
 export const actionLabel: Record<string, string> = {
   buy_new: "신규매수", buy_add: "추가매수",
-  sell_1: "1차매도(+3%)", sell_2: "2차매도(+5%)", sell_3: "3차매도(+7%)",
+  // ★2026-08-09 조건부 매도 채택 이후 목표가 포지션마다 다르다(120일선 아래 3/5/7 · 위 3/6.5/10).
+  //   여기에 %를 박으면 120일선 위 진입분이 틀리게 표시된다. 실제 체결가는 각 행의 가격 컬럼을 볼 것.
+  sell_1: "1차매도", sell_2: "2차매도", sell_3: "3차매도",
   stop: "손절", newlow_stop: "신저가손절",
 };
 

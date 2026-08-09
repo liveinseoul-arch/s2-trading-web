@@ -6,8 +6,10 @@ import type { Trade, MonthlyStat } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
+// ★2026-08-09 조건부 매도 채택 — 3차 목표가 120일선 아래 +7% · 위 +10% 로 갈린다.
+//   %를 박으면 위 진입분이 틀리게 표시되므로 뺀다.
 const EXIT_LABEL: Record<string, string> = {
-  sell_3: "+7% 익절", stop: "손절", newlow_stop: "신저가손절", open: "보유중",
+  sell_3: "3차 익절", stop: "손절", newlow_stop: "신저가손절", open: "보유중",
 };
 
 export default async function MonthDetail({ params }: { params: Promise<{ month: string }> }) {
