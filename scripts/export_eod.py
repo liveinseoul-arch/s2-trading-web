@@ -126,6 +126,25 @@ TIME_STOP_DAYS = int(os.environ.get("S2_TIME_STOP_DAYS", "15"))
 TIME_STOP_REF = os.environ.get("S2_TIME_STOP_REF", "entry").lower()
 # 신저가 손절 트리거 기준: "intraday" = 그날 lo (장중) / "close" = 그날 cl (종가만)
 NEWLOW_TRIGGER = os.environ.get("S2_NEWLOW_TRIGGER", "intraday").lower()
+
+# ── ★유효봉 가드 (2026-08-07 이식, 기본 on — backtest.py 와 동일) ───────────────
+# 이 스크립트는 backtest.simulate_ticker 를 쓰지 않고 **자체 시뮬레이션**을 돈다
+# (상단에서 _prepare 만 import). 그래서 backtest.py 의 S2_VALID_BAR 가드가
+# **전파되지 않았다.** 2026-08-07 감사에서 발견해 이식한다.
+#
+# 거래정지·무거래 봉은 o/h/l 이 0 으로 들어온다(stock_cache.db 전 구간 111,337행,
+# 2026년만 16,412행 · 405종목 — 현재진행형). 그 봉에서:
+#   ① `lo <= p["stop"]`      → 0 <= stop 이 항상 참 → **가짜 손절**
+#   ② `lo <= at`             → 0 <= at 이 항상 참 → **가짜 추가매수**
+#   ③ `_trigger_px < min_low`→ 0 < min_low 가 항상 참 → **가짜 신저가 손절**
+#   ④ `min_low = min(min_low, lo)` → **min_low 가 0 에 영구 고정**
+#      → 이후 ③ 이 영원히 거짓 → ★**그 포지션의 신저가 손절이 영구 비활성화된다**
+#
+# 정의는 backtest.py:351 과 동일하게 둔다. S2_VALID_BAR=0 으로 구 동작 복원 가능.
+# 매도 경로(op >= t · hi >= t)는 0 이면 자연히 거짓이라 별도 가드가 필요 없다.
+VALID_BAR = os.environ.get("S2_VALID_BAR", "1") == "1"
+VB_SKIP = {"stop": 0, "add": 0, "newlow": 0, "minlow": 0}   # 가드가 실제로 막은 횟수
+
 MKT = {"KOSPI": "KS", "KOSDAQ": "KQ"}
 
 
@@ -270,8 +289,12 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             p = positions[tk]; r = day[tk]
             op, hi, lo, cl = float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"])
             p["last_close"] = cl
+            # ★유효봉 판정 — 거래정지·무거래 봉(o/h/l = 0)을 저가 기반 로직에서 배제
+            bar_ok = (not VALID_BAR) or (op > 0 and hi > 0 and lo > 0)
             # 매도단계 후 손절 (장초 갭 포함)
-            if p["sell_count"] >= 1 and p["qty"] > 0 and lo <= p["stop"]:
+            if p["sell_count"] >= 1 and p["qty"] > 0 and not bar_ok and lo <= p["stop"]:
+                VB_SKIP["stop"] += 1
+            if p["sell_count"] >= 1 and p["qty"] > 0 and bar_ok and lo <= p["stop"]:
                 px_ = op if op < p["stop"] else p["stop"]
                 ex(d, p, "stop", p["sell_count"], px_, p["qty"], nav_today)
                 leg(p, d, "stop", p["sell_count"], px_, p["qty"], nav_today)
@@ -302,7 +325,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             if p["sell_count"] == 0 and p["buy_count"] < MAX_BUY and not p.get("knife"):
                 at = _to_tick(p["last_buy"] * (1 - ADD_DROP))   # 추가매수가 호가단위 반올림
                 _skip = (p["buy_count"] >= NL_AFTER and at <= p["min_low"])
-                if not _skip and lo <= at:
+                if not _skip and not bar_ok and lo <= at:
+                    VB_SKIP["add"] += 1
+                if not _skip and bar_ok and lo <= at:
                     sh = int(p["tranche"] // at)
                     if sh > 0 and lev_ok(day, sh * at):
                         _net = sh * at * BUY_MULT
@@ -315,14 +340,26 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     elif sh > 0:
                         ex(d, p, "buy_add", p["buy_count"] + 1, at, sh, nav_today, blocked=True)
             _trigger_px = lo if NEWLOW_TRIGGER == "intraday" else cl
-            if p["sell_count"] == 0 and (p["buy_count"] >= NL_AFTER or p.get("knife")) and not bought and _trigger_px < p["min_low"]:
+            _nl_cond = (p["sell_count"] == 0 and (p["buy_count"] >= NL_AFTER or p.get("knife"))
+                        and not bought and _trigger_px < p["min_low"])
+            if _nl_cond and not bar_ok:
+                VB_SKIP["newlow"] += 1
+            if _nl_cond and bar_ok:
                 ex(d, p, "newlow_stop", None, cl, p["qty"], nav_today)
                 leg(p, d, "newlow_stop", None, cl, p["qty"], nav_today)
                 _net = p["qty"] * cl * SELL_MULT
                 cash += _net; p["proc"] += _net; p["qty"] = 0
                 close_trade(p, d, "newlow_stop"); del positions[tk]; closed.add(tk); last_exit[tk] = d
-                p["min_low"] = min(p["min_low"], lo); continue
-            p["min_low"] = min(p["min_low"], lo)
+                if bar_ok:
+                    p["min_low"] = min(p["min_low"], lo)
+                continue
+            # ★min_low 갱신 — 이것이 가장 중요하다.
+            #   가드 없이 lo=0 을 한 번 먹으면 min_low 가 0 에 고정되고
+            #   그 포지션의 신저가 손절이 **영구 비활성화**된다.
+            if bar_ok:
+                p["min_low"] = min(p["min_low"], lo)
+            elif lo < p["min_low"]:
+                VB_SKIP["minlow"] += 1
 
             # 기간 손절 — TIME_STOP_DAYS 영업일 경과 + 분할매도 한 단계도 못 찍었으면 종가 강제 청산
             # 기준: TIME_STOP_REF = "entry" (1차 매수일) | "last_buy" (마지막 매수일)
@@ -353,7 +390,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                         p["qty"] -= sq; p["sell_count"] = stg; p["stop"] = t[stg - 1]
                     else:
                         break
-            if p["sell_count"] >= 1 and p["qty"] > 0 and lo <= p["stop"]:
+            if p["sell_count"] >= 1 and p["qty"] > 0 and not bar_ok and lo <= p["stop"]:
+                VB_SKIP["stop"] += 1
+            if p["sell_count"] >= 1 and p["qty"] > 0 and bar_ok and lo <= p["stop"]:
                 ex(d, p, "stop", p["sell_count"], p["stop"], p["qty"], nav_today)
                 leg(p, d, "stop", p["sell_count"], p["stop"], p["qty"], nav_today)
                 _net = p["qty"] * p["stop"] * SELL_MULT
@@ -712,6 +751,15 @@ def main():
     print(f"S2 EOD 익스포터 — 종료일 {end}, 기준자본 {base_cap:,.0f}원")
     px, nmap, mmap, period_start, sm, smy = load(cfg, end)
     data = simulate(px, nmap, mmap, period_start, sm, smy, base_cap)
+
+    # ★유효봉 가드가 실제로 막은 횟수 (2026-08-07 이식)
+    _tot = sum(VB_SKIP.values())
+    print(f"[유효봉 가드] {'ON' if VALID_BAR else 'OFF(S2_VALID_BAR=0)'} · "
+          f"차단 {_tot}건 — 손절 {VB_SKIP['stop']} · 추가매수 {VB_SKIP['add']} · "
+          f"신저가손절 {VB_SKIP['newlow']} · min_low오염 {VB_SKIP['minlow']}")
+    if VB_SKIP["minlow"]:
+        print(f"  ★min_low 오염 차단 {VB_SKIP['minlow']}건 — 막지 않았다면 "
+              f"그 포지션들의 신저가 손절이 영구 비활성화됐다.")
 
     if args.dry_run:
         dry_run_dump(data, base_cap)
