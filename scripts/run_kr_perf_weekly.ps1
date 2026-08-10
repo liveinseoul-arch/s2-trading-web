@@ -43,7 +43,19 @@ $env:BT_MARKET_FILTER = "1"
 $env:BT_MFILTER_MODE = "half"
 $env:BT_MKTCAP_TOP_PCT = "0.20"
 $env:BT_ATR_SIZING_ENABLED = "1"
-$env:BT_RISK_PER_TRADE = "0.007"
+# ★★★2026-08-09 채택 — 후보 C (RS_ENTRY 90 · RS_EXIT 83 · RISK 0.010 · 무차입 1.0)
+#   되돌리기: 아래 4줄을 지우면 완전히 원복된다(BT_RISK_PER_TRADE 는 0.007 로 되돌릴 것).
+#   [홀드아웃] 결정창(–2024)에서만 파라미터를 정하고, 2025 로 붕괴를 보고,
+#     합격선(전구간 Calmar >= 0.7063 또는 MDD >= -30%)과 예측을 **개봉 전 문서에 박은 뒤**
+#     2026 을 딱 1회 열었다 → Calmar 0.9391 ✅ · MDD -24.88% ✅ (두 조건 모두 충족)
+#   [전구간 2016-01-01 – 2026-07-17 · 무차입] CAGR 14.07 → 23.37% · Calmar 0.6522 → 0.9391 · 거래 383 → 455
+#   [게이트 off 재현 검증 완료] BT_RS_ENTRY 미설정 = 96 = 현행(383거래 · 14.0720 · -21.5773 · 0.6522)
+#   ⚠️2026 **단독**에서는 현행이 더 좋았다(+60.67% vs +51.57%) — 레짐 의존. 인용 시 병기할 것
+#   근거: quant_infra/2026-08/KR_RS96_ADOPT_C_2026-08-09.md
+$env:BT_RS_ENTRY = "90"          # ★엔진 기본 96 (17_88_cmp_sf1.py:115 env 게이트 신설)
+$env:BT_RS_EXIT = "83"           # ★엔진 기본 87
+$env:BT_MAX_EXPOSURE = "1.0"     # ★엔진 기본 1.3 → 무차입 (레버는 13 entry 중 12개에서 열위)
+$env:BT_RISK_PER_TRADE = "0.010" # ★기존 0.007 → 0.010 (사이징이 레버보다 효과 4.2배)
 $env:BT_COOLDOWN_WEEKS = "8"
 $env:BT_DISABLE_CA_FILTER = "0"
 $env:BT_EARNINGS_CACHE_KR = "_bt_earnings_cache_kr_dart_op.pkl"
