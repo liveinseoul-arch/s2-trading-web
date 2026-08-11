@@ -35,6 +35,44 @@ MUSEOB = 0.80   # 음봉 스파이크 시 사이즈 × 0.8
 PROX = 0.05                      # 예비후보 근접 허용폭(지지선 위 5%까지 포함)
 MA_LONG, WINDOW, NL_AFTER = 120, 60, 2
 MAX_LEV = float(os.environ.get("S2_MAX_LEV", "1.3"))   # 1.3=30% 대출 허용 / 1.0=대출없음(현금한도)
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ★★★S2_COMBO_RS — S2 + RS96 **공유 자본풀** 게이트. 기본 off (2026-08-11 신설)
+#
+#   사양서: quant_infra/2026-08/SPEC_S2RS_SHARED_CAPITAL_OPS_2026-08-11.md (v0.2)
+#   근거  : quant_infra/2026-08/KR_S2RS_COMBO_OPTIMUM_2026-08-10.md §13
+#
+#   ★해달별님 확정(2026-08-11): MDD −25% 허용 → **C 원장 · cap 0.4125 · 무차입**
+#     결정창 실측 CAGR 42.9506 / MDD −21.5916 / Calmar 1.9892 (S2 단독 16.58 / −16.54)
+#
+#   ★설계 원칙 4가지 — 이것을 깨면 백테스트가 무효가 된다
+#     1. RS 포지션은 **별도 dict(`rs_pos`)** 에 둔다. S2 루프는 `positions` 만 순회하므로
+#        **RS 가 S2 규칙(추가매수·분할매도·신저가손절)을 타지 않는다.**
+#     2. `cur_hv` 가 **양쪽을 합산**한다 → `nav_today`·`lev_ok` 에 RS 가 반영된다.
+#     3. ★**하루 순서 = S2 먼저, RS 나중**(엔진 `unified_engine_t1.run():620-626` 과 동일).
+#        `lev_ok`/현금이 자본을 제한하므로 **누가 먼저 사느냐가 곧 누가 체결되느냐**다.
+#     4. ★`nav_today` 는 **장 시작 시 1회 확정**하고 하루 고정. S2 가 현금을 쓰든 말든
+#        RS 사이징 분모는 안 바뀐다(엔진과 동일). 이것이 재현성의 핵심이다.
+#
+#   ★`rs_cap` 은 **하드캡이 아니라 「진입 직전 게이트」**다(SPEC §10-E).
+#     진입 시점에 RS 익스포저가 cap 미만이면 산다. 이미 든 것은 평가익으로 cap 위로 자란다
+#     (실측 회귀계수 b_rs 0.859 @ cap 0.40). ★**넘었다고 임의로 팔지 않는다.**
+#
+#   ★RS 사이징 w = shares × entry_price / (그 시점 RS 단독 자산)  ← SPEC §10-A (a) 원장 리플레이
+#     엔진 `unified_engine_t1.py:312` 와 같은 식. **RS 단독 원장을 그대로 재생**한다.
+#
+#   ⚠️**off 재현 계약** — `S2_COMBO_RS` 미설정이면 `rs_pos` 가 영원히 비어
+#     `cur_hv` 가 0 을 더하고 RS 단계가 통째로 skip 된다. → **9개 CSV 가 SHA256 까지 동일해야 한다.**
+#     기준선: CAGR 13.12% / MDD −13.38% / 완결 456 (2026-08-11 봉인 · `_dryrun_base_combo/`)
+#
+#   ⚠️**Supabase 스키마 불변** — RS 포지션은 9개 테이블에 안 넣는다. `rs_positions.csv`(10번째)에만 쓴다.
+# ══════════════════════════════════════════════════════════════════════════════
+COMBO_RS = os.environ.get("S2_COMBO_RS", "0") == "1"
+COMBO_RS_CAP = float(os.environ.get("S2_COMBO_RS_CAP", "0.4125"))   # ★채택 밴드 0.41–0.51 의 한 점
+COMBO_RS_GLOB = os.environ.get(                                      # ★C 원장(현행 운영 = 변경량 0)
+    "S2_COMBO_RS_GLOB",
+    r"C:\QuantBacktest\screen\experiments\EXP-*kr16_C_live-KR\*result.xlsx")
+COMBO_RS_LAG = int(os.environ.get("S2_COMBO_RS_LAG", "1"))           # ★SPEC §10-D 다음 거래일 체결
 # (실험) 현금제약 시 매수 우선순위. none=기존순서 / rise2w=최근2주 순방향 최대상승폭 큰 순.
 BUY_PRIORITY = os.environ.get("S2_BUY_PRIORITY", "none").lower()
 RISE2W_WIN   = int(os.environ.get("S2_RISE2W_WIN", "10"))   # 2주 ≈ 10 거래일
@@ -227,6 +265,59 @@ def load(cfg: Config, end: date):
     return px, nmap, mmap, period_start, sm, smy
 
 
+def load_rs_ledger(all_dates):
+    """★S2_COMBO_RS 전용 — RS96 단독 원장(xlsx)에서 진입·청산 이벤트를 읽는다.
+
+    엔진 `unified_engine_t1.py:303-318` 과 **같은 식**이다:
+        w = shares × entry_price / (진입 시점 RS 단독 자산)
+    반환 (entries, exits)
+        entries: {체결일(date) -> [(ticker, exit_date, w), ...]}
+        exits  : {ticker -> exit_date}  (진입 시 포지션에 박아 둔다)
+
+    ★`COMBO_RS_LAG` 만큼 **다음 거래일로 민다**(SPEC §10-D — 금 판정 → 월 종가 체결).
+      lag=0 이면 엔진과 완전 동일(백테스트 대조용).
+    """
+    import glob as _glob
+    hits = sorted(_glob.glob(COMBO_RS_GLOB))
+    if not hits:
+        raise FileNotFoundError(f"[S2_COMBO_RS] RS 원장 없음: {COMBO_RS_GLOB}")
+    xl = pd.ExcelFile(hits[-1])
+    tr = xl.parse("KR_거래")
+    eq = xl.parse("KR_자산")
+    eq["date"] = pd.to_datetime(eq["date"])
+    eqs = pd.Series(eq["equity"].values, index=eq["date"]).sort_index()
+    tr["entry_date"] = pd.to_datetime(tr["entry_date"])
+    tr["exit_date"] = pd.to_datetime(tr["exit_date"])
+    # ticker 정규화 — 엔진 _norm 과 같은 규칙(6자리 zero-pad, 접미사 제거)
+    tr["tk"] = tr["ticker"].astype(str).str.split(".").str[0].str.zfill(6)
+
+    def _eq_at(dt):
+        s = eqs[eqs.index <= dt]
+        return float(s.iloc[-1]) if len(s) else float("nan")
+
+    tr["eq_e"] = tr["entry_date"].map(_eq_at)
+    tr["w"] = tr["shares"] * tr["entry_price"] / tr["eq_e"]
+
+    dl = [pd.Timestamp(d) for d in all_dates]                 # 거래일 인덱스(체결일 매핑용)
+    ent, n_lag, n_drop = {}, 0, 0
+    for r in tr.itertuples():
+        w = float(r.w) if pd.notna(r.w) else 0.05             # 엔진과 동일한 기본값
+        nxt = [x for x in dl if x >= r.entry_date]
+        if not nxt:
+            n_drop += 1
+            continue
+        i = dl.index(nxt[0]) + COMBO_RS_LAG                   # ★lag 거래일 뒤로
+        if i >= len(dl):
+            n_drop += 1
+            continue
+        if COMBO_RS_LAG:
+            n_lag += 1
+        ent.setdefault(dl[i].date(), []).append((r.tk, r.exit_date.date(), w))
+    print(f"[S2_COMBO_RS] 원장 {os.path.basename(hits[-1])} · 거래 {len(tr)} · "
+          f"진입일 {len(ent)} · lag {COMBO_RS_LAG}거래일({n_lag}건) · 창밖 폐기 {n_drop}")
+    return ent
+
+
 def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
     """전 구간 시뮬레이션 → 테이블별 row 리스트 반환."""
     all_dates = sorted(px["date"].unique())
@@ -241,9 +332,20 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
     tid_seq = 0
     didx = {d: i for i, d in enumerate(all_dates)}
 
-    def cur_hv(day):
+    # ★S2_COMBO_RS — RS 슬리브는 **별도 dict**. S2 루프가 positions 만 순회하므로
+    #   RS 가 S2 규칙(추가매수·분할매도·신저가손절·기간손절)을 타지 않는다.
+    rs_pos = {}                                   # ★off 면 영원히 빈 dict = 완전 무영향
+    rs_entries = load_rs_ledger(all_dates) if COMBO_RS else {}
+    rs_rows = []                                  # 10번째 산출(rs_positions.csv) — 9개 CSV 불변
+
+    def _hv(pos, day):
         return sum(p["qty"] * (float(day[t]["close"]) if t in day else p["last_close"])
-                   for t, p in positions.items())
+                   for t, p in pos.items())
+
+    def cur_hv(day):
+        # ★NAV·레버 판정에 RS 를 포함한다. off 면 rs_pos 가 비어 있어 종전과 완전 동일하다.
+        hv = _hv(positions, day)
+        return hv + _hv(rs_pos, day) if rs_pos else hv
 
     def lev_ok(day, cost):
         hv = cur_hv(day); nav = cash + hv
@@ -495,6 +597,42 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             n_bought += 1
         counts.append(dict(d=d, n_candidates=n_cand, n_reached=n_reached,
                            n_bought=n_bought, n_blocked=n_blocked))
+
+        # ══ ★S2_COMBO_RS — RS 슬리브. **S2 다음**(엔진 run():620-626 순서) ══
+        #    off 면 COMBO_RS 가 False 라 이 블록 전체가 skip 된다 → 완전 무영향.
+        if COMBO_RS:
+            # ① 청산 — exit_date 경과분 전부(휴장 등 날짜 불일치 방지. 엔진 rs_step:554)
+            for tk in [t for t, p in rs_pos.items() if p["exit_date"] <= d]:
+                p = rs_pos.pop(tk)
+                px_out = float(day[tk]["close"]) if tk in day else p["last_close"]
+                _net = p["qty"] * px_out * SELL_MULT
+                cash += _net
+                rs_rows.append(dict(d=d, tk=tk, action="sell", qty=p["qty"], price=px_out,
+                                    amount=round(_net), entry_date=p["entry_date"],
+                                    exit_date=p["exit_date"], w=p["w"],
+                                    pnl=round(_net - p["cost"])))
+            # ② 진입 — ★rs_cap 은 「진입 직전 게이트」. 이미 든 것은 cap 위로 자란다(SPEC §10-E)
+            for (tk, xd, w) in rs_entries.get(d, []):
+                if tk not in day or tk in rs_pos:
+                    continue
+                if _hv(rs_pos, day) >= COMBO_RS_CAP * nav_today:
+                    continue                                  # ★cap 이상이면 신규만 막는다
+                price = float(day[tk]["close"])
+                if not (price > 0):
+                    continue
+                sh = int((w * nav_today) // price)
+                _c0 = sh * price * BUY_MULT
+                if sh <= 0 or _c0 > cash:                     # ★RS 는 무레버(현금 한도). 엔진 rs_step:570
+                    continue
+                cash -= _c0
+                rs_pos[tk] = dict(qty=sh, entry_date=d, exit_date=xd, w=w,
+                                  last_close=price, cost=_c0)
+                rs_rows.append(dict(d=d, tk=tk, action="buy", qty=sh, price=price,
+                                    amount=round(_c0), entry_date=d, exit_date=xd, w=w, pnl=0))
+            for tk, p in rs_pos.items():                      # 마크투마켓
+                if tk in day:
+                    p["last_close"] = float(day[tk]["close"])
+
         # 일말: NAV·스냅샷
         hv = cur_hv(day); nav = cash + hv; peak = max(peak, nav)
         dd = (nav / peak - 1) * 100 if peak > 0 else 0.0
@@ -520,9 +658,22 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
 
     order_plan = build_order_plan(positions, last_d, cash + cur_hv(by_date[last_d]))
     monthly = build_monthly(trades, nav_rows)
+    # ★S2_COMBO_RS — 잔여 RS 포지션을 마지막 날 종가로 청산(엔진 run():634 과 동일)
+    if COMBO_RS and rs_pos:
+        ld = by_date[all_dates[-1]]
+        for tk in list(rs_pos):
+            p = rs_pos.pop(tk)
+            mp = float(ld[tk]["close"]) if tk in ld else p["last_close"]
+            _net = p["qty"] * mp * SELL_MULT
+            cash += _net
+            rs_rows.append(dict(d=all_dates[-1], tk=tk, action="sell_final", qty=p["qty"],
+                                price=mp, amount=round(_net), entry_date=p["entry_date"],
+                                exit_date=p["exit_date"], w=p["w"], pnl=round(_net - p["cost"])))
+
     return dict(executions=executions, trades=trades, legs=legs, nav_daily=nav_rows,
                 position_snapshots=snaps, daily_order_plan=order_plan, monthly_stats=monthly,
-                daily_candidates=candidates, daily_counts=counts, last_date=last_d)
+                daily_candidates=candidates, daily_counts=counts, last_date=last_d,
+                rs_positions=rs_rows)   # ★10번째. 9개 CSV·Supabase 스키마는 불변이다
 
 
 def build_order_plan(positions, d, nav):
@@ -611,6 +762,15 @@ def dry_run_dump(data, base_cap):
     if len(closed):
         print(f"  완결 평균수익률 {closed['ret_pct'].mean():+.2f}% | 승률 {(closed['pnl']>0).mean()*100:.1f}%")
     print(f"  최신 감시주문 플랜 {len(data['daily_order_plan'])}건 (기준일 {data['last_date']})")
+    # ★S2_COMBO_RS — 10번째 파일. ★off 면 안 만든다(9개 CSV 목록·해시 불변 계약)
+    if COMBO_RS:
+        rs = pd.DataFrame(data.get("rs_positions") or [])
+        rs.to_csv(outdir / "rs_positions.csv", index=False, encoding="utf-8-sig")
+        nb = int((rs["action"] == "buy").sum()) if len(rs) else 0
+        ns = len(rs) - nb
+        print(f"  ★[S2_COMBO_RS] cap {COMBO_RS_CAP} · lag {COMBO_RS_LAG} · "
+              f"RS 진입 {nb} · 청산 {ns} · 실현손익 {rs['pnl'].sum():,.0f}원" if len(rs) else
+              f"  ★[S2_COMBO_RS] cap {COMBO_RS_CAP} · RS 거래 0건")
 
 
 def upsert_supabase(data):
