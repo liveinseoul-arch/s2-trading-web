@@ -73,6 +73,63 @@ COMBO_RS_GLOB = os.environ.get(                                      # ★C 원�
     "S2_COMBO_RS_GLOB",
     r"C:\QuantBacktest\screen\experiments\EXP-*kr16_C_live-KR\*result.xlsx")
 COMBO_RS_LAG = int(os.environ.get("S2_COMBO_RS_LAG", "1"))           # ★SPEC §10-D 다음 거래일 체결
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ★S2_CASH_PARK — 유휴현금 파킹 (2026-08-12 해달별님 아이디어 · 기본 off)
+#
+#   [왜] ★S2 는 결정창 2,210일 중 **1,749일(79.1%)을 전액 현금**으로 논다.
+#        평균 주식 투입 3.78% · ★**평균 유휴현금 96.2%**.
+#        그 현금을 단기채권 ETF 또는 RP 에 넣으면 NAV 가 오른다.
+#        오버레이 근사 실측: ΔCalmar **+0.2261**(무차입) — 상세 `BOND_OVERLAY_2026-08-12.md`
+#
+#   [무엇을 하나] 일말에 **전일말 현금** x 그날 파킹자산 수익률을 `cash` 에 더한다.
+#        ★전일말 기준이라 룩어헤드가 없다. 차입(cash<0)일 때는 파킹 0.
+#
+#   [★두 가지 수단 — 해달별님 확인 2026-08-12]
+#        ETF : 매도대금으로 **당일 매수 가능** → LAG=0 · 매매비용 FEE 부과
+#        RP  : 예수금이 **2일 뒤 현금**이 되어야 매수 가능 → LAG=2 · 매매비용 0
+#        ★즉 「D+2 지연 손실」 vs 「매매비용 0 이득」의 교환이다.
+#
+#   [가격 소스] ⚠️★**DB 의 ETF 는 2019-03-08 에서 끊긴다**(2019-03-11 수집 경로 전환).
+#        그래서 `quant_infra/data/kr_bond_etf/<티커>_*.csv` 를 읽는다. **DB 는 건드리지 않는다.**
+#
+#   ⚠️**off 재현 계약** — 미설정이면 `PARK_TK` 가 빈 문자열이라 파킹 블록이 통째로 skip.
+#        → **9개 CSV 가 SHA256 까지 동일해야 한다.**
+# ══════════════════════════════════════════════════════════════════════════════
+PARK_TK  = os.environ.get("S2_CASH_PARK", "").strip()          # "" = off · 예 "153130"
+PARK_LAG = int(os.environ.get("S2_CASH_PARK_LAG", "0"))        # 0=ETF(당일) · 2=RP(D+2)
+PARK_FEE = float(os.environ.get("S2_CASH_PARK_FEE", "0.0005")) # 잔고 변화분 왕복 비용
+PARK_DIR = os.environ.get("S2_CASH_PARK_DIR",
+                          r"c:\AI파운더스\quant_infra\data\kr_bond_etf")
+
+
+def load_park_returns(all_dates):
+    """★파킹자산 일별 수익률 {date: ret}. 결측일은 0.0(휴장·미상장)."""
+    import glob as _g
+    hits = _g.glob(os.path.join(PARK_DIR, "%s_*.csv" % PARK_TK))
+    if not hits:
+        raise SystemExit("★S2_CASH_PARK=%s 의 CSV 를 %s 에서 못 찾았다" % (PARK_TK, PARK_DIR))
+    d = pd.read_csv(hits[0])
+    d["date"] = pd.to_datetime(d["date"]).dt.date
+    d = d[["date", "close"]].dropna().sort_values("date").reset_index(drop=True)
+    d["ret"] = d["close"].pct_change()
+    m = dict(zip(d["date"], d["ret"]))
+    out, hit = {}, 0
+    for dt in all_dates:
+        k = dt.date() if hasattr(dt, "date") else dt
+        r = m.get(k)
+        # ★날짜가 있으면 매칭이다 — 수익률이 정확히 0 인 날(단기채권에 흔하다)도 매칭이다
+        if r is None or r != r:
+            out[dt] = 0.0
+        else:
+            out[dt] = float(r); hit += 1
+    lo, hi = min(m), max(m)
+    print("  ★파킹 %s · %s · ★날짜매칭 %d/%d일(%.1f%%) · 자산기간 %s..%s · LAG=%d · FEE=%.4f%%"
+          % (PARK_TK, os.path.basename(hits[0]), hit, len(all_dates),
+             hit / len(all_dates) * 100, lo, hi, PARK_LAG, PARK_FEE * 100))
+    if hit < len(all_dates) * 0.9:
+        print("  ⚠️★매칭률이 90%% 미만이다 — 파킹 수익이 과소평가된다. 자산 기간을 확인할 것")
+    return out
 # (실험) 현금제약 시 매수 우선순위. none=기존순서 / rise2w=최근2주 순방향 최대상승폭 큰 순.
 BUY_PRIORITY = os.environ.get("S2_BUY_PRIORITY", "none").lower()
 RISE2W_WIN   = int(os.environ.get("S2_RISE2W_WIN", "10"))   # 2주 ≈ 10 거래일
@@ -361,6 +418,12 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
     rs_pos = {}                                   # ★off 면 영원히 빈 dict = 완전 무영향
     rs_entries = load_rs_ledger(all_dates) if COMBO_RS else {}
     rs_rows = []                                  # 10번째 산출(rs_positions.csv) — 9개 CSV 불변
+
+    # ★S2_CASH_PARK — off 면 PARK_RET 이 None 이라 일말 블록이 통째로 skip
+    PARK_RET = load_park_returns(all_dates) if PARK_TK else None
+    park_bal = 0.0        # 전일말 파킹 잔고(= 오늘 수익을 받는 원금)
+    park_hist = []        # 일말 cash 이력 — D+2 지연(RP) 판정용
+    park_earn_tot = park_fee_tot = 0.0
 
     def _hv(pos, day):
         return sum(p["qty"] * (float(day[t]["close"]) if t in day else p["last_close"])
@@ -657,6 +720,22 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 if tk in day:
                     p["last_close"] = float(day[tk]["close"])
 
+        # ★S2_CASH_PARK — 일말 파킹 정산 (NAV 계산 「직전」)
+        #   ① 전일말 파킹 잔고에 오늘 수익률을 적용한다(★전일 기준 = 룩어헤드 없음)
+        #   ② 오늘말 파킹 가능 잔고를 다시 잡는다 — LAG 만큼의 최근 최소 현금
+        #      (RP: 매도로 늘어난 현금은 D+2 뒤에야 파킹된다 / ETF: LAG=0 이라 전액 즉시)
+        #   ③ 잔고 변화분에 매매비용(ETF 만. RP 는 FEE=0)
+        if PARK_RET is not None:
+            _earn = park_bal * PARK_RET[d]
+            cash += _earn
+            park_earn_tot += _earn
+            park_hist.append(cash)
+            _new = max(0.0, min(park_hist[-(PARK_LAG + 1):]))
+            _fee = abs(_new - park_bal) * PARK_FEE
+            cash -= _fee
+            park_fee_tot += _fee
+            park_bal = min(_new, max(0.0, cash))
+
         # 일말: NAV·스냅샷
         hv = cur_hv(day); nav = cash + hv; peak = max(peak, nav)
         dd = (nav / peak - 1) * 100 if peak > 0 else 0.0
@@ -679,6 +758,11 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             proceeds=None, pnl=None, ret_pct=None, holding_days=None, exit_reason="open", status="open"))
         for lg in p["legs"]:
             legs.append(dict(_tid=p["tid"], **lg))
+
+    if PARK_RET is not None:
+        # ⚠️`%` 포맷은 `%+,.0f` 를 못 쓴다(ValueError). f-string 으로 쓴다.
+        print(f"  ★파킹 누적 수익 {park_earn_tot:+,.0f}원 · 누적 비용 {park_fee_tot:,.0f}원 · "
+              f"순 {park_earn_tot - park_fee_tot:+,.0f}원 · 최종 파킹잔고 {park_bal:,.0f}원")
 
     order_plan = build_order_plan(positions, last_d, cash + cur_hv(by_date[last_d]))
     monthly = build_monthly(trades, nav_rows)
@@ -766,8 +850,10 @@ def build_monthly(trades, nav_rows):
 
 # ── 출력 ─────────────────────────────────────────────────────────────
 def dry_run_dump(data, base_cap):
-    outdir = Path(__file__).resolve().parent / "_dryrun"
-    outdir.mkdir(exist_ok=True)
+    # ★S2_DRYRUN_DIR — 병렬 셀이 서로 덮어쓰지 않게 출력 디렉터리를 바꾼다(기본 `_dryrun` 불변)
+    outdir = Path(os.environ.get("S2_DRYRUN_DIR", "").strip()
+                  or (Path(__file__).resolve().parent / "_dryrun"))
+    outdir.mkdir(parents=True, exist_ok=True)
     for name in ("executions", "trades", "legs", "nav_daily", "position_snapshots",
                  "daily_order_plan", "monthly_stats", "daily_candidates", "daily_counts"):
         df = pd.DataFrame(data[name])
