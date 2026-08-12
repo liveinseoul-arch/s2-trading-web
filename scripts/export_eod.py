@@ -981,11 +981,33 @@ def upsert_supabase(data):
     for c in chunk(legs):
         if c:
             req("POST", "/trade_legs", iso(c))
+    # ★daily_order_plan 의 `cash_park` 는 CHECK 제약을 푸는 마이그레이션이 필요하다
+    #   (`supabase/migrations/2026-08-12_cash_park.sql`). 안 풀린 상태에서 켜면 400 이 나는데,
+    #   ★그것 때문에 EOD 전체가 죽으면 안 된다 — 파킹 행만 빼고 재시도한다.
+    #   `_column_exists` 와 같은 degrade 정신이다.
+    _park_rows = [o for o in data["daily_order_plan"] if o.get("order_type") == "cash_park"]
+    if _park_rows:
+        try:
+            req("POST", "/daily_order_plan", iso(_park_rows))
+        except SystemExit as e:
+            data["daily_order_plan"] = [o for o in data["daily_order_plan"]
+                                        if o.get("order_type") != "cash_park"]
+            print("⚠️★[cash_park] 적재 거부 — 파킹 %d행을 빼고 진행한다. 나머지 EOD 는 정상이다.\n"
+                  "   원인일 가능성: daily_order_plan.order_type CHECK 제약이 아직 안 풀렸다.\n"
+                  "   조치: supabase/migrations/2026-08-12_cash_park.sql 을 적용할 것.\n"
+                  "   ⚠️★그때까지 파킹 지시가 웹앱·텔레그램에 안 나온다 — 수동 파킹이 필요하다.\n"
+                  "   응답: %s" % (len(_park_rows), str(e)[:200]))
+        else:
+            data["daily_order_plan"] = [o for o in data["daily_order_plan"]
+                                        if o.get("order_type") != "cash_park"]
+            print("  ★[cash_park] 파킹 목표 %d행 적재 완료" % len(_park_rows))
     for tbl in ("executions", "position_snapshots", "daily_order_plan", "daily_candidates",
                 "nav_daily", "monthly_stats", "daily_counts"):
         for c in chunk(data[tbl]):
             if c:
                 req("POST", f"/{tbl}", iso(c))
+    # ★요약·텔레그램용 복원 — 적재 성패와 무관하게 파킹 지시는 해달별님께 보여야 한다
+    data["daily_order_plan"] = _park_rows + data["daily_order_plan"]
     req("PATCH", "/meta?key=eq.last_eod_at", {"value": str(data["last_date"])})
     print(f"[supabase] 적재 완료 (기준일 {data['last_date']}): "
           f"trades {len(data['trades'])} · legs {len(legs)} · executions {len(data['executions'])} · "
