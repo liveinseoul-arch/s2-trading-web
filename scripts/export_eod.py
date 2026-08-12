@@ -243,8 +243,16 @@ def _hhmm(ticker, d, leg_type):
     return _HHMM.get((str(ticker), str(d), leg_type))
 
 
-def load(cfg: Config, end: date):
-    """전 구간 px(지표 포함) + 이름/시장 맵 + 스파이크 맵 로드."""
+def load(cfg: Config, end: date, start: date | None = None):
+    """전 구간 px(지표 포함) + 이름/시장 맵 + 스파이크 맵 로드.
+
+    ★`start` (2026-08-12 신설 · 기본 None = 종전과 완전 동일)
+      시뮬레이션 **시작일**을 자른다. 재현 검증용 「스모크 창」(`smoke.py` SMOKE_A)을
+      운영 익스포터에서도 만들 수 있게 하기 위한 것이다.
+      ⚠️★**지표(MA20 · ma_long · 스파이크 맵)는 전 구간으로 계산한 뒤 잘라낸다** —
+        먼저 자르면 워밍업이 사라져 다른 시스템이 된다.
+      ★`--start` 를 주지 않으면 이 블록이 통째로 건너뛰어져 **한 줄로 구 동작이 복원**된다.
+    """
     # days: 기본 4000(~11년). 환경변수 S2_LOOKBACK_DAYS 로 늘릴 수 있음 (예: 5000 ≈ 13.7년).
     days = int(os.environ.get("S2_LOOKBACK_DAYS", "4000"))
     px, nmap, mmap, period_start, meta = _prepare(cfg, days=days, end_date=end, fetch=False)
@@ -262,6 +270,22 @@ def load(cfg: Config, end: date):
             within = (k - last) < WINDOW
             sm[(tk, ds[k])] = ds[last] if within else None
             smy[(tk, ds[k])] = ly if within else None
+    # ★시작일 절단 — 지표를 전부 계산한 **뒤에** 한다(위 주석 참조)
+    if start is not None:
+        _n0 = len(px)
+        # ⚠️★`px["date"]` 는 **`datetime.date`** 다(Timestamp 아니다). 섞어 비교하면
+        #   `TypeError: Cannot compare Timestamp with datetime.date` 로 죽는다(2026-08-12 실측).
+        #   ★`period_start` 도 같은 타입이어야 한다 — :526 에서 `r["date"] >= period_start` 로 쓴다.
+        px = px[px["date"].map(
+            lambda d: (d.date() if hasattr(d, "date") else d) >= start
+        )].reset_index(drop=True)
+        if px.empty:
+            raise ValueError(f"--start {start} 로 자르니 남는 행이 0개다")
+        _first = px["date"].min()          # ★px 는 ticker 정렬이라 iloc[0] 이 아니라 min()
+        if _first > period_start:
+            period_start = _first
+        print(f"[--start] 시뮬레이션 시작일 절단 {start} — 행 {_n0:,} → {len(px):,} · "
+              f"period_start {period_start} · ★지표는 전 구간으로 계산됨")
     return px, nmap, mmap, period_start, sm, smy
 
 
@@ -922,16 +946,21 @@ def notify_eod(data):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--end", default=None, help="시뮬레이션 종료일 YYYY-MM-DD (기본 캐시 최신일)")
+    ap.add_argument("--start", default=None,
+                    help="★시뮬레이션 시작일 YYYY-MM-DD (기본 없음 = 종전 = 전 구간). "
+                         "재현 검증용 스모크 창(smoke.py SMOKE_A = 2021-01-01..2022-12-31)에 쓴다. "
+                         "지표는 전 구간으로 계산한 뒤 잘라내므로 워밍업은 보존된다")
     ap.add_argument("--dry-run", action="store_true", help="Supabase 없이 로컬 CSV + 요약")
     ap.add_argument("--no-notify", action="store_true", help="텔레그램 알림 생략")
     args = ap.parse_args()
 
     cfg = Config(); cfg.lookback_days = WINDOW
     end = date.fromisoformat(args.end) if args.end else date.today()
+    start = date.fromisoformat(args.start) if args.start else None
     # 기준자본 — 환경변수 S2_BASE_CAP 으로 오버라이드 가능 (예: "100000000" = 1억).
     base_cap = float(os.environ.get("S2_BASE_CAP", "100000000"))
     print(f"S2 EOD 익스포터 — 종료일 {end}, 기준자본 {base_cap:,.0f}원")
-    px, nmap, mmap, period_start, sm, smy = load(cfg, end)
+    px, nmap, mmap, period_start, sm, smy = load(cfg, end, start)
     data = simulate(px, nmap, mmap, period_start, sm, smy, base_cap)
 
     # ★유효봉 가드가 실제로 막은 횟수 (2026-08-07 이식)
