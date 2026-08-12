@@ -34,4 +34,6 @@ export const actionLabel: Record<string, string> = {
 
 export const orderTypeLabel: Record<string, string> = {
   buy_add: "추가매수 감시", sell: "매도 감시", stop: "손절 감시", newlow_stop: "신저가손절 감시",
+  // ★유휴현금 파킹(S2_CASH_PARK) — 종목 주문이 아니라 "이만큼 보유하라"는 목표다
+  cash_park: "현금 파킹 목표",
 };

@@ -31,7 +31,7 @@ export interface Execution {
   prev_spike_bull: boolean | null; blocked_by_leverage: boolean;
 }
 
-export type OrderType = "buy_add" | "sell" | "stop" | "newlow_stop";
+export type OrderType = "buy_add" | "sell" | "stop" | "newlow_stop" | "cash_park";
 
 export interface OrderPlan {
   id: number; d: string; ticker: string; name: string; market: Market;

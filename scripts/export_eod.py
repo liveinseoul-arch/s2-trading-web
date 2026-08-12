@@ -124,12 +124,24 @@ def load_park_returns(all_dates):
         else:
             out[dt] = float(r); hit += 1
     lo, hi = min(m), max(m)
-    print("  ★파킹 %s · %s · ★날짜매칭 %d/%d일(%.1f%%) · 자산기간 %s..%s · LAG=%d · FEE=%.4f%%"
-          % (PARK_TK, os.path.basename(hits[0]), hit, len(all_dates),
-             hit / len(all_dates) * 100, lo, hi, PARK_LAG, PARK_FEE * 100))
+    # ★주문계획용 — 자산명·최신 종가·그 날짜를 전역에 남긴다(스키마 불변)
+    global PARK_NAME, PARK_LAST_PX, PARK_LAST_D
+    _b = os.path.basename(hits[0])
+    PARK_NAME = _b[len(PARK_TK) + 1:-4].replace("_", " ") if _b.startswith(PARK_TK) else PARK_TK
+    PARK_LAST_PX = float(d["close"].iloc[-1])
+    PARK_LAST_D = hi
+    print("  ★파킹 %s(%s) · ★날짜매칭 %d/%d일(%.1f%%) · 자산기간 %s..%s · 최신종가 %s원 · LAG=%d · FEE=%.4f%%"
+          % (PARK_TK, PARK_NAME, hit, len(all_dates),
+             hit / len(all_dates) * 100, lo, hi, format(round(PARK_LAST_PX), ","),
+             PARK_LAG, PARK_FEE * 100))
     if hit < len(all_dates) * 0.9:
         print("  ⚠️★매칭률이 90%% 미만이다 — 파킹 수익이 과소평가된다. 자산 기간을 확인할 것")
     return out
+
+
+PARK_NAME = PARK_TK
+PARK_LAST_PX = 0.0
+PARK_LAST_D = None
 # (실험) 현금제약 시 매수 우선순위. none=기존순서 / rise2w=최근2주 순방향 최대상승폭 큰 순.
 BUY_PRIORITY = os.environ.get("S2_BUY_PRIORITY", "none").lower()
 RISE2W_WIN   = int(os.environ.get("S2_RISE2W_WIN", "10"))   # 2주 ≈ 10 거래일
@@ -764,7 +776,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
         print(f"  ★파킹 누적 수익 {park_earn_tot:+,.0f}원 · 누적 비용 {park_fee_tot:,.0f}원 · "
               f"순 {park_earn_tot - park_fee_tot:+,.0f}원 · 최종 파킹잔고 {park_bal:,.0f}원")
 
-    order_plan = build_order_plan(positions, last_d, cash + cur_hv(by_date[last_d]))
+    order_plan = build_order_plan(positions, last_d, cash + cur_hv(by_date[last_d]),
+                                  park_bal if PARK_RET is not None else None)
     monthly = build_monthly(trades, nav_rows)
     # ★S2_COMBO_RS — 잔여 RS 포지션을 마지막 날 종가로 청산(엔진 run():634 과 동일)
     if COMBO_RS and rs_pos:
@@ -784,9 +797,29 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 rs_positions=rs_rows)   # ★10번째. 9개 CSV·Supabase 스키마는 불변이다
 
 
-def build_order_plan(positions, d, nav):
-    """최신일 보유 포지션 → 다음 거래일 세팅할 감시주문 세트."""
+def build_order_plan(positions, d, nav, park_amount=None):
+    """최신일 보유 포지션 → 다음 거래일 세팅할 감시주문 세트.
+
+    ★park_amount 가 주어지면(= `S2_CASH_PARK` on) **현금 파킹 목표 줄**을 하나 얹는다.
+      ⚠️★Supabase `daily_order_plan.order_type` 에 CHECK 제약이 있다 —
+        `supabase/migrations/2026-08-12_cash_park.sql` 를 **먼저** 적용해야 적재된다.
+    """
     plan = []
+    # ★현금 파킹 목표 — 종목 주문보다 먼저 보이도록 맨 앞에 넣는다
+    if park_amount is not None and park_amount > 0:
+        _px = PARK_LAST_PX
+        _qty = int(park_amount // _px) if _px > 0 else 0
+        _stale = ""
+        if PARK_LAST_D is not None and hasattr(d, "toordinal"):
+            _gap = (d - PARK_LAST_D).days if hasattr(PARK_LAST_D, "toordinal") else None
+            if _gap is not None and _gap > 5:
+                _stale = f" ⚠️가격이 {_gap}일 오래됐다({PARK_LAST_D}) — 금액 기준으로 실행할 것"
+        plan.append(dict(d=d, ticker=PARK_TK, name=PARK_NAME, market="KOSPI",
+            order_type="cash_park", stage=None, trigger_price=round(_px), qty=_qty,
+            port_pct=round(park_amount / nav * 100, 2) if nav > 0 else None, diff="keep",
+            note=(f"★유휴현금 {round(park_amount):,}원 파킹 — 목표 보유 {_qty:,}주"
+                  f"(종가 {round(_px):,}원 기준). ★매수 신호가 뜨면 필요한 만큼 먼저 매도한다."
+                  f"{_stale}")))
     for tk, p in positions.items():
         is_new = (p["entry_date"] == d)
         diff = "new" if is_new else "keep"
@@ -1000,10 +1033,20 @@ def notify_eod(data):
 
     # 내일 세팅 감시주문 (실제 가격·수량)
     plan = data["daily_order_plan"]
+    # ★현금 파킹 목표 — 종목 주문과 섞이지 않게 따로 먼저 알린다
+    _pk = [o for o in plan if o["order_type"] == "cash_park"]
+    if _pk:
+        o = _pk[0]
+        lines.append(f"\n🏦 <b>현금 파킹</b>")
+        lines.append(f" · {o['name'][:12]}({o['ticker']}) 목표 {o['qty']:,}주"
+                     f" ≈ {o['trigger_price'] * o['qty']:,}원{pf(o.get('port_pct'))}")
+        lines.append(f" · 매수 신호가 뜨면 필요한 만큼 <b>먼저 매도</b>한다")
     if plan:
         lines.append(f"\n📋 <b>내일 세팅 감시주문</b>")
         bytk = {}
         for o in plan:
+            if o["order_type"] == "cash_park":
+                continue                      # ★위에서 따로 냈다
             bytk.setdefault(o["ticker"], []).append(o)
         for i, (tk, os_) in enumerate(bytk.items()):
             if i >= 15:

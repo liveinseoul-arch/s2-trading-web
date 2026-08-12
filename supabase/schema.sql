@@ -50,7 +50,8 @@ create table daily_order_plan (
   ticker        text    not null,
   name          text    not null,
   market        text    not null,
-  order_type    text    not null check (order_type in ('buy_add','sell','stop','newlow_stop')),
+  -- ★cash_park 는 2026-08-12 추가 (migrations/2026-08-12_cash_park.sql)
+  order_type    text    not null check (order_type in ('buy_add','sell','stop','newlow_stop','cash_park')),
   stage         smallint,
   trigger_price bigint  not null,
   qty           integer not null,
