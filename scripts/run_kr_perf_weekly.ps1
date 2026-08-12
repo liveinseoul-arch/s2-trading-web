@@ -62,11 +62,24 @@ $env:BT_EARNINGS_CACHE_KR = "_bt_earnings_cache_kr_dart_op.pkl"
 $env:BT_CA_REQUIRE = "C"
 $env:BT_C_MIN_GROWTH = "0.25"
 $env:BT_ENTRY_FILTER = "1"
+# ★★2026-08-12 — 트레일 4단 → 2단 (해달별님 채택). 아래 4줄 주석 처리.
+#   되돌리기: 아래 4줄의 주석(#)만 제거하면 4단으로 완전 복원된다.
+#
+#   [근거] 결정창·전 구간 모두에서 Calmar 기준 2단 우세
+#     KR 결정창 24셀 주효과 ΔCalmar(4단−2단) = −0.0088
+#     KR 전 구간(2016-01-01 – 2026-07-31) 4단 23.3353/−25.8398/0.9031
+#                                          2단 23.8092/−25.1089/★0.9482  (ΔCalmar −0.0451)
+#   [기제] KR 은 100EMA 8건 · 75EMA 10건으로 초대형 승자가 US 보다 오히려 많다.
+#     ★그런데도 2단이 나은 이유는 **되돌림이 커서 50EMA 에서 잘라도 충분히 벌기** 때문이다.
+#     2023: 4단 +95.30% vs 2단 ★+111.85% (−16.55%p) · 2021 −5.16%p · 2025 −5.39%p
+#   ⚠️미검증: 블록 부트스트랩 없음 · F4(저점일) 사건교체로 MDD 비교 무효
+#   전문: quant_infra/2026-08/RS_KR_GRID24_2026-08-12.md §5
+#
 # 고수익 트레일 4단 (21→50→75→100): +100%→75EMA, +200%→100EMA (2026-08-02 확정)
-$env:BT_HIGAIN_EMA = "75"
-$env:BT_HIGAIN_WMA_PCT = "100"
-$env:BT_HIGAIN2_EMA = "100"
-$env:BT_HIGAIN2_PCT = "200"
+# $env:BT_HIGAIN_EMA = "75"
+# $env:BT_HIGAIN_WMA_PCT = "100"
+# $env:BT_HIGAIN2_EMA = "100"
+# $env:BT_HIGAIN2_PCT = "200"
 $env:BT_RESULT_SUFFIX = "kr16_perf_live"
 
 Set-Location $qb
