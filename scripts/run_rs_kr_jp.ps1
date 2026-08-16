@@ -41,6 +41,35 @@ function RunPy($label, [string[]]$pyArgs) {
     }
 }
 
+# [2026-08-16 랙 수리] 침묵 실패 관문 — KR 체인 각 단계 exit≠0 → 즉시 중단 + 텔레그램 RS 채널 알림.
+#   4주간(07-25 – 08-15) Rebuild 가 매주 즉사했는데 잡은 exit 0 완주라 무감지였다
+#   (근거: quant_infra/2026-08/RS_LEDGER_LAG_2026-08-16.md §0 「침묵 요인」).
+#   ⚠️중단 시 병렬 JP 잡도 함께 종료된다(즉시 중단 사양 — 알림을 받으면 수동 재실행).
+#   승인: 해달별님 2026-08-16 「전체 패키지」
+#   되돌리기: 이 블록(변수 2개 · 함수 2개)을 삭제하고, KR 체인의 RunPyGate 호출을 구 RunPy 로 복원.
+$venvPy = "C:\quantBacktest\venv\Scripts\python.exe"
+$notifyPy = Join-Path $root "s2-trading-web\scripts\notify_rs_telegram.py"
+function Notify($msg) {
+    try { & $venvPy $notifyPy $msg *>> $log } catch { Log "[notify] FAILED: $_" }
+}
+function RunPyGate($label, $exe, [string[]]$pyArgs) {
+    Log "[$label] start  ($exe $($pyArgs -join ' '))"
+    try {
+        & $exe @pyArgs *>> $log
+    } catch {
+        Log "[$label] FAILED: $_"
+        Notify "[rs_kr_jp] $label 단계 예외 — 잡 중단. 로그: rs_kr_jp.log"
+        exit 1
+    }
+    Log "[$label] done (exit=$LASTEXITCODE)"
+    if ($LASTEXITCODE -ne 0) {
+        Log "[ABORT] $label exit=$LASTEXITCODE — 중단 + 텔레그램 알림"
+        Notify "[rs_kr_jp] $label 단계 실패(exit=$LASTEXITCODE) — 잡 중단. 로그: rs_kr_jp.log"
+        exit 1
+    }
+}
+# [2026-08-16 랙 수리] 끝
+
 function StartPyJob($label, [string[]]$pyArgs, $jobLog) {
     Log "[$label] start (job)  ($($pyArgs -join ' ')) → $jobLog"
     # $wd 를 명시 전달 후 Set-Location — Start-Job 은 CWD 를 상속하지 않으므로
@@ -96,24 +125,57 @@ $jobJP = Start-Job -Name "JP chain" -ScriptBlock {
 } -ArgumentList $root, $silent, $qb, $logJP, "gemini-2.5-pro"
 Log "[JP chain] start (job) → $logJP  (KR 과 병렬)"
 
-# ── KR 체인 (메인 스레드) — rebuild → RS → export → ETF → 분류 ──────────
-RunPy "1 Rebuild"    @("$qb\Rebuild_weekly_cache.py")
-RunPy "2 14_RS_KR"   @($silent, "$qb\14_RS_KR_pykrx.py")
-RunPy "4 export KR"  @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "KR", "--weeks", "56", "--full-universe")
+# ── KR 체인 (메인 스레드) — append → rebuild → RS → export → ETF → 분류 ──────────
+# [2026-08-16 랙 수리] 세 가지를 바꿨다 (근거: quant_infra/2026-08/RS_LEDGER_LAG_2026-08-16.md):
+#   ① 단계 [0] 신설 — KR 일봉 live 캐시(_bt_daily_cache_kr_live.pkl) 주간 연장.
+#      원본 _bt_daily_cache_kr.pkl 은 읽기 전용 유지(CLAUDE.md 0-3) — 어펜더가 live 만 append.
+#      (임무 원안의 _ext.pkl 이름은 2026-07-06 「2008 확장」 산출물이 이미 점유 → live 로 명명)
+#   ② [1 Rebuild] 실행자 C:\Python314(pandas 2.3.3) → venv(pandas 3.0.3) 교체 —
+#      07-24 재저장이 pandas3 StringDtype 피클이라 Python314 는 4주 연속 NotImplementedError 즉사.
+#      BT_DAILY_CACHE_KR env 로 live 캐시를 지정(Rebuild_weekly_cache.py 가 env 지원 · 기본값 원본).
+#   ③ 전 단계 RunPyGate 관문화 — exit≠0 → 즉시 중단 + 텔레그램 RS 알림 (침묵 실패 차단).
+#   승인: 해달별님 2026-08-16 「전체 패키지」
+#   되돌리기: 아래 신설 블록(RunPyGate 호출부)을 지우고 다음 구 호출 5줄의 주석을 해제.
+# RunPy "1 Rebuild"    @("$qb\Rebuild_weekly_cache.py")
+# RunPy "2 14_RS_KR"   @($silent, "$qb\14_RS_KR_pykrx.py")
+# RunPy "4 export KR"  @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "KR", "--weeks", "56", "--full-universe")
+# RunPy "6 add KR ETFs" @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")
+# RunPy "7 classify KR" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "KR", "--weeks", "1")
+RunPyGate "0 append KR daily" $venvPy @("$qb\screen\append_kr_daily_cache.py")
+$env:BT_DAILY_CACHE_KR = "_bt_daily_cache_kr_live.pkl"   # Rebuild 일봉 입력을 live 로 (기본값=원본)
+RunPyGate "1 Rebuild"    $venvPy @("$qb\Rebuild_weekly_cache.py")
+Remove-Item Env:BT_DAILY_CACHE_KR -ErrorAction SilentlyContinue   # 국소 적용 — 후속 단계 오염 방지
+RunPyGate "2 14_RS_KR"   "C:\Python314\python.exe" @($silent, "$qb\14_RS_KR_pykrx.py")
+RunPyGate "4 export KR"  "C:\Python314\python.exe" @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "KR", "--weeks", "56", "--full-universe")
 # export 가 (해당 마켓의) universe 전체 삭제 후 재적재 → KR ETF 재적재 필요 (JP 는 ETF 화이트리스트 없음)
-RunPy "6 add KR ETFs" @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")
+RunPyGate "6 add KR ETFs" "C:\Python314\python.exe" @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")
 $env:GEMINI_MODEL = "gemini-2.5-pro"
-RunPy "7 classify KR" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "KR", "--weeks", "1")
+RunPyGate "7 classify KR" "C:\Python314\python.exe" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "KR", "--weeks", "1")
+# [2026-08-16 랙 수리] 끝
 
 # ── JP 잡 합류 (KR 이 먼저 끝나면 여기서 대기) ─────────────────────────
 Log "[wait] JP 체인 대기..."
 Wait-Job -Job $jobJP | Out-Null
 Log "[JP chain] done (job state=$($jobJP.State))"
 Remove-Job -Job $jobJP
+# [2026-08-16 랙 수리] JP 체인 침묵 실패 스캔 — 병렬 잡이라 메인 관문(RunPyGate)이 못 본다.
+#   JP 로그에서 done(exit≠0) 또는 FAILED 를 찾으면 텔레그램 알림 + exit 1.
+#   되돌리기: $jpFail 관련 4줄과 마지막 if 블록을 삭제(구 동작 = 로그 병합만).
+$jpFail = $false
 if (Test-Path $logJP) {
     "--- $logJP ---" | Out-File -Append -Encoding utf8 $log
     Get-Content $logJP -Encoding utf8 | Out-File -Append -Encoding utf8 $log
+    $jpLines = Get-Content $logJP -Encoding utf8
+    $jpBad = $jpLines | Select-String -Pattern 'done \(exit=(-?\d+)\)' | Where-Object { $_.Matches[0].Groups[1].Value -ne '0' }
+    if ($jpBad -or ($jpLines | Select-String -SimpleMatch 'FAILED:')) { $jpFail = $true }
     Remove-Item $logJP -Force -ErrorAction SilentlyContinue
 }
+if ($jpFail) {
+    Log "[JP chain] 단계 실패 감지 — 텔레그램 알림 + exit 1 (KR 체인은 이미 완주)"
+    Notify "[rs_kr_jp] JP 체인 단계 실패 감지 — 로그: rs_kr_jp.log"
+    Log "===== rs_kr_jp done (JP FAIL) ====="
+    exit 1
+}
+# [2026-08-16 랙 수리] 끝
 
 Log "===== rs_kr_jp done ====="
