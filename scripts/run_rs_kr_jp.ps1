@@ -1,3 +1,9 @@
+﻿# [2026-08-16 랙 수리·추가] 인코딩 정정: 파일 선두에 UTF-8 BOM 추가.
+#   수리 커밋 da3abef 가 이 파일을 「BOM 없는 UTF-8 + LF 전용」으로 재저장 → Windows PowerShell 5.1 이
+#   CP949 로 오독, 「가드」처럼 잔여 선두바이트로 끝나는 주석이 뒤 LF 를 삼켜 다음 줄 $skipHours = 18 이
+#   주석에 흡수돼 있었다(18시간 가드 무력화 · run_kr_perf_weekly.ps1 의 BT_MARKET 삼킴과 동일 기전).
+#   BOM 이 있으면 PS 5.1 이 UTF-8 로 정독한다. CRLF 시절엔 CR 이 희생돼 무사고였다.
+#   되돌리기: 선두 BOM(EF BB BF) 3바이트 제거 + 이 주석 블록 삭제. 단 되돌리면 위 오독이 재발한다. 끝.
 # 매주 금요일 18:00 KST — KR + JP 데이터 갱신 + 부분 Supabase 동기화.
 #
 # 단계:
