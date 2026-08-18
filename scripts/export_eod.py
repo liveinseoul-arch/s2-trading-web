@@ -249,6 +249,33 @@ TIME_STOP_REF = os.environ.get("S2_TIME_STOP_REF", "entry").lower()
 # 신저가 손절 트리거 기준: "intraday" = 그날 lo (장중) / "close" = 그날 cl (종가만)
 NEWLOW_TRIGGER = os.environ.get("S2_NEWLOW_TRIGGER", "intraday").lower()
 
+# ── ★분할매도 후 잔량 손절선 버퍼 (2026-08-18 신설, 기본 0 = 구 동작) ──────────
+# 이 스크립트는 분할매도가 나면 손절선을 **그 단계 목표가 그대로**(마진 0) 잡아 왔다
+# (구 :534 · :606 의 `p["stop"] = t[stg-1]`). 목표가에 정확히 지정가를 걸어 두고
+# 그 가격에 100% 체결된다고 가정하는 셈이라 **낙관적**이다 — 실계좌 감시주문은
+# 트리거 이후 시장가/추격으로 나가므로 슬리피지가 생긴다.
+#   · canonical 엔진 kr_s2_engine.py:77 은 같은 자리에 DAYBUF = 0.01 을 두고 있다.
+#   · 2026-08-18 분봉 실측: 모델 B(감시주문) 중앙 -0.5277% · B-prime 자기정합 -1.2241%
+#     · 1분봉 부분표본 -0.3268% → 진값 구간 [-1.22%, -0.33%] 안에 1.0% 가 들어온다.
+# 해달별님 결정: 백테스트와 **실계좌 스톱 양쪽에** 동일하게 적용한다.
+#   → 그래서 시뮬 전용 지역변수가 아니라 **`p["stop"]` 대입 지점**을 고친다.
+#     `p["stop"]` 은 시뮬(:513 익일 · :611 당일)과 감시주문 플랜(:849 trigger_price)이
+#     **공유하는 단일 변수**라, 대입 한 곳을 고치면 백테스트와 실주문이 동시에 바뀐다.
+# ⚠️ canonical 과 의미 범위가 다르다 — canonical DAYBUF 는 `sold_today` **당일 한정**이고
+#    익일 이후 갈래(:405-412)는 마진 0 이다. 여기서는 대입 지점을 고치므로 **상시**다.
+#    실계좌 감시주문은 마감 후에 세팅해 익일부터 도는 주문이라 「당일 한정」에 대응하는
+#    실주문이 존재하지 않는다. 「양쪽 동일 적용」을 실주문까지 관철하려면 상시여야 한다.
+# 기본 "0" = 구 동작 비트 동일(§4-5 관문 #2). 되돌리기: env 한 줄 삭제.
+DAY_BUF = float(os.environ.get("S2_DAY_BUF", "0"))
+# ★발동 카운터 (CLAUDE.md §4-1b 사문 관문 #2) — 「0건이라 효과가 없다」와
+#   「코드가 안 돌아 0건이다」를 구분하기 위해 실제 실행 횟수를 센다.
+#   assign = 손절선을 마진 적용해 설정한 횟수 · lower = 그중 실제로 값이 내려간 횟수
+#   hit_buf = 마진이 걸린 손절선에서 청산된 건수 · hit_gap = 갭하락 시가 체결(마진 무관)
+DAY_BUF_N = {"assign": 0, "lower": 0, "hit_buf": 0, "hit_gap": 0}
+if DAY_BUF > 0:
+    print(f"[day-buf] 손절선 = 매도단계 목표가 x (1 - {DAY_BUF:g}) · 호가단위 floor "
+          f"(시뮬 + 감시주문 동시 적용)")
+
 # ── ★유효봉 가드 (2026-08-07 이식, 기본 on — backtest.py 와 동일) ───────────────
 # 이 스크립트는 backtest.simulate_ticker 를 쓰지 않고 **자체 시뮬레이션**을 돈다
 # (상단에서 _prepare 만 import). 그래서 backtest.py 의 S2_VALID_BAR 가드가
@@ -292,6 +319,33 @@ def _to_tick(price, mode="round"):
     if mode == "floor":
         return int(math.floor(price / t) * t)
     return int(round(price / t) * t)
+
+
+def _stop_px(target_px):
+    """분할매도 후 잔량 손절선 = 그 단계 목표가에서 DAY_BUF 만큼 아래.
+
+    ★반올림 순서 — **마진을 먼저 적용하고 그 다음에 호가단위로 내림**한다.
+      ① 마진 먼저 : 실계좌 지정가·감시주문은 호가단위의 배수여야 접수된다
+         (KRX 호가단위 · supabase/schema.sql:56 `trigger_price bigint`).
+         `t[stg-1]` 은 이미 tick 정렬돼 있지만 거기에 0.99 를 곱하면 배수가 깨진다
+         (예 168,500 x 0.99 = 166,815 → 100원 단위 위반 → **주문 거부**).
+         따라서 tick 정렬은 반드시 **마진 적용 뒤**에 와야 한다.
+         tick 폭 자체도 가격대에 따라 달라지므로(_tick) 정렬 대상은 최종 주문가여야 맞다.
+      ② round 가 아니라 floor : round 는 마진을 의도한 DAY_BUF **미만으로 되돌릴 수 있다**
+         (예 100,500 x 0.99 = 99,495 → round 99,500 = 마진 0.995% · floor 99,400 = 1.094%).
+         floor 면 실효 마진이 항상 DAY_BUF **이상**이고, 백테스트 쪽에서도 체결가가
+         더 낮아지는 방향이라 **보수적**이다(성과를 부풀리지 않는다).
+
+    DAY_BUF = 0 이면 입력을 **그대로** 돌려준다 — 구 동작 비트 동일 보장.
+    (0 이어도 floor 결과는 같지만, 부동소수 경로를 아예 타지 않게 조기 반환한다.)
+    """
+    if DAY_BUF <= 0:
+        return target_px
+    out = _to_tick(target_px * (1 - DAY_BUF), mode="floor")
+    DAY_BUF_N["assign"] += 1
+    if out < target_px:
+        DAY_BUF_N["lower"] += 1
+    return out
 
 # ── 체결시각 캐시 (2b) ──────────────────────────────────────────────
 # 크레온 분봉으로 복원한 체결시각. 키=(ticker, 'YYYY-MM-DD', leg_type, round(price)) → 'HH:MM'.
@@ -512,6 +566,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 VB_SKIP["stop"] += 1
             if p["sell_count"] >= 1 and p["qty"] > 0 and bar_ok and lo <= p["stop"]:
                 px_ = op if op < p["stop"] else p["stop"]
+                if DAY_BUF > 0:                       # ★발동 카운터 (§4-1b #2)
+                    DAY_BUF_N["hit_gap" if px_ < p["stop"] else "hit_buf"] += 1
                 ex(d, p, "stop", p["sell_count"], px_, p["qty"], nav_today)
                 leg(p, d, "stop", p["sell_count"], px_, p["qty"], nav_today)
                 _net = p["qty"] * px_ * SELL_MULT
@@ -531,7 +587,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     leg(p, d, f"sell_{stg}", stg, fill, sq, nav_today)
                     _net = sq * fill * SELL_MULT
                     cash += _net; p["proc"] += _net
-                    p["qty"] -= sq; p["sell_count"] = stg; p["stop"] = t[stg - 1]
+                    p["qty"] -= sq; p["sell_count"] = stg; p["stop"] = _stop_px(t[stg - 1])
                 else:
                     break
 
@@ -603,12 +659,14 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                         leg(p, d, f"sell_{stg}", stg, t[stg - 1], sq, nav_today)
                         _net = sq * t[stg - 1] * SELL_MULT
                         cash += _net; p["proc"] += _net
-                        p["qty"] -= sq; p["sell_count"] = stg; p["stop"] = t[stg - 1]
+                        p["qty"] -= sq; p["sell_count"] = stg; p["stop"] = _stop_px(t[stg - 1])
                     else:
                         break
             if p["sell_count"] >= 1 and p["qty"] > 0 and not bar_ok and lo <= p["stop"]:
                 VB_SKIP["stop"] += 1
             if p["sell_count"] >= 1 and p["qty"] > 0 and bar_ok and lo <= p["stop"]:
+                if DAY_BUF > 0:                       # ★발동 카운터 (§4-1b #2)
+                    DAY_BUF_N["hit_buf"] += 1
                 ex(d, p, "stop", p["sell_count"], p["stop"], p["qty"], nav_today)
                 leg(p, d, "stop", p["sell_count"], p["stop"], p["qty"], nav_today)
                 _net = p["qty"] * p["stop"] * SELL_MULT
@@ -847,7 +905,9 @@ def build_order_plan(positions, d, nav, park_amount=None):
         if p["sell_count"] >= 1:                                      # 손절 감시
             plan.append(dict(d=d, ticker=tk, name=p["name"], market=p["market"], order_type="stop",
                 stage=p["sell_count"], trigger_price=round(p["stop"]), qty=int(p["qty"]),
-                port_pct=None, diff=diff, note="손절(직전 매도단계가 이탈 시 잔량 전량)"))
+                port_pct=None, diff=diff,
+                note=("손절(직전 매도단계가 이탈 시 잔량 전량)" if DAY_BUF <= 0 else
+                      f"손절(직전 매도단계가 -{DAY_BUF*100:g}% 이탈 시 잔량 전량)")))
         elif p["buy_count"] >= NL_AFTER:                              # 신저가 손절 감시
             plan.append(dict(d=d, ticker=tk, name=p["name"], market=p["market"], order_type="newlow_stop",
                 stage=None, trigger_price=round(p["min_low"]), qty=int(p["qty"]),
@@ -1122,6 +1182,13 @@ def main():
     if VB_SKIP["minlow"]:
         print(f"  ★min_low 오염 차단 {VB_SKIP['minlow']}건 — 막지 않았다면 "
               f"그 포지션들의 신저가 손절이 영구 비활성화됐다.")
+
+    # ★손절선 버퍼 발동 카운터 (§4-1b 사문 관문 #2) — DAY_BUF > 0 일 때만 출력
+    if DAY_BUF > 0:
+        print(f"[day-buf] 손절선 설정 {DAY_BUF_N['assign']}회 "
+              f"(실제 하향 {DAY_BUF_N['lower']}회) · "
+              f"손절 청산 {DAY_BUF_N['hit_buf'] + DAY_BUF_N['hit_gap']}건 = "
+              f"버퍼선 체결 {DAY_BUF_N['hit_buf']} + 갭하락 시가 체결 {DAY_BUF_N['hit_gap']}(마진 무관)")
 
     if args.dry_run:
         dry_run_dump(data, base_cap)
