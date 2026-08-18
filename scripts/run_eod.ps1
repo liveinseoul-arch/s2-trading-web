@@ -76,5 +76,37 @@ $env:S2_COSTS = "1"                                                    # 매수 
 #   근거: quant_infra/2026-08/BOND_OVERLAY_2026-08-12.md
 #   ⚠️★순서 — S2_CASH_PARK 를 「먼저」 설정한다. update_park_price.py 가 그 값을 읽는다.
 $env:S2_CASH_PARK = "153130"                                           # KODEX 단기채권 — 유휴현금 파킹
+#   ★★[2026-08-17 해달별님 지시] ETF 매수 → ★RP(계좌 자동 스윕)로 전환
+#     LAG=2  예수금이 D+2 뒤 현금이 되어야 RP 매수 가능(해달별님 2026-08-12 확인)
+#     FEE=0  ★증권사 내부 처리라 매매비용 없음(ETF 는 파킹 수익의 23.6%를 수수료로 냈다)
+#     ★운영 재검정(2026-08-17 · dry-run · 결정창 –2024-12-30):
+#       파킹 off  NAV 197,608,340 · CAGR 6.79% · MDD −10.06%
+#       ETF(종전) NAV 227,378,047 · CAGR 8.25% · MDD  −8.37%
+#       ★RP(채택) NAV 234,201,796 · CAGR 8.56% · MDD  −8.26%  ← ★CAGR·MDD 둘 다 우위
+#     ⚠️★수익률 계열은 여전히 153130 CSV 프록시다 — ★실제 RP 고정금리가 아니라 ★상한이다.
+#       실제 수시 RP 는 세전 약 2.2% · 세후 약 1.86%(2026-08 기준) → ★고정금리 모드는 미구현.
+#     ⚠️★계좌 설정 선결 — 증권사 ★자동 RP 매수를 신청해야 이 모델이 현실과 맞는다.
+#     ★되돌리기: 아래 두 줄을 지우면 종전 ETF 모드(LAG=0 · FEE=0.0005)로 복원된다.
+#     근거: quant_infra/2026-08/S2_CASH_PARK_RP_2026-08-17.md
+$env:S2_CASH_PARK_LAG = "2"                                            # ★RP — 예수금 D+2
+$env:S2_CASH_PARK_FEE = "0"                                            # ★RP — 매매비용 0
 & C:\Python314\python.exe "s2-trading-web\scripts\update_park_price.py" *>> $log   # 파킹 가격 CSV 갱신(실패해도 rc=0)
+
+# ★★★[2026-08-18 채택] 과밀일 엔벨로프 완화 — 「후보 밀도가 높은 날(=시장 급락)만 문턱을 낮춘다」
+#   15거래일 후보 밀도가 ★확장창 상위 2% 인 날(약 116일 = 전체의 2.7%)만
+#   진입 문턱을 20일선 −20% → ★−15% 로 완화한다. 나머지 날은 종전 그대로.
+#   ★운영 재검정(export_eod.py --dry-run --end 2024-12-31 · 결정창 · env 12개):
+#     off  CAGR 8.56 / MDD −8.26 / NAV 234,201,796 / 승률 81.4% / 체결 1184
+#     ★on  CAGR ★9.82 / MDD ★−7.81 / NAV 264,143,550 / 승률 ★82.9% / 체결 1297
+#     ★off 재현은 ★10개 CSV SHA256 전부 동일(비트 동일 — 관문 #2 통과)
+#   ★canonical: CAGR 10.3546 → 13.6136(+3.26%p) · 창 5/5 양수 · 부트스트랩 ΔCAGR·ΔCalmar 15/15 유의
+#   ⚠️★「MDD 를 줄인다」로 인용하지 말 것 — peak 이 달라 낙폭 사건이 다르다.
+#     ★옳은 문장은 ★「낙폭 지속이 131일 → 11일로 짧아진다」(창 5/5 동일).
+#   ⚠️★전역 완화(상시 −15%)는 ★MDD −26.34% 로 시스템을 파괴한다 — ★조건부가 핵심이다.
+#   ⚠️★맵은 반드시 ★canonical DB 로 만든다(운영 DB 는 2019-03 이전 거래대금 799배 오염 · §3).
+#   ★되돌리기: 아래 env 한 줄을 지운다(맵 갱신은 남겨도 무해).
+#   근거: quant_infra/2026-08/S2_CROWDED_ENV_2026-08-18.md
+& C:\Python314\python.exe "update_env_density.py" *>> $log   # 과밀일 맵 갱신(실패해도 rc=0)
+$env:S2_ENV_DENS_MAP = (Join-Path $PSScriptRoot "..\..\s2_env_density_map.csv" | Resolve-Path).Path
+
 & C:\Python314\python.exe "s2-trading-web\scripts\export_eod.py" *>> $log  # executions/보유/거래/카운트/후보 적재
