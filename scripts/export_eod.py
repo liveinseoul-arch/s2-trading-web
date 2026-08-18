@@ -276,6 +276,86 @@ if DAY_BUF > 0:
     print(f"[day-buf] 손절선 = 매도단계 목표가 x (1 - {DAY_BUF:g}) · 호가단위 floor "
           f"(시뮬 + 감시주문 동시 적용)")
 
+# ── ★★체결 현실성 마진 2단 — 추정 참여율 비례 슬리피지 (2026-08-18 신설, 기본 off) ─────
+#
+# [무엇을 고치나] DAY_BUF 는 **상수 마진**이라 「그날 그 종목이 얼마나 말랐는지」를 못 본다.
+#   2026-08-18 매도 참여율 진단(288건): 중앙 0.179% · 최대 17.275% ·
+#   5% 초과 5건이 전부 **그날 거래대금 50억 미만 구간**에 몰려 있다.
+#   그 5건에서 상수 1.0% 마진은 실제 시장충격을 한참 못 덮는다.
+#
+# [해달별님 결정 — 안2] 마진 = **max(DAY_BUF, min(CAP, K x 추정참여율))**
+#   DAY_BUF 를 「상수 마진」이 아니라 **「하한 마진」**으로 재해석한다.
+#   K = 0 이면 max( ) 의 오른쪽이 0 이라 **구 동작과 비트 동일**이다(§4-5 관문 #2).
+#
+# ★★[룩어헤드 차단 — 이 설계의 핵심 제약]
+#   참여율의 분모인 「그날 거래대금」은 감시주문을 세팅하는 시점(전날 마감 후)에
+#   **알 수 없다**. 진단에서 쓴 참여율은 전부 사후값이므로 그대로 실주문에 걸면 룩어헤드다.
+#   → 그래서 분모는 반드시 **전일까지의 값**만 쓴다. 여기서는
+#     **직전 SLIP_WIN(기본 5) 거래일 거래대금의 중앙값**(전부 `shift(1)`)이다.
+#   ★사전 분모 후보 21종 실측 비교(results/s2_slipest_design_2026-08-18.csv):
+#     med5_guard 는 최악 5건을 288건 중 rank 17/1/5/14/8 (상위 5.9%) 안에 전부 넣고
+#     오경보(추정 5% 이상인데 실제 1% 미만)가 **0건**이다.
+#     min5·min20·p25_20 은 창에 마른 하루가 하나만 껴도 분모가 오염돼
+#     006740(2023-11-06)에서 실제 0.04% 를 8.73%·21.11% 로 **200-500배 과금**한다.
+#     med20 은 감쇠를 못 따라가 최악 1위를 rank 249 로 놓친다.
+#
+# ★★[권리락 이음매 가드 — 조율 파라미터가 아니다]
+#   실제 참여율 1위 2022-06-02 · 278650 · 17.27% 는 **직전 거래일 종가 69,500 → 10,000**
+#   (비율 0.1439 · 주식수 불변 = 1:6 무상증자 권리락) 뒤였다.
+#   CLAUDE.md §3-4 대로 무상증자 권리락은 corporate_actions.db 에 구조적으로 못 들어온다.
+#   → 직전 창 안에 **일간 종가비율이 [1-G, 1+G] 밖인 날**이 있으면 분모가 구 가격체계라
+#     통째로 못 쓴다. 그럴 때만 분모를 min(직전창 거래대금 최소, 직전창 거래량 최소 x 계획가)
+#     로 **강등**한다. 이 가드 하나로 1위 추정 rank 가 **251 → 17** 로 올라온다.
+#   ★문턱 G 는 0.65·0.69·0.70 어디에 둬도 발동 건수가 12 로 동일하다(실측 분포에 공백).
+#     4연속 하한가(비율 정확히 0.7000)에는 발동하지 않는다 — 진짜 유동성 붕괴와 CA 를 가른다.
+#
+# ★★[적용 범위 = 변형 C] 하한(DAY_BUF)은 **DAYBUF 경로만** · K 항은 **전 매도경로**.
+#   근거: DAY_BUF 는 `sell_count >= 1` 을 요구해 **newlow_stop 26건을 구조적으로 한 건도
+#   못 잡는다**. 그 26건은 매도액의 13.7% 뿐인데 **할인 기여 33.07%** 이고 참여율 중앙
+#   0.6256% 로 전 경로 최고다. 게다가 사전 추정자가 그 구간에서 **오히려 더 잘 맞는다**
+#   (pearson(log) 0.935 = 전 경로 최고). 참여율 5% 초과 5건 중 3건이 DAYBUF 밖이다.
+#   → S2_SLIP_SCOPE=daybuf 로 변형 A(DAYBUF 경로만)도 돌릴 수 있게 축으로 남긴다.
+#   ⚠️변형 B(하한도 전 경로)는 **후보에서 제외**했다 — K=0 에서 이미 125건이 변해
+#     「K=0 이면 비트 동일」 계약을 위반한다.
+#
+# ★★[마진을 거는 지점 = 체결가(fill)이지 트리거가 아니다]
+#   DAY_BUF 는 `p["stop"]` **대입 지점**을 고쳐 감시주문 trigger_price 까지 내렸다.
+#   K 항은 그렇게 하지 않는다. 이유 2가지:
+#     ① `p["stop"]` 은 분할매도가 난 **그 날** 한 번 정해지고 며칠 뒤에 트리거될 수 있다.
+#        그 사이 유동성이 마르면 대입 시점의 추정치는 이미 낡은 값이다(진단 2의 「썩은 자격」).
+#     ② K 항이 모형화하는 것은 **트리거 이후 시장가/추격 주문의 시장충격**이지
+#        「지정가를 어디에 걸까」가 아니다. 트리거를 그대로 두면 손절 발동 (날짜,종목)
+#        집합이 불변이라 §4-3 규칙4(사건정렬) 비교가 유효하게 남는다.
+#   → 따라서 daily_order_plan.csv 의 trigger_price 는 **K 와 무관하게 불변**이다.
+#     실계좌 주문은 종전(목표가 -1%) 그대로이고, 백테스트 체결가만 현실화된다.
+#
+# [수량 단위] 종목-일 **누적** 매도금액(이번 leg 포함)을 분자로 쓴다.
+#   다단계 동시청산(최악 1위가 그것)에서 마지막 leg 이 그날 총액 기준 추정치를 받는다.
+#   ⚠️완전한 「종목-일 배치 합산」은 아니다 — 앞 leg 은 자기까지의 누적만 본다.
+#
+# [반올림] 마진 적용 후 호가단위 **floor**(_stop_px 와 같은 이유 — 실효 마진이 항상 의도 이상).
+# 되돌리기: env 한 줄(S2_SLIP_K) 삭제. → K=0 → 아래 모든 분기가 죽는다.
+SLIP_K     = float(os.environ.get("S2_SLIP_K", "0"))        # ★0 = off (구 동작 비트 동일)
+SLIP_WIN   = int(os.environ.get("S2_SLIP_WIN", "5"))        # 사전 분모 창(거래일) · 전부 shift(1)
+SLIP_CAP   = float(os.environ.get("S2_SLIP_CAP", "0.03"))   # 마진 상한(무제한 금지 — decay 계열 반례)
+SLIP_SCOPE = os.environ.get("S2_SLIP_SCOPE", "all").strip().lower()   # all=변형C · daybuf=변형A
+SLIP_GUARD = float(os.environ.get("S2_SLIP_GUARD", "0.31"))  # 권리락 이음매 문턱(0 = 가드 off)
+SLIP_ON    = SLIP_K > 0
+SLIP_PATHS = ({"stop_stage"} if SLIP_SCOPE == "daybuf"
+              else {"stop_stage", "sell", "newlow_stop", "time_stop"})
+# ★발동 카운터 (CLAUDE.md §4-1b 사문 관문 #2) — 「0건이라 효과가 없다」와
+#   「코드가 안 돌아 0건이다」를 구분한다. eval = 마진 계산을 시도한 매도 leg 수 ·
+#   fire = 실제로 체결가가 내려간 leg 수 · flat = 계산했으나 호가단위상 변화 0 ·
+#   cap = 상한에 걸린 수 · seam = 이음매 가드가 분모를 강등한 수 · nodenom = 분모 결측.
+SLIP_N = {"eval": 0, "fire": 0, "flat": 0, "cap": 0, "seam": 0, "nodenom": 0,
+          "disc": 0.0, "amt": 0.0, "est_max": 0.0, "m_max": 0.0,
+          "f_stop_stage": 0, "f_sell": 0, "f_newlow_stop": 0, "f_time_stop": 0}
+if SLIP_ON:
+    print(f"[slip] 매도 마진 = max(DAY_BUF {DAY_BUF:g}, min(cap {SLIP_CAP:g}, "
+          f"K {SLIP_K:g} x 추정참여율)) · 분모 = 직전 {SLIP_WIN}거래일 거래대금 중앙값"
+          f"(shift(1)) · 이음매가드 {SLIP_GUARD:g} · 범위 {SLIP_SCOPE} "
+          f"({'변형A DAYBUF경로만' if SLIP_SCOPE == 'daybuf' else '변형C 전 매도경로'})")
+
 # ── ★유효봉 가드 (2026-08-07 이식, 기본 on — backtest.py 와 동일) ───────────────
 # 이 스크립트는 backtest.simulate_ticker 를 쓰지 않고 **자체 시뮬레이션**을 돈다
 # (상단에서 _prepare 만 import). 그래서 backtest.py 의 S2_VALID_BAR 가드가
@@ -345,6 +425,93 @@ def _stop_px(target_px):
     DAY_BUF_N["assign"] += 1
     if out < target_px:
         DAY_BUF_N["lower"] += 1
+    return out
+
+
+def _slip_prepare(px):
+    """★사전 분모 컬럼 2개를 px 에 붙인다 (SLIP_ON 일 때만 호출 — off 면 컬럼 자체가 안 생긴다).
+
+    `_slip_den`  : 직전 SLIP_WIN 거래일 거래대금 **중앙값**(shift(1) — 오늘 미포함).
+                   ★이음매 행에서는 **직전 창 거래대금 최소**로 강등해 둔다.
+    `_slip_vmin` : 평시 NaN. ★이음매 행에서만 직전 창 **거래량 최소**.
+                   체결 시점에 `min(_slip_den, _slip_vmin x 계획가)` 로 합쳐 쓴다
+                   (권리락은 가격체계가 바뀌므로 원화 분모가 통째로 못 쓰게 된다 —
+                    거래량 x 오늘 계획가로 원화 분모를 재구성하는 갈래를 함께 본다).
+
+    ⚠️전부 `shift(1)` 이다. 오늘 거래대금은 감시주문 세팅 시점에 알 수 없다(룩어헤드).
+    """
+    px = px.sort_values(["ticker", "date"]).reset_index(drop=True)
+    _tk = px["ticker"]
+    _tvp = px.groupby("ticker", sort=False)["trading_value"].shift(1)
+    _den = _tvp.groupby(_tk, sort=False).transform(
+        lambda s: s.rolling(SLIP_WIN, min_periods=1).median())
+    _tvmin = _tvp.groupby(_tk, sort=False).transform(
+        lambda s: s.rolling(SLIP_WIN, min_periods=1).min())
+    if "volume" in px.columns:
+        _vp = px.groupby("ticker", sort=False)["volume"].shift(1)
+        _vmin = _vp.groupby(_tk, sort=False).transform(
+            lambda s: s.rolling(SLIP_WIN, min_periods=1).min())
+    else:                                   # 정상 경로에는 항상 volume 이 있다(data_source.py:136)
+        _vmin = pd.Series(float("nan"), index=px.index)
+    if SLIP_GUARD > 0:
+        _ratio = px["close"] / px.groupby("ticker", sort=False)["close"].shift(1)
+        _seamf = ((_ratio < 1 - SLIP_GUARD) | (_ratio > 1 + SLIP_GUARD)).astype(float)
+        # 직전 SLIP_WIN 일 안에 이음매가 하나라도 있으면 그 창의 분모는 구 가격체계다
+        _seam = _seamf.groupby(_tk, sort=False).transform(
+            lambda s: s.shift(1).rolling(SLIP_WIN, min_periods=1).max()).fillna(0.0) > 0
+    else:
+        _seam = pd.Series(False, index=px.index)
+    px["_slip_den"] = _den.where(~_seam, _tvmin).astype(float)
+    px["_slip_vmin"] = _vmin.where(_seam, float("nan")).astype(float)
+    print(f"  [slip] 사전 분모 산출 {len(px):,}행 · 이음매 가드 행 {int(_seam.sum()):,}개 "
+          f"(창 {SLIP_WIN}일 · 문턱 {SLIP_GUARD:g})", flush=True)
+    return px
+
+
+def _slip_fill(p, r, d, base_px, qty, buf_applied, path):
+    """★추정 참여율 비례 슬리피지를 **체결가에만** 적용한다(트리거·수량 불변).
+
+    반환 = 실제 체결가. off(K=0)이거나 경로가 범위 밖이면 `base_px` 를 **그대로** 돌려준다.
+
+    `buf_applied` = 이 체결가에 **이미 박혀 있는 마진**. DAYBUF 손절선(p["stop"])에서
+      체결될 때만 DAY_BUF 이고, 갭하락 시가 체결·목표가 매도·종가 청산은 0 이다.
+      max(DAY_BUF, m) = DAY_BUF + max(0, m - DAY_BUF) 이므로 **초과분만** 더 깎는다.
+    """
+    if not SLIP_ON or path not in SLIP_PATHS or qty <= 0 or base_px <= 0:
+        return base_px
+    SLIP_N["eval"] += 1
+    if p.get("_slip_d") != d:                       # 종목-일 누적 매도금액(이번 leg 포함)
+        p["_slip_d"] = d
+        p["_slip_amt"] = 0.0
+    amt = p["_slip_amt"] + base_px * qty
+    p["_slip_amt"] = amt
+    den = r.get("_slip_den")
+    vmin = r.get("_slip_vmin")
+    if vmin is not None and vmin == vmin and vmin > 0:      # NaN 아님 = 이음매 가드 행
+        _alt = vmin * base_px
+        den = _alt if (den is None or den != den or den <= 0) else min(den, _alt)
+        SLIP_N["seam"] += 1
+    if den is None or den != den or den <= 0:               # 분모 결측 → 하한만(=K 항 0)
+        SLIP_N["nodenom"] += 1
+        return base_px
+    est = amt / den
+    m = SLIP_K * est
+    if m > SLIP_CAP:
+        m = SLIP_CAP
+        SLIP_N["cap"] += 1
+    SLIP_N["est_max"] = max(SLIP_N["est_max"], est)
+    SLIP_N["m_max"] = max(SLIP_N["m_max"], m)
+    extra = m - buf_applied
+    if extra <= 0:                                          # 하한(DAY_BUF)이 이긴다
+        return base_px
+    out = _to_tick(base_px * (1 - extra), mode="floor")
+    if out >= base_px:                                      # 호가단위 해상도상 변화 없음
+        SLIP_N["flat"] += 1
+        return base_px
+    SLIP_N["fire"] += 1
+    SLIP_N["f_" + path] += 1
+    SLIP_N["disc"] += (base_px - out) * qty
+    SLIP_N["amt"] += base_px * qty
     return out
 
 # ── 체결시각 캐시 (2b) ──────────────────────────────────────────────
@@ -467,6 +634,9 @@ def load_rs_ledger(all_dates):
 
 def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
     """전 구간 시뮬레이션 → 테이블별 row 리스트 반환."""
+    # ★S2_SLIP_K — off 면 이 줄이 통째로 skip 되어 px 에 컬럼이 아예 안 생긴다(비트 동일 보장)
+    if SLIP_ON:
+        px = _slip_prepare(px)
     all_dates = sorted(px["date"].unique())
     by_date = {d: {} for d in all_dates}
     for rec in px.to_dict("records"):
@@ -568,6 +738,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 px_ = op if op < p["stop"] else p["stop"]
                 if DAY_BUF > 0:                       # ★발동 카운터 (§4-1b #2)
                     DAY_BUF_N["hit_gap" if px_ < p["stop"] else "hit_buf"] += 1
+                # ★slip — 갭하락 시가 체결은 DAY_BUF 가 만든 가격이 아니므로 buf_applied = 0
+                px_ = _slip_fill(p, r, d, px_, p["qty"],
+                                 DAY_BUF if px_ >= p["stop"] else 0.0, "stop_stage")
                 ex(d, p, "stop", p["sell_count"], px_, p["qty"], nav_today)
                 leg(p, d, "stop", p["sell_count"], px_, p["qty"], nav_today)
                 _net = p["qty"] * px_ * SELL_MULT
@@ -583,6 +756,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 if op >= t[stg - 1] and p["qty"] > 0:
                     fill = max(op, t[stg - 1])          # 갭업이면 시가, 아니면 목표가
                     sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
+                    # ★slip — 목표가 매도에는 하한이 없다(DAY_BUF 는 손절선 전용). buf_applied = 0
+                    #   ★p["stop"] 은 **마진 전 목표가**로 계속 잡는다(트리거 불변)
+                    fill = _slip_fill(p, r, d, fill, sq, 0.0, "sell")
                     ex(d, p, f"sell_{stg}", stg, fill, sq, nav_today)
                     leg(p, d, f"sell_{stg}", stg, fill, sq, nav_today)
                     _net = sq * fill * SELL_MULT
@@ -617,9 +793,12 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             if _nl_cond and not bar_ok:
                 VB_SKIP["newlow"] += 1
             if _nl_cond and bar_ok:
-                ex(d, p, "newlow_stop", None, cl, p["qty"], nav_today)
-                leg(p, d, "newlow_stop", None, cl, p["qty"], nav_today)
-                _net = p["qty"] * cl * SELL_MULT
+                # ★slip — ★DAY_BUF 가 구조적으로 못 덮는 구멍이다(sell_count >= 1 요구).
+                #   26건 · 매도액 13.7% 인데 할인 기여 33.07% · 참여율 중앙 0.6256%(전 경로 최고).
+                _nlpx = _slip_fill(p, r, d, cl, p["qty"], 0.0, "newlow_stop")
+                ex(d, p, "newlow_stop", None, _nlpx, p["qty"], nav_today)
+                leg(p, d, "newlow_stop", None, _nlpx, p["qty"], nav_today)
+                _net = p["qty"] * _nlpx * SELL_MULT
                 cash += _net; p["proc"] += _net; p["qty"] = 0
                 close_trade(p, d, "newlow_stop"); del positions[tk]; closed.add(tk); last_exit[tk] = d
                 if bar_ok:
@@ -638,9 +817,10 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             _ref_idx = p["last_buy_idx"] if TIME_STOP_REF == "last_buy" else didx[p["entry_date"]]
             if (TIME_STOP_DAYS > 0 and p["sell_count"] == 0
                     and (didx[d] - _ref_idx) >= TIME_STOP_DAYS):
-                ex(d, p, "stop", None, cl, p["qty"], nav_today)
-                leg(p, d, "stop", None, cl, p["qty"], nav_today)
-                _net = p["qty"] * cl * SELL_MULT
+                _tspx = _slip_fill(p, r, d, cl, p["qty"], 0.0, "time_stop")   # ★slip
+                ex(d, p, "stop", None, _tspx, p["qty"], nav_today)
+                leg(p, d, "stop", None, _tspx, p["qty"], nav_today)
+                _net = p["qty"] * _tspx * SELL_MULT
                 cash += _net; p["proc"] += _net; p["qty"] = 0
                 close_trade(p, d, f"time_stop({TIME_STOP_DAYS}d)")
                 del positions[tk]; closed.add(tk); last_exit[tk] = d
@@ -655,9 +835,12 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 for stg in range(p["sell_count"] + 1, 4):
                     if hi >= t[stg - 1] and p["qty"] > 0:
                         sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
-                        ex(d, p, f"sell_{stg}", stg, t[stg - 1], sq, nav_today)
-                        leg(p, d, f"sell_{stg}", stg, t[stg - 1], sq, nav_today)
-                        _net = sq * t[stg - 1] * SELL_MULT
+                        # ★slip — 최악 참여율 1위(2022-06-02 278650 17.27%)가 이 경로의
+                        #   3단 동시청산이다. p["stop"] 은 아래에서 **마진 전 목표가**로 잡는다.
+                        _sfill = _slip_fill(p, r, d, t[stg - 1], sq, 0.0, "sell")
+                        ex(d, p, f"sell_{stg}", stg, _sfill, sq, nav_today)
+                        leg(p, d, f"sell_{stg}", stg, _sfill, sq, nav_today)
+                        _net = sq * _sfill * SELL_MULT
                         cash += _net; p["proc"] += _net
                         p["qty"] -= sq; p["sell_count"] = stg; p["stop"] = _stop_px(t[stg - 1])
                     else:
@@ -667,9 +850,11 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             if p["sell_count"] >= 1 and p["qty"] > 0 and bar_ok and lo <= p["stop"]:
                 if DAY_BUF > 0:                       # ★발동 카운터 (§4-1b #2)
                     DAY_BUF_N["hit_buf"] += 1
-                ex(d, p, "stop", p["sell_count"], p["stop"], p["qty"], nav_today)
-                leg(p, d, "stop", p["sell_count"], p["stop"], p["qty"], nav_today)
-                _net = p["qty"] * p["stop"] * SELL_MULT
+                # ★slip — 이 자리는 DAY_BUF 가 이미 박힌 손절선에서의 체결이라 buf_applied = DAY_BUF
+                _stpx = _slip_fill(p, r, d, p["stop"], p["qty"], DAY_BUF, "stop_stage")
+                ex(d, p, "stop", p["sell_count"], _stpx, p["qty"], nav_today)
+                leg(p, d, "stop", p["sell_count"], _stpx, p["qty"], nav_today)
+                _net = p["qty"] * _stpx * SELL_MULT
                 cash += _net; p["proc"] += _net; p["qty"] = 0
                 close_trade(p, d, "stop"); del positions[tk]; closed.add(tk); last_exit[tk] = d
             elif tk in positions and p["qty"] == 0:
@@ -1189,6 +1374,22 @@ def main():
               f"(실제 하향 {DAY_BUF_N['lower']}회) · "
               f"손절 청산 {DAY_BUF_N['hit_buf'] + DAY_BUF_N['hit_gap']}건 = "
               f"버퍼선 체결 {DAY_BUF_N['hit_buf']} + 갭하락 시가 체결 {DAY_BUF_N['hit_gap']}(마진 무관)")
+
+    # ★참여율 마진 발동 카운터 (§4-1b 사문 관문 #2) — SLIP_K > 0 일 때만 출력
+    #   ⚠️fire = 0 이면 「효과가 없다」가 아니라 ★「코드가 안 돌았다」를 먼저 의심한다.
+    #     eval(계산 시도) 대비 fire(실제 하향) / flat(호가단위상 무변화) / nodenom(분모 결측)
+    #     의 내역이 함께 나오므로 둘을 구분할 수 있다.
+    if SLIP_ON:
+        print(f"[slip] 마진 계산 {SLIP_N['eval']}건 → ★체결가 하향 {SLIP_N['fire']}건 "
+              f"(호가단위상 무변화 {SLIP_N['flat']} · 분모결측 {SLIP_N['nodenom']} · "
+              f"상한 {SLIP_N['cap']} · 이음매가드 {SLIP_N['seam']})")
+        print(f"[slip] 경로별 하향 — 손절선(DAYBUF) {SLIP_N['f_stop_stage']} · "
+              f"목표가매도 {SLIP_N['f_sell']} · 신저가손절 {SLIP_N['f_newlow_stop']} · "
+              f"기간손절 {SLIP_N['f_time_stop']}")
+        print(f"[slip] 추가 할인 누적 {SLIP_N['disc']:,.0f}원 "
+              f"(하향된 leg 의 마진 전 매도액 {SLIP_N['amt']:,.0f}원 대비 "
+              f"{(SLIP_N['disc'] / SLIP_N['amt'] * 100) if SLIP_N['amt'] > 0 else 0:.3f}%) · "
+              f"최대 추정참여율 {SLIP_N['est_max'] * 100:.3f}% · 최대 마진 {SLIP_N['m_max'] * 100:.3f}%")
 
     if args.dry_run:
         dry_run_dump(data, base_cap)
