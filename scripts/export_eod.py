@@ -240,6 +240,43 @@ SELL_MULT = 1 - SELL_FEE if COSTS_ON else 1.0
 # 매도 차수별 비중 — 1차/2차는 SELL_STAGE_PCT, 3차는 잔량(=1 - 2*SELL_STAGE_PCT).
 # 기본 10/10/80. 환경변수 S2_SELL_STAGE_PCT 로 변경 가능 (예: 0.30 → 30/30/40).
 SELL_STAGE_PCT = float(os.environ.get("S2_SELL_STAGE_PCT", "0.10"))
+
+# ── ★N단계 매도 일반화 (2026-08-21 신설, 기본 off = 구 동작 비트 동일) ──────────
+#   [왜] `CAND-2026-08-20-24`(스톱 래칫) 채택 — 1·2·3차는 물량을 소량만(각기 다른
+#     비율로) 팔아 손절선만 끌어올리고, 마지막(4차)에서 잔량 대부분을 판다.
+#     기존 구조는 "1·2차는 같은 비율, 마지막(3차 고정)은 잔량"만 표현 가능해
+#     이 구조를 담을 수 없었다 — 매도 단계 수 자체가 코드 여러 곳에 3으로 박혀 있었다
+#     (`for stg in range(...,4)` · `stg==3` · `SELL_STAGE_PCT` 단일 float).
+#   [무엇을 하나] env `S2_SELL_STAGE_PCTS`(콤마구분, 마지막 단계 전까지의 비율만 적는다.
+#     마지막 단계는 항상 잔량)가 설정되면 그 값들을 쓰고, ★미설정이면 종전 그대로
+#     (SELL_STAGE_PCT, SELL_STAGE_PCT) = "1·2차 동일비중·3차 잔량"이라 off 재현이 보장된다.
+#   [단계 수] `len(SELL_STAGE_PCTS) + 1` = N_STAGES. `S2_SELL_TARGETS`(그리고 설정돼
+#     있다면 `S2_SELL_TARGETS_ABOVE`)의 목표가 개수가 반드시 N_STAGES 와 일치해야 한다
+#     — 안 맞으면 조용히 잘못된 결과를 내는 대신 즉시 죽는다(사문 관문).
+#   되돌리기: `S2_SELL_STAGE_PCTS` 를 지우면 한 줄로 구 3단계 동작이 복원된다.
+_ssps = os.environ.get("S2_SELL_STAGE_PCTS", "").strip()
+SELL_STAGE_PCTS = (tuple(float(x) for x in _ssps.split(","))
+                   if _ssps else (SELL_STAGE_PCT, SELL_STAGE_PCT))
+N_STAGES = len(SELL_STAGE_PCTS) + 1
+if len(S) != N_STAGES:
+    raise SystemExit(
+        f"★S2_SELL_TARGETS 개수({len(S)})와 매도 단계 수 N_STAGES({N_STAGES}, "
+        f"S2_SELL_STAGE_PCTS={SELL_STAGE_PCTS})가 다르다 — env 를 맞출 것")
+if S_ABOVE is not None and len(S_ABOVE) != N_STAGES:
+    raise SystemExit(
+        f"★S2_SELL_TARGETS_ABOVE 개수({len(S_ABOVE)})와 매도 단계 수 N_STAGES({N_STAGES})가 다르다")
+if N_STAGES != 3:
+    print(f"[stage] ★N단계 매도 = {N_STAGES}단계 · 비중 {tuple(round(p*100,3) for p in SELL_STAGE_PCTS)}"
+          f"% + 잔량 {round((1-sum(SELL_STAGE_PCTS))*100,3)}%")
+
+
+def _stage_qty(stg, total_qty, remaining_qty):
+    """stg 번째(1-base) 매도 물량. 마지막 단계(N_STAGES)면 잔량 전부,
+    아니면 SELL_STAGE_PCTS[stg-1] 비율(반올림) — 잔량을 넘지 않게 min 으로 자른다.
+    N_STAGES=3·SELL_STAGE_PCTS=(SELL_STAGE_PCT,SELL_STAGE_PCT) 이면 종전 로직과 완전 동일."""
+    if stg >= N_STAGES:
+        return remaining_qty
+    return min(round(total_qty * SELL_STAGE_PCTS[stg - 1]), remaining_qty)
 # 기간 손절 — N영업일 경과해도 분할매도 한 단계도 못 찍으면 강제 청산.
 # 기본 15(≈3주). 화석 포지션을 끊어 자본 회전 ↑ — MDD 개선의 지배적 요인
 # (2/6/14·-7% 만으론 MDD -28.8%, 기간손절 추가 시 -11.6%). 0 = 비활성(구 설정).
@@ -752,10 +789,10 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             # 시가 175,700 으로 갭업 → 175,700 에 팔림. 손절이 갭하락 시 시가로 체결되는 것과 대칭.
             # high/low 순서가 모호한 일봉 시뮬 결함 회피 — 시초 매도 후엔 추가매수 차단(sell_count≥1).
             t = [_to_tick(p["avg_buy"] * p.get("tgt_mult", 1.0) * (1 + s)) for s in p.get("targets", S)]   # 목표가 호가단위 반올림(포지션별)
-            for stg in range(p["sell_count"] + 1, 4):
+            for stg in range(p["sell_count"] + 1, N_STAGES + 1):
                 if op >= t[stg - 1] and p["qty"] > 0:
                     fill = max(op, t[stg - 1])          # 갭업이면 시가, 아니면 목표가
-                    sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
+                    sq = _stage_qty(stg, p["total_qty"], p["qty"])
                     # ★slip — 목표가 매도에는 하한이 없다(DAY_BUF 는 손절선 전용). buf_applied = 0
                     #   ★p["stop"] 은 **마진 전 목표가**로 계속 잡는다(트리거 불변)
                     fill = _slip_fill(p, r, d, fill, sq, 0.0, "sell")
@@ -832,9 +869,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             if not bought:
                 # 평단 갱신됐을 수 있으므로 t 재계산
                 t = [_to_tick(p["avg_buy"] * p.get("tgt_mult", 1.0) * (1 + s)) for s in p.get("targets", S)]   # 목표가 호가단위 반올림(포지션별)
-                for stg in range(p["sell_count"] + 1, 4):
+                for stg in range(p["sell_count"] + 1, N_STAGES + 1):
                     if hi >= t[stg - 1] and p["qty"] > 0:
-                        sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
+                        sq = _stage_qty(stg, p["total_qty"], p["qty"])
                         # ★slip — 최악 참여율 1위(2022-06-02 278650 17.27%)가 이 경로의
                         #   3단 동시청산이다. p["stop"] 은 아래에서 **마진 전 목표가**로 잡는다.
                         _sfill = _slip_fill(p, r, d, t[stg - 1], sq, 0.0, "sell")
@@ -858,7 +895,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 cash += _net; p["proc"] += _net; p["qty"] = 0
                 close_trade(p, d, "stop"); del positions[tk]; closed.add(tk); last_exit[tk] = d
             elif tk in positions and p["qty"] == 0:
-                close_trade(p, d, "sell_3"); del positions[tk]; closed.add(tk); last_exit[tk] = d
+                close_trade(p, d, f"sell_{N_STAGES}"); del positions[tk]; closed.add(tk); last_exit[tk] = d
         # 예비후보 스캔(근접 포함) + 신규 진입(지지선 이하만 체결)
         n_cand = n_reached = n_bought = n_blocked = 0
         _reached = []                                  # (tk, price, sz, above, bull) — 체결 대상 수집
@@ -1080,8 +1117,8 @@ def build_order_plan(positions, d, nav, park_amount=None):
                     note=f"{p['buy_count']+1}차 매수(직전매수가 -{ADD_DROP*100:g}%)"))
         _tp = p.get("targets", S)                                     # ★포지션별 목표(조건부 매도 반영)
         t = [_to_tick(p["avg_buy"] * p.get("tgt_mult", 1.0) * (1 + s)) for s in _tp]   # 목표가 호가단위 반올림(포지션별)                       # 매도 감시(미체결 단계)
-        for stg in range(p["sell_count"] + 1, 4):
-            sq = p["qty"] if stg == 3 else min(round(p["total_qty"] * SELL_STAGE_PCT), p["qty"])
+        for stg in range(p["sell_count"] + 1, N_STAGES + 1):
+            sq = _stage_qty(stg, p["total_qty"], p["qty"])
             ORD_TGT_PCT[(tk, stg)] = _tp[stg - 1]                     # ★텔레그램 라벨용(스키마 불변)
             plan.append(dict(d=d, ticker=tk, name=p["name"], market=p["market"], order_type="sell",
                 stage=stg, trigger_price=round(t[stg - 1]), qty=int(sq),
@@ -1265,8 +1302,8 @@ def notify_eod(data):
     """마감 결과 + 내일 세팅할 감시주문(실제 가격·수량)을 상세히 전송."""
     last = data["last_date"]
     nav = data["nav_daily"][-1]
-    ACT = {"buy_new": "신규매수", "buy_add": "추가매수", "sell_1": "1차매도", "sell_2": "2차매도",
-           "sell_3": "3차매도", "stop": "손절", "newlow_stop": "신저가손절"}
+    ACT = {"buy_new": "신규매수", "buy_add": "추가매수", "stop": "손절", "newlow_stop": "신저가손절"}
+    ACT.update({f"sell_{i}": f"{i}차매도" for i in range(1, N_STAGES + 1)})   # ★N단계 일반화
     le = [e for e in data["executions"] if e["d"] == last]
     filled = [e for e in le if not e["blocked_by_leverage"]]
     blocked = [e for e in le if e["blocked_by_leverage"]]
@@ -1323,10 +1360,13 @@ def notify_eod(data):
                 lines.append(f"  · {o['stage']}차 매수 {o['trigger_price']:,}원{pf(o.get('port_pct'))}")
             sells = sorted([x for x in os_ if x["order_type"] == "sell"], key=lambda x: x["stage"])
             if sells:
-                _p1 = SELL_STAGE_PCT * 100          # 1·2차 비중, 3차는 잔량
+                # ★N단계 일반화 — 마지막 단계(잔량)까지 포함해 전 단계 비중을 나열한다.
+                _pcts = [round(x * 100, 3) for x in SELL_STAGE_PCTS]
+                _pcts.append(round(100 - sum(_pcts), 3))
+                _plabel = "/".join(f"{x:g}" for x in _pcts)
                 # ★조건부 매도 대응 — 전역 S 가 아니라 **그 포지션의 목표**를 표시한다.
                 #   안 고치면 MA120 위 종목이 가격은 맞는데 라벨만 +3/+5/+7 로 틀리게 나간다.
-                lines.append(f"  · 매도({_p1:g}/{_p1:g}/{100-2*_p1:g}) " + " / ".join(
+                lines.append(f"  · 매도({_plabel}) " + " / ".join(
                     f"+{ORD_TGT_PCT.get((o['ticker'], o['stage']), S[o['stage']-1])*100:g}%"
                     f" {o['trigger_price']:,}" for o in sells))
             for o in [x for x in os_ if x["order_type"] in ("stop", "newlow_stop")]:
