@@ -1,4 +1,4 @@
-# 매주 토요일 09:00 KST — 성과(US) 무료 주간 갱신 (rs96.vercel.app/us-backtest).
+﻿# 매주 토요일 09:00 KST — 성과(US) 무료 주간 갱신 (rs96.vercel.app/us-backtest).
 #
 # yfinance 무료 증분(과거 Sharadar 스냅샷 + 최근 증분) → 채택 구성 백테스트 →
 # detail.json(+meta) 재생성 → git push (Vercel 자동 배포).

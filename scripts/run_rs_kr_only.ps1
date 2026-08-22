@@ -1,4 +1,4 @@
-# KR 전용 수동 실행 — 14_RS_KR 병렬화 버전 검증/재실행용.
+﻿# KR 전용 수동 실행 — 14_RS_KR 병렬화 버전 검증/재실행용.
 # run_rs_kr_jp.ps1 의 KR 단계만 미러링 (JP 제외). Supabase 푸시는 export 단계 내부에서 수행.
 
 $ErrorActionPreference = "Continue"

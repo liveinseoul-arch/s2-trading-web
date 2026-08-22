@@ -1,4 +1,4 @@
-# S2 자동 스케줄 등록 — 평일 15:10(후보) / 15:45(결과). 관리자 PowerShell에서 1회 실행.
+﻿# S2 자동 스케줄 등록 — 평일 15:10(후보) / 15:45(결과). 관리자 PowerShell에서 1회 실행.
 # 해제: schtasks /delete /tn "S2_preclose" /f ;  schtasks /delete /tn "S2_eod" /f
 $pre = Join-Path $PSScriptRoot "run_preclose.ps1"
 $eod = Join-Path $PSScriptRoot "run_eod.ps1"

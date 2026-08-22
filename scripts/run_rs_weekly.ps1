@@ -1,4 +1,4 @@
-# 매주 토요일 02:00 — RS 캐시·테이블·Supabase 풀세트 갱신.
+﻿# 매주 토요일 02:00 — RS 캐시·테이블·Supabase 풀세트 갱신.
 #
 # 병렬 단계 (의존성 분석):
 #   1) Rebuild_weekly_cache.py  : KR _bt_daily → _kr_weekly 재구성 + 자동 백업

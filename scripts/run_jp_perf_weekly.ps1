@@ -1,4 +1,4 @@
-# 매주 토요일 09:30 KST — 성과(JP) 무료 주간 갱신 (rs96.vercel.app/jp-backtest).
+﻿# 매주 토요일 09:30 KST — 성과(JP) 무료 주간 갱신 (rs96.vercel.app/jp-backtest).
 #
 # yfinance 무료 증분(과거 J-Quants 스냅샷 + 최근 증분) → 채택 구성(N225 gate·마진1.2) 백테스트 →
 # detail.json(+meta) 재생성 → git push (Vercel 자동 배포).

@@ -1,4 +1,4 @@
-# JP 전용 수동 실행 — 15_RS_JP 병렬화 버전 검증/재실행용.
+﻿# JP 전용 수동 실행 — 15_RS_JP 병렬화 버전 검증/재실행용.
 # run_rs_kr_jp.ps1 의 JP 단계만 미러링 (KR 제외). JP 는 ETF 화이트리스트 없음.
 
 $ErrorActionPreference = "Continue"
