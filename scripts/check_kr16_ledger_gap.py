@@ -22,7 +22,10 @@ import pandas as pd
 
 # rs_pyramid_signal.py · unified_engine_t1 과 동일한 글롭 패턴 (sorted[-1] = 최신)
 EXP_GLOB = r"C:\QuantBacktest\screen\experiments\EXP-*kr16_perf_live-KR"
-MAX_GAP_DAYS = 7
+MAX_GAP_DAYS = 7   # ★7일 = 정확히 한 주 밀림 = ★이미 이상이다(경계 포함으로 잡는다)
+#   ⚠️★[2026-08-23 수리 · CAND-2026-08-22-115] 종전 `gap > MAX_GAP_DAYS` 라
+#     ★정확히 7일이 ★OK 로 통과했다(2026-08-22 08:17 실측 로그 「격차=7일 (기준 <= 7) OK」).
+#     ★한 주 낡은 원장이 통과하면 감지기가 있으나 마나다. → ★`>=` 로 고쳤다.
 
 
 def prev_friday(today):
@@ -46,10 +49,10 @@ def main():
     fri = prev_friday(today)
     gap = (fri - last).days
     print("원장: %s" % xs[0])
-    print("KR_자산 마지막 date=%s · 직전 금요일=%s · 격차=%d일 (기준 <= %d)"
+    print("KR_자산 마지막 date=%s · 직전 금요일=%s · 격차=%d일 (기준 < %d)"
           % (last, fri, gap, MAX_GAP_DAYS))
-    if gap > MAX_GAP_DAYS:
-        print("FAIL: 원장 랙 감지 — 격차 %d일 > %d일" % (gap, MAX_GAP_DAYS))
+    if gap >= MAX_GAP_DAYS:
+        print("FAIL: 원장 랙 감지 — 격차 %d일 >= %d일(★한 주 밀림)" % (gap, MAX_GAP_DAYS))
         sys.exit(1)
     print("OK")
     sys.exit(0)
