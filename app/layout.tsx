@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import "./globals.css";
 import BottomNav from "@/components/BottomNav";
 import TopNav from "@/components/TopNav";
-import CapitalInput from "@/components/CapitalInput";
 import { CONFIG, IS_RS96 } from "@/lib/site";
 
 const SITE_URL = IS_RS96
@@ -40,7 +39,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               {CONFIG.brandSuffix}
             </a>
             <TopNav />
-            {!IS_RS96 && <CapitalInput />}
           </div>
         </header>
 
