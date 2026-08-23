@@ -29,6 +29,8 @@ export interface YearPerf {
 
 export interface YearPerfResult {
   years: Record<string, YearPerf>;
+  /** 날짜 → 그날 레버·보유 종목 수. ★nav_daily 를 이미 읽으므로 추가 비용이 없다. */
+  daily: Record<string, { lev: number; nPos: number }>;
   first: string;
   last: string;
   rows: number;
@@ -41,21 +43,24 @@ export async function yearPerf(fromYear: number): Promise<YearPerfResult> {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ??
     process.env.SUPABASE_SERVICE_ROLE_KEY ??
     "";
-  if (!url || !key) return { years: {}, first: "", last: "", rows: 0 };
+  if (!url || !key) return { years: {}, daily: {}, first: "", last: "", rows: 0 };
 
   const sb = createClient(url, key, { auth: { persistSession: false } });
-  const all: Array<{ d: string; nav: number }> = [];
+  const all: Array<{ d: string; nav: number; leverage: number; n_positions: number }> = [];
   for (let off = 0; ; off += 1000) {
     const { data, error } = await sb
       .from("nav_daily")
-      .select("d,nav")
+      .select("d,nav,leverage,n_positions")
       .order("d", { ascending: true })
       .range(off, off + 999);
     if (error || !data?.length) break;
-    all.push(...(data as Array<{ d: string; nav: number }>));
+    all.push(...(data as unknown as Array<{ d: string; nav: number; leverage: number; n_positions: number }>));
     if (data.length < 1000) break;
   }
-  if (!all.length) return { years: {}, first: "", last: "", rows: 0 };
+  if (!all.length) return { years: {}, daily: {}, first: "", last: "", rows: 0 };
+
+  const daily: Record<string, { lev: number; nPos: number }> = {};
+  for (const r of all) daily[r.d] = { lev: Number(r.leverage), nPos: Number(r.n_positions) };
 
   const byYear = new Map<number, Array<{ d: string; nav: number }>>();
   for (const r of all) {
@@ -96,5 +101,5 @@ export async function yearPerf(fromYear: number): Promise<YearPerfResult> {
     };
     prevEnd = v[v.length - 1].nav;
   }
-  return { years, first: all[0].d, last: all[all.length - 1].d, rows: all.length };
+  return { years, daily, first: all[0].d, last: all[all.length - 1].d, rows: all.length };
 }

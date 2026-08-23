@@ -21,10 +21,12 @@ function YearRow({
   g,
   perf,
   ret,
+  day,
 }: {
   g: YearGrid;
   perf?: YearPerf;
   ret: Record<string, EntryReturn>;
+  day: Record<string, { lev: number; nPos: number }>;
 }) {
   const [tip, setTip] = useState<Tip>(null);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -228,16 +230,35 @@ function YearRow({
             {(() => {
               // ★그날 ★진입한 거래의 수익률 — 실현손익 ÷ 1차매수 금액(해달별님 요구).
               //   ⚠️「발생」은 후보이고 「진입」은 그중 통과분이라 ★수가 다르다.
+              //   ★★진입이 0 이어도 ★줄을 지우지 않는다 — 지우면
+              //     「후보는 있었는데 못 샀다」와 「후보가 애초에 0건」이 ★구분이 안 된다
+              //     (2026-08-23 해달별님 지적: 2026-06-08 후보 14건인데 수익률이 안 나왔다).
               const r = ret[tip.cell.date];
-              if (!r) return null;
+              const dd = day[tip.cell.date];
+              if (!r && tip.cell.n === 0) return null;   // 후보도 진입도 0 — 보여줄 게 없다
               return (
                 <>
                   <div className="flex justify-between gap-4 text-muted">
                     <span>진입 / 완결</span>
                     <b className="tnum font-medium text-textc">
-                      {r.n}건 / {r.closed}건
+                      {r ? `${r.n}건 / ${r.closed}건` : "0건"}
                     </b>
                   </div>
+                  {dd && (
+                    <div className="flex justify-between gap-4 text-muted">
+                      <span>그날 레버 / 보유</span>
+                      <b className={`tnum font-medium ${dd.lev > 1.2 ? "text-up" : "text-textc"}`}>
+                        {dd.lev.toFixed(3)} / {dd.nPos}종목
+                      </b>
+                    </div>
+                  )}
+                  {!r && tip.cell.n > 0 && (
+                    <div className="mt-1.5 border-t border-[var(--color-borderc)] pt-1 text-[11px] text-muted">
+                      후보 {tip.cell.n}건인데 진입 0건
+                      {dd && dd.lev > 1.2 ? " — 레버 한도 초과" : ""}
+                    </div>
+                  )}
+                  {r && (
                   <div className="flex justify-between gap-4 text-muted">
                     <span>수익률</span>
                     {r.retPct == null ? (
@@ -249,7 +270,8 @@ function YearRow({
                       </b>
                     )}
                   </div>
-                  {r.retPct != null && (
+                  )}
+                  {r && r.retPct != null && (
                     <div className="flex justify-between gap-4 text-muted">
                       <span>실현손익</span>
                       <b className="tnum font-medium text-textc">
@@ -288,15 +310,17 @@ export function DensityGrid({
   grids,
   perf,
   ret,
+  day,
 }: {
   grids: YearGrid[];
   perf: Record<string, YearPerf>;
   ret: Record<string, EntryReturn>;
+  day: Record<string, { lev: number; nPos: number }>;
 }) {
   return (
     <div className="flex flex-col">
       {grids.map((g) => (
-        <YearRow key={g.year} g={g} perf={perf[String(g.year)]} ret={ret} />
+        <YearRow key={g.year} g={g} perf={perf[String(g.year)]} ret={ret} day={day} />
       ))}
     </div>
   );

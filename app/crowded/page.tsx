@@ -74,7 +74,7 @@ export default async function CrowdedPage() {
         </span>
       </div>
 
-      <DensityGrid grids={grids} perf={perf.years} ret={ret} />
+      <DensityGrid grids={grids} perf={perf.years} ret={ret} day={perf.daily} />
 
       <Section title="이 그림을 읽는 법">
         <div className="space-y-3 text-sm text-muted">
