@@ -199,6 +199,20 @@ $env:S2_ENV_TOPQ = "0.0425"                                            # ★과�
 #   근거: quant_infra/2026-08/S2_ENVMAP_REPAIR_SPEC_2026-08-23.md
 $env:S2_ENV_MAP_TAIL = "1"                                             # ★꼬리 보충(미설정=off)
 & C:\Python314\python.exe "update_env_density.py" *>> $log   # 과밀일 맵 갱신(실패해도 rc=0)
+
+# ★★[2026-08-23 신설 · 해달별님 요청] 과밀田 페이지 데이터 적재
+#   ★왜 — 「과밀일 페이지가 ★일별로 갱신되도록 스케줄러에 포함되었으면 한다」.
+#     ★B안(Supabase 적재 + 동적 페이지). ★A안(정적 JSON + 매일 자동 커밋·push)은
+#     ★매일 무인 push 가 되돌리기 어려운 외부 행위를 반복하고 ★조용한 실패가 되어 버렸다.
+#   ★★순서 계약 — ★반드시 update_env_density.py ★뒤다. 같은 맵·같은 S2_ENV_TOPQ 를 쓴다.
+#     ⚠️앞에 두면 ★어제 TOPQ 로 센 값이 화면에 간다.
+#   ★정의는 update_env_density 에서 ★상수째 import 하므로 ★과밀일 맵과 어긋날 수 없다.
+#   ★rc 는 ★항상 0 이다(체인을 안 끊는다) — 실패는 사이드카
+#     results/.density_export_last.json 과 로그의 「⚠️★★[DENSITY] 실패」 마커로 남는다.
+#   ★되돌리기 — 아래 두 줄 삭제(페이지는 빈 격자가 되고 EOD 는 그대로 돈다).
+& C:\Python314\python.exe "s2-trading-web\scripts\export_density.py" *>> $log
+Write-Host "[density] rc=$LASTEXITCODE (★항상 0 계약)"
+
 $env:S2_ENV_DENS_MAP = (Join-Path $PSScriptRoot "..\..\s2_env_density_map.csv" | Resolve-Path).Path
 
 # ★★★[2026-08-18 채택] 분할매도 후 잔량 손절선에 −1.0% 버퍼 — ★체결 현실성 축(성과 개선 아님)

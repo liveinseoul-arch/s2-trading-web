@@ -1,5 +1,5 @@
 import { Section } from "@/components/ui";
-import { density, yearGrids, LOG_BINS } from "@/lib/s2Density";
+import { densityGrids, LOG_BINS, DEFN } from "@/lib/s2Density";
 import { yearPerf } from "@/lib/s2YearPerf";
 import { entryReturns } from "@/lib/s2EntryReturn";
 import { DensityGrid } from "@/components/DensityGrid";
@@ -10,15 +10,13 @@ export const metadata = {
     "하루에 S2 진입 후보가 몇 건 떴는지를 달력 격자에 그린다. 과밀일은 진입 문턱이 완화되는 날이다.",
 };
 
-const eok = (n: number) => `${Math.round(n / 1e8).toLocaleString()}억`;
-
 export const dynamic = "force-dynamic";   // ★nav_daily 를 매번 읽는다(EOD 마다 갱신된다)
 
 export default async function CrowdedPage() {
-  const grids = yearGrids();
-  const m = density.meta;
-  const zeroPct = (100 * m.zeroDays) / m.days;
-  const [perf, ret] = await Promise.all([yearPerf(m.firstYear), entryReturns()]);
+  const dens = await densityGrids();
+  const { grids, meta: m } = dens;
+  const zeroPct = m.days ? (100 * m.zeroDays) / m.days : 0;
+  const [perf, ret] = await Promise.all([yearPerf(m.firstYear || 2015), entryReturns()]);
 
   return (
     <>
@@ -26,9 +24,9 @@ export default async function CrowdedPage() {
         <h1 className="text-lg font-bold">과밀田</h1>
         <p className="mt-1 max-w-[68ch] text-sm text-muted">
           하루에 <b className="text-textc">진입 후보</b>가 몇 건 떴는지를 달력에 그렸다. 후보 1건 ={" "}
-          그날 <code className="rounded bg-surface px-1">MA20</code>이 있고, 최근 {m.defn.ma}일 최대
-          거래대금이 <code className="rounded bg-surface px-1">{eok(m.defn.tv_min)}</code> 이상이며,
-          종가가 <code className="rounded bg-surface px-1">MA20 × {(1 - m.defn.base_ep).toFixed(2)}</code>{" "}
+          그날 <code className="rounded bg-surface px-1">MA20</code>이 있고, 최근 {DEFN.ma}일 최대
+          거래대금이 <code className="rounded bg-surface px-1">{DEFN.tvMinEok.toLocaleString()}억</code> 이상이며,
+          종가가 <code className="rounded bg-surface px-1">MA20 × {(1 - DEFN.baseEp).toFixed(2)}</code>{" "}
           아래인 <b className="text-textc">종목-일</b>. 색이 진할수록 그날 후보가 많다.
         </p>
       </div>
@@ -95,8 +93,8 @@ export default async function CrowdedPage() {
           </p>
           <p>
             <b className="text-up">빨간 테두리와 아래 띠가 과밀일</b>이다. 15거래일 누적 후보 수가
-            상위 <b className="text-textc">{(m.defn.topq * 100).toFixed(2)}%</b>를 넘은 날로, 그날은
-            진입 문턱이 <code>{m.defn.base_ep} → {m.defn.relax}</code>로 완화된다. 전체{" "}
+            상위 <b className="text-textc">{(DEFN.topq * 100).toFixed(2)}%</b>를 넘은 날로, 그날은
+            진입 문턱이 <code>{DEFN.baseEp} → {DEFN.relax}</code>로 완화된다. 전체{" "}
             <b className="text-textc">{m.crowdedDays}일</b>. 띠가 짙을수록 그 주에 과밀일이 많다.
           </p>
         </div>
@@ -132,22 +130,21 @@ export default async function CrowdedPage() {
       <Section title="수치의 세계">
         <div className="space-y-3 text-sm text-muted">
           <p>
-            DB <code>{m.db}</code> · <code>{m.first}</code> – <code>{m.last}</code> · 정의는{" "}
-            <code>update_env_density.py</code>에서 상수째 가져왔다(
-            <code>
-              MA={m.defn.ma} · WIN={m.defn.win} · WARM={m.defn.warm} · TOPQ={m.defn.topq}
-            </code>
-            ). ⚠️ canonical 스냅샷이라 <b className="text-textc">{m.last} 이후는 없다</b>.
+            <b className="text-textc">매일 갱신된다</b> — 장 마감 후 EOD가{" "}
+            <code>export_density.py</code>로 다시 세어 올린다. 지금 데이터는{" "}
+            <code>{m.first}</code> – <code>{m.last}</code> ·{" "}
+            <code className="tnum">{m.days.toLocaleString()}</code>일이다.
+          </p>
+          <p>
+            정의는 <code>update_env_density.py</code>에서 <b className="text-textc">상수째</b>{" "}
+            가져온다(<code>MA={DEFN.ma} · WIN={DEFN.win} · TOPQ={DEFN.topq}</code>). 그래서 이 화면과{" "}
+            <b className="text-textc">실제 진입 문턱 완화가 쓰는 과밀일 목록이 어긋날 수 없다</b>.
           </p>
           <p>
             ⚠️ 이것은 <b className="text-textc">후보</b>이지 <b className="text-textc">체결</b>이
             아니다. 실제 진입은 자본·보유 한도·중복 배제를 통과한 뒤에 난다. 후보 총{" "}
             <b className="text-textc">{m.totalN.toLocaleString()}건</b>과 실제 거래 수를 같은 것으로
-            읽지 말 것.
-          </p>
-          <p className="text-xs">
-            잔디밭 스냅샷 <code>{m.generated}</code> · 성과는 <b>운영 NAV</b>에서 매번 계산한다(스냅샷
-            아님).
+            읽지 말 것 — 툴팁의 「진입 / 완결」이 실제 거래 수다.
           </p>
         </div>
       </Section>
