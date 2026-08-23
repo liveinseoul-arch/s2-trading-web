@@ -72,6 +72,24 @@ export default async function CrowdedPage() {
           />
           <span>과밀일</span>
         </span>
+        <span className="ml-2 flex items-center gap-1">
+          <i
+            className="inline-block h-3 w-3 rounded-[3px]"
+            style={{
+              background: "linear-gradient(to bottom right, transparent calc(50% - 0.7px), var(--color-up) calc(50% - 0.7px), var(--color-up) calc(50% + 0.7px), transparent calc(50% + 0.7px)), var(--dens-2)",
+              boxShadow: "inset 0 0 0 1.5px var(--color-up)",
+            }}
+          />
+          <i
+            className="inline-block h-3 w-3 rounded-[3px]"
+            style={{
+              background: "linear-gradient(to bottom right, transparent calc(50% - 0.7px), var(--color-textc) calc(50% - 0.7px), var(--color-textc) calc(50% + 0.7px), transparent calc(50% + 0.7px)), var(--dens-2)",
+              outline: "1px solid var(--dens-line)",
+              outlineOffset: "-1px",
+            }}
+          />
+          <span>진입 0건 (과밀일 / 평일)</span>
+        </span>
       </div>
 
       <DensityGrid grids={grids} perf={perf.years} ret={ret} day={perf.daily} />
@@ -96,6 +114,44 @@ export default async function CrowdedPage() {
             상위 <b className="text-textc">{(DEFN.topq * 100).toFixed(2)}%</b>를 넘은 날로, 그날은
             진입 문턱이 <code>{DEFN.baseEp} → {DEFN.relax}</code>로 완화된다. 전체{" "}
             <b className="text-textc">{m.crowdedDays}일</b>. 띠가 짙을수록 그 주에 과밀일이 많다.
+          </p>
+          <p>
+            <b className="text-textc">대각선</b>이 그어진 칸은{" "}
+            <b className="text-textc">후보는 떴는데 그날 진입이 한 건도 없었던 날</b>이다. 과밀일이면{" "}
+            <b className="text-up">빨간 선</b>, 평일이면 <b className="text-textc">검은 선</b>이다.
+          </p>
+          <p>
+            ⚠️ <b className="text-textc">현금부족은 이유 중 하나일 뿐이다</b>. 발생건수는{" "}
+            <b className="text-textc">종목의 사정만</b> 본다 — 거래대금 자격이 있고 종가가 지지선
+            아래면 센다. 그런데 실제로 살지는{" "}
+            <b className="text-textc">내 계좌의 사정</b>이 함께 정한다. 발생건수가{" "}
+            <b className="text-textc">보지 않는 것</b>이 넷 있고, 그 넷이 곧 못 산 이유다.
+          </p>
+          <ol className="list-decimal space-y-0.5 pl-5">
+            <li>
+              <b className="text-up">이미 들고 있는 종목이다</b> — 발생건수는 보유 여부를 안 본다.
+              엔진은 이걸 <b className="text-textc">추가매수</b>로 처리하는데, 추가매수는 새 거래를
+              만들지 않으므로 여기 「진입」에는 안 잡힌다
+            </li>
+            <li><b className="text-textc">그날 판 종목이다</b> — 같은 날 되사지 않는다</li>
+            <li>
+              <b className="text-up">한 번 팔았고 재진입 자격이 아직 안 섰다</b> — 판 뒤에 거래대금
+              자격일이 <b className="text-textc">새로 서야</b> 다시 살 수 있다. 발생건수는 이
+              이력을 안 본다
+            </li>
+            <li><b className="text-textc">자본이 모자란다</b> — 레버 한도 초과. 이것이 「현금부족」이다</li>
+          </ol>
+          <p>
+            <b className="text-textc">「지지선에 못 닿아서」는 이유가 될 수 없다</b> — 발생건수의
+            정의가 이미 <code>종가 &lt; MA20 × 0.80</code>이고, 과밀일에는 엔진 쪽 기준이{" "}
+            <code>× 0.85</code>로 <b className="text-textc">오히려 느슨</b>해진다. 자격 창(20일)과
+            거래대금 문턱(5,000억)도 양쪽이 같다.
+          </p>
+          <p>
+            그래서 <b className="text-textc">현금이 가득한데도 진입이 0인 날</b>이 생긴다. 툴팁의
+            보유가 <b className="text-textc">0인데 대각선이 그어져 있으면</b> 원인은 4번이 아니라{" "}
+            <b className="text-up">3번(재진입 자격)</b>일 가능성이 높다 — 1·2번은 보유가 있어야
+            성립하기 때문이다.
           </p>
         </div>
       </Section>

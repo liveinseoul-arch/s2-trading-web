@@ -166,12 +166,27 @@ function YearRow({
                       );
                     }
                     const lv = levelOf(c.n);
+                    // ★★후보는 떴는데 ★진입이 0건인 날 — ★빨간 대각선으로 긋는다(해달별님 요청).
+                    //   ⚠️★라벨을 「현금부족」으로 달지 않는다 — ★원인이 하나가 아니다.
+                    //     실측 반례: 2026-06-29 는 ★전액 현금(보유 0종목)인데도 진입이 0이었다.
+                    //     ★보이는 사실만 적는다 — 「후보 있었는데 못 샀다」.
+                    const noEntry = c.n > 0 && !ret[c.date]?.n;
+                    // ★색을 두 갈래로 — ★과밀일은 빨강 · ★비과밀일은 검정(해달별님 지정).
+                    //   ★과밀일은 이미 빨간 테두리가 있어 ★같은 빨강이 한 덩어리로 읽히고,
+                    //   ★비과밀일은 테두리가 없어 ★검정이 더 또렷하다.
+                    const dc = c.crowded ? "var(--color-up)" : "var(--color-textc)";
+                    const diag =
+                      `linear-gradient(to bottom right, transparent calc(50% - 0.7px), ` +
+                      `${dc} calc(50% - 0.7px), ${dc} calc(50% + 0.7px), ` +
+                      `transparent calc(50% + 0.7px))`;
                     return (
                       <i
                         key={row}
                         className="h-3 w-3 cursor-pointer rounded-[2.5px] transition-transform hover:scale-[1.4]"
                         style={{
-                          background: `var(--dens-${lv})`,
+                          background: noEntry
+                            ? `${diag}, var(--dens-${lv})`
+                            : `var(--dens-${lv})`,
                           // ★0건인 날도 칸이 보이도록 옅은 윤곽(해달별님 요청).
                           //   ⚠️과밀일은 inset 테두리를 쓰므로 그때는 윤곽을 얹지 않는다(겹쳐 두꺼워진다).
                           outline: c.crowded ? undefined : "1px solid var(--dens-line)",
@@ -254,8 +269,9 @@ function YearRow({
                   )}
                   {!r && tip.cell.n > 0 && (
                     <div className="mt-1.5 border-t border-[var(--color-borderc)] pt-1 text-[11px] text-muted">
-                      후보 {tip.cell.n}건인데 진입 0건
+                      후보 {tip.cell.n}건인데 <b className="text-up">진입 0건</b>
                       {dd && dd.lev > 1.2 ? " — 레버 한도 초과" : ""}
+                      <span className="block text-muted">격자에 빨간 대각선으로 표시된다.</span>
                     </div>
                   )}
                   {r && (
