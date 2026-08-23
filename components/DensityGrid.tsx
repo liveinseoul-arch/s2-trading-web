@@ -9,7 +9,8 @@
 // ★과밀일은 빨간 테두리 + 주별 띠. 한국식 색관례상 빨강은 상승이지만
 //   여기서는 「그날은 진입 문턱이 완화된다」는 표시다(해달별님 지정).
 import { useCallback, useRef, useState } from "react";
-import { levelOf, colsInYear, WD, type YearGrid, type Cell, type YearPerf } from "@/lib/s2Density";
+import { levelOf, colsInYear, WD, type YearGrid, type Cell } from "@/lib/s2Density";
+import type { YearPerf } from "@/lib/s2YearPerf";
 
 const PITCH = 14; // 셀 12px + gap 2px
 
@@ -47,7 +48,7 @@ function YearRow({ g, perf }: { g: YearGrid; perf?: YearPerf }) {
     setTip({ x: e.clientX - (r?.left ?? 0), y: e.clientY - (r?.top ?? 0), cell: c });
   }, []);
 
-  const rp = perf?.ret_pct;
+  const rp = perf?.retPct;
 
   return (
     <section className="grid grid-cols-1 gap-2 border-t border-[var(--color-borderc)] py-3 lg:grid-cols-[150px_1fr] lg:gap-4">
@@ -59,7 +60,7 @@ function YearRow({ g, perf }: { g: YearGrid; perf?: YearPerf }) {
               {rp >= 0 ? "+" : ""}
               {rp.toFixed(1)}%
             </span>
-            <span className="tnum text-[11px] text-muted">MDD {perf!.mdd_pct.toFixed(1)}%</span>
+            <span className="tnum text-[11px] text-muted">MDD {perf!.mddPct.toFixed(1)}%</span>
             {perf!.partial && (
               <span className="rounded border border-[var(--color-borderc)] px-1 text-[9px] text-muted">부분</span>
             )}
@@ -128,7 +129,11 @@ function YearRow({ g, perf }: { g: YearGrid; perf?: YearPerf }) {
                         <i
                           key={row}
                           className="h-3 w-3 rounded-[2.5px]"
-                          style={{ background: "var(--dens-off)" }}
+                          style={{
+                            background: "var(--dens-off)",
+                            outline: "1px solid var(--dens-line)",
+                            outlineOffset: "-1px",
+                          }}
                           aria-hidden="true"
                         />
                       );
@@ -140,7 +145,11 @@ function YearRow({ g, perf }: { g: YearGrid; perf?: YearPerf }) {
                         className="h-3 w-3 cursor-pointer rounded-[2.5px] transition-transform hover:scale-[1.4]"
                         style={{
                           background: `var(--dens-${lv})`,
-                          boxShadow: c.crowded ? "inset 0 0 0 2.5px var(--color-up)" : undefined,
+                          // ★0건인 날도 칸이 보이도록 옅은 윤곽(해달별님 요청).
+                          //   ⚠️과밀일은 inset 테두리를 쓰므로 그때는 윤곽을 얹지 않는다(겹쳐 두꺼워진다).
+                          outline: c.crowded ? undefined : "1px solid var(--dens-line)",
+                          outlineOffset: "-1px",
+                          boxShadow: c.crowded ? "inset 0 0 0 1.5px var(--color-up)" : undefined,
                         }}
                         onMouseEnter={(e) => onEnter(e, c)}
                         onMouseMove={(e) => onEnter(e, c)}

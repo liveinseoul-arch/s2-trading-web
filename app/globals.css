@@ -19,18 +19,26 @@
   --color-textc: #212529;
   --color-muted: #868e96;
 
-  /* ★과밀일 잔디밭 — 로그 구간 색 램프(0 / 1 / 2 / 3-4 / 5-8 / 9+).
-     ⚠️한국식 색관례상 파랑=하락인데, 이 지표가 「MA20 대비 -20% 급락 종목 수」라
-     파랑 램프가 의미상 맞다. 과밀일 표시만 --color-up(빨강)을 쓴다(해달별님 지정). */
-  --dens-0: #eaeff4;
+  --font-sans: "Pretendard Variable", Pretendard, system-ui, sans-serif;
+}
+
+/* ── ★과밀일 잔디밭 색 램프 ────────────────────────────────────
+   ⚠️★★@theme 안에 두면 안 된다 — Tailwind v4 는 ★알려진 네임스페이스
+     (--color-* · --font-* · --spacing-* …)만 CSS 변수로 내보내고
+     ★--dens-0 같은 이름은 ★통째로 버린다(2026-08-23 실측: 빌드 CSS 에 0건).
+     ★그래서 ★평범한 :root 로 뺀다.
+   ★로그 구간 램프(0 / 1 / 2 / 3-4 / 5-8 / 9+).
+   ⚠️한국식 색관례상 파랑=하락인데 이 지표가 「MA20 대비 -20% 급락 종목 수」라
+     파랑 램프가 의미상 맞다. 과밀일 표시만 --color-up(빨강)을 쓴다. */
+:root {
+  --dens-0: #e3e8ee;   /* ★0건인 날 — 칸이 보이도록 회색을 살짝 진하게(해달별님 요청) */
   --dens-1: #c3dcf1;
   --dens-2: #8bbde5;
   --dens-3: #4a93cf;
   --dens-4: #1971c2;
   --dens-5: #0c4a92;
-  --dens-off: #f3f6f9;          /* 휴장일 */
-
-  --font-sans: "Pretendard Variable", Pretendard, system-ui, sans-serif;
+  --dens-off: #f2f4f7; /* 휴장일 — 0건보다 옅게(둘이 구분돼야 한다) */
+  --dens-line: #dfe4ea;/* 칸 테두리(아주 옅게 — 격자가 읽히도록) */
 }
 
 html { -webkit-text-size-adjust: 100%; }

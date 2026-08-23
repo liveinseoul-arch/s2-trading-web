@@ -39,41 +39,11 @@ export interface DensityMeta {
   };
 }
 
-export interface YearPerf {
-  ret_pct: number | null;
-  mdd_pct: number;
-  mdd_date: string;
-  nav_start: number;
-  nav_end: number;
-  days: number;
-  partial: boolean;
-}
-
-export interface PerfMeta {
-  generated: string;
-  world: Record<string, unknown> & {
-    db: string;
-    envelope_pct: number;
-    time_stop: number;
-    max_lev: number;
-    size: number[];
-    crowd_map: string;
-  };
-  total: {
-    cagr: number;
-    mdd: number;
-    calmar: number;
-    trades: number;
-    period_start: string;
-    period_end: string;
-  };
-  defn: { ret: string; mdd: string };
-}
+// ⚠️★연도별 성과는 ★여기 없다 — lib/s2YearPerf.ts 가 ★운영 nav_daily 에서 계산한다.
+//   ★2026-08-23 해달별님 지적으로 바꿨다(canonical 스냅샷은 ★세계가 달라 −4.10% 대 ★−17.80%).
 
 export interface DensityData {
   meta: DensityMeta;
-  perfMeta: PerfMeta;
-  perf: Record<string, YearPerf>;
   d: DensityRow[];
 }
 

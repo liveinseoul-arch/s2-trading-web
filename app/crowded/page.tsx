@@ -1,25 +1,28 @@
 import { Section } from "@/components/ui";
 import { density, yearGrids, LOG_BINS } from "@/lib/s2Density";
+import { yearPerf } from "@/lib/s2YearPerf";
 import { DensityGrid } from "@/components/DensityGrid";
 
 export const metadata = {
-  title: "과밀일 — S2 급락 후보 잔디밭",
+  title: "과밀田 — S2 급락 후보 잔디밭",
   description:
     "하루에 S2 진입 후보가 몇 건 떴는지를 달력 격자에 그린다. 과밀일은 진입 문턱이 완화되는 날이다.",
 };
 
 const eok = (n: number) => `${Math.round(n / 1e8).toLocaleString()}억`;
 
-export default function CrowdedPage() {
+export const dynamic = "force-dynamic";   // ★nav_daily 를 매번 읽는다(EOD 마다 갱신된다)
+
+export default async function CrowdedPage() {
   const grids = yearGrids();
   const m = density.meta;
-  const pm = density.perfMeta;
   const zeroPct = (100 * m.zeroDays) / m.days;
+  const perf = await yearPerf(m.firstYear);
 
   return (
     <>
       <div className="mb-3">
-        <h1 className="text-lg font-bold">과밀일</h1>
+        <h1 className="text-lg font-bold">과밀田</h1>
         <p className="mt-1 max-w-[68ch] text-sm text-muted">
           하루에 <b className="text-textc">진입 후보</b>가 몇 건 떴는지를 달력에 그렸다. 후보 1건 ={" "}
           그날 <code className="rounded bg-surface px-1">MA20</code>이 있고, 최근 {m.defn.ma}일 최대
@@ -52,8 +55,12 @@ export default function CrowdedPage() {
         {[0, 1, 2, 3, 4, 5].map((lv) => (
           <span key={lv} className="flex items-center gap-1">
             <i
-              className="inline-block h-3 w-3 rounded-[3px] border border-[var(--color-hairc,#eef2f6)]"
-              style={{ background: `var(--dens-${lv})` }}
+              className="inline-block h-3 w-3 rounded-[3px]"
+              style={{
+                background: `var(--dens-${lv})`,
+                outline: "1px solid var(--dens-line)",
+                outlineOffset: "-1px",
+              }}
             />
             <span className="tnum text-[11px]">{lv === 0 ? "0" : LOG_BINS[lv - 1][2]}</span>
           </span>
@@ -62,13 +69,13 @@ export default function CrowdedPage() {
         <span className="ml-2 flex items-center gap-1">
           <i
             className="inline-block h-3 w-3 rounded-[3px]"
-            style={{ boxShadow: "inset 0 0 0 2.5px var(--color-up)" }}
+            style={{ boxShadow: "inset 0 0 0 1.5px var(--color-up)" }}
           />
           <span>과밀일</span>
         </span>
       </div>
 
-      <DensityGrid grids={grids} perf={density.perf} />
+      <DensityGrid grids={grids} perf={perf.years} />
 
       <Section title="이 그림을 읽는 법">
         <div className="space-y-3 text-sm text-muted">
@@ -97,28 +104,26 @@ export default function CrowdedPage() {
       <Section title="연도 옆 성과 두 줄">
         <div className="space-y-3 text-sm text-muted">
           <p>
+            <b className="text-textc">운영 NAV 곡선</b>에서 계산한다 — 대시보드·성과 페이지와{" "}
+            <b className="text-textc">같은 세계</b>다. EOD 마다 갱신되므로 여기도 매일 따라온다.
+            {perf.rows > 0 && (
+              <>
+                {" "}
+                기준 <code>{perf.first}</code> – <code>{perf.last}</code> ·{" "}
+                <code className="tnum">{perf.rows.toLocaleString()}</code>일.
+              </>
+            )}
+          </p>
+          <p>
             <b className="text-textc">연 수익률</b>은 그 해 마지막 NAV ÷ 직전 해 마지막 NAV − 1이다.
             한 해짜리라 CAGR과 같은 값이다.{" "}
             <b className="text-up">연내 MDD는 그 해 안에서만 고점을 잡아 잰 낙폭</b>이라 전 구간
-            MDD(<code className="tnum">{pm.total.mdd.toFixed(2)}%</code>)와 다르다 — 해를 넘는 낙폭은
-            안 잡힌다.
+            MDD와 다르다 — 해를 넘는 낙폭은 안 잡힌다.
           </p>
           <p>
-            세계 — 지금 굴리는 구성 그대로다. 래칫 트리거 ×0.75 · 사이징{" "}
-            <code>{pm.world.size.join("/")}</code> · 기간손절{" "}
-            <code>{String(pm.world.time_stop)}</code>일 · 진입 문턱{" "}
-            <code>{String(pm.world.envelope_pct)}</code> · 무차입 ·{" "}
-            <code>S2_CA_ADJUST=1</code>. 전 구간 CAGR{" "}
-            <code className="tnum">{pm.total.cagr.toFixed(2)}%</code> · Calmar{" "}
-            <code className="tnum">{pm.total.calmar.toFixed(3)}</code> · 거래{" "}
-            <code className="tnum">{pm.total.trades}</code> ·{" "}
-            <code>{pm.total.period_start}</code> – <code>{pm.total.period_end}</code>.
-          </p>
-          <p>
-            ⚠️ <b className="text-textc">과밀일 맵은 껐다</b> — 그래서 위 성과에는{" "}
-            <b className="text-textc">과밀일 완화가 안 들어 있다</b>. 그리고{" "}
-            <b className="text-textc">{m.firstYear} – 2017은 사실상 무거래</b>라 그 해 수익률은
-            성과가 아니라 <b className="text-textc">현금이었다</b>는 뜻이다.
+            색은 한국식이다: <span className="text-up">빨강 = 상승</span>,{" "}
+            <span className="text-down">파랑 = 하락</span>. 격자의 빨간 테두리는 상승이 아니라{" "}
+            <b className="text-textc">과밀일 표시</b>다.
           </p>
         </div>
       </Section>
@@ -140,7 +145,8 @@ export default function CrowdedPage() {
             읽지 말 것.
           </p>
           <p className="text-xs">
-            스냅샷 생성 <code>{m.generated}</code> · 성과 <code>{pm.generated}</code>
+            잔디밭 스냅샷 <code>{m.generated}</code> · 성과는 <b>운영 NAV</b>에서 매번 계산한다(스냅샷
+            아님).
           </p>
         </div>
       </Section>
