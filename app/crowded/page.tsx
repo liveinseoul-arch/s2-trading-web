@@ -1,6 +1,7 @@
 import { Section } from "@/components/ui";
 import { density, yearGrids, LOG_BINS } from "@/lib/s2Density";
 import { yearPerf } from "@/lib/s2YearPerf";
+import { entryReturns } from "@/lib/s2EntryReturn";
 import { DensityGrid } from "@/components/DensityGrid";
 
 export const metadata = {
@@ -17,7 +18,7 @@ export default async function CrowdedPage() {
   const grids = yearGrids();
   const m = density.meta;
   const zeroPct = (100 * m.zeroDays) / m.days;
-  const perf = await yearPerf(m.firstYear);
+  const [perf, ret] = await Promise.all([yearPerf(m.firstYear), entryReturns()]);
 
   return (
     <>
@@ -75,7 +76,7 @@ export default async function CrowdedPage() {
         </span>
       </div>
 
-      <DensityGrid grids={grids} perf={perf.years} />
+      <DensityGrid grids={grids} perf={perf.years} ret={ret} />
 
       <Section title="이 그림을 읽는 법">
         <div className="space-y-3 text-sm text-muted">

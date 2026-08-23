@@ -11,14 +11,24 @@
 import { useCallback, useRef, useState } from "react";
 import { levelOf, colsInYear, WD, type YearGrid, type Cell } from "@/lib/s2Density";
 import type { YearPerf } from "@/lib/s2YearPerf";
+import type { EntryReturn } from "@/lib/s2EntryReturn";
 
 const PITCH = 14; // 셀 12px + gap 2px
 
 type Tip = { x: number; y: number; cell: Cell } | null;
 
-function YearRow({ g, perf }: { g: YearGrid; perf?: YearPerf }) {
+function YearRow({
+  g,
+  perf,
+  ret,
+}: {
+  g: YearGrid;
+  perf?: YearPerf;
+  ret: Record<string, EntryReturn>;
+}) {
   const [tip, setTip] = useState<Tip>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
 
   // (col,row) → 셀
   const byPos = new Map<string, Cell>();
@@ -43,10 +53,25 @@ function YearRow({ g, perf }: { g: YearGrid; perf?: YearPerf }) {
     monthTicks.push({ m: +mm, left: c.col * PITCH });
   }
 
+  // ★★툴팁은 ★뷰포트 기준(fixed)으로 띄운다.
+  //   ⚠️격자가 `overflow-x-auto` 안에 있어 ★absolute 로 두면 ★잘린다(2026-08-23 해달별님 지적).
+  //   ★그래서 clientX/clientY 를 그대로 쓰고, ★화면 끝에서는 반대쪽으로 접는다.
   const onEnter = useCallback((e: React.MouseEvent, c: Cell) => {
-    const r = boxRef.current?.getBoundingClientRect();
-    setTip({ x: e.clientX - (r?.left ?? 0), y: e.clientY - (r?.top ?? 0), cell: c });
+    setTip({ x: e.clientX, y: e.clientY, cell: c });
   }, []);
+
+  // ★툴팁 위치 — 오른쪽/아래로 14px 띄우되 ★화면을 넘으면 반대쪽으로 접는다.
+  //   ★높이는 렌더 뒤에야 알 수 있으므로 ★실측값이 있으면 쓰고 없으면 보수적으로 어림한다.
+  const TIP_W = 240;
+  const TIP_H = tipRef.current?.offsetHeight ?? 150;
+  const vw = typeof window === "undefined" ? 1200 : window.innerWidth;
+  const vh = typeof window === "undefined" ? 800 : window.innerHeight;
+  const tipPos = tip
+    ? {
+        left: tip.x + 14 + TIP_W > vw - 8 ? Math.max(8, tip.x - 14 - TIP_W) : tip.x + 14,
+        top: tip.y + 14 + TIP_H > vh - 8 ? Math.max(8, tip.y - 14 - TIP_H) : tip.y + 14,
+      }
+    : undefined;
 
   const rp = perf?.retPct;
 
@@ -188,8 +213,9 @@ function YearRow({ g, perf }: { g: YearGrid; perf?: YearPerf }) {
 
         {tip && (
           <div
-            className="pointer-events-none absolute z-20 max-w-[260px] rounded-lg border border-[var(--color-borderc)] bg-bg px-3 py-2 text-xs shadow-lg"
-            style={{ left: tip.x + 14, top: tip.y + 14 }}
+            ref={tipRef}
+            className="pointer-events-none fixed z-50 w-[240px] rounded-lg border border-[var(--color-borderc)] bg-bg px-3 py-2 text-xs shadow-lg"
+            style={tipPos}
             role="status"
           >
             <div className="tnum mb-1 text-[13px] font-semibold">
@@ -199,6 +225,41 @@ function YearRow({ g, perf }: { g: YearGrid; perf?: YearPerf }) {
               <span>발생 건수</span>
               <b className="tnum font-medium text-textc">{tip.cell.n}건</b>
             </div>
+            {(() => {
+              // ★그날 ★진입한 거래의 수익률 — 실현손익 ÷ 1차매수 금액(해달별님 요구).
+              //   ⚠️「발생」은 후보이고 「진입」은 그중 통과분이라 ★수가 다르다.
+              const r = ret[tip.cell.date];
+              if (!r) return null;
+              return (
+                <>
+                  <div className="flex justify-between gap-4 text-muted">
+                    <span>진입 / 완결</span>
+                    <b className="tnum font-medium text-textc">
+                      {r.n}건 / {r.closed}건
+                    </b>
+                  </div>
+                  <div className="flex justify-between gap-4 text-muted">
+                    <span>수익률</span>
+                    {r.retPct == null ? (
+                      <b className="tnum font-medium text-muted">미완결</b>
+                    ) : (
+                      <b className={`tnum font-semibold ${r.retPct >= 0 ? "text-up" : "text-down"}`}>
+                        {r.retPct >= 0 ? "+" : ""}
+                        {r.retPct.toFixed(2)}%
+                      </b>
+                    )}
+                  </div>
+                  {r.retPct != null && (
+                    <div className="flex justify-between gap-4 text-muted">
+                      <span>실현손익</span>
+                      <b className="tnum font-medium text-textc">
+                        {Math.round(r.pnl / 1e4).toLocaleString("ko-KR")}만원
+                      </b>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
             {tip.cell.roll >= 0 && (
               <div className="flex justify-between gap-4 text-muted">
                 <span>15거래일 누적</span>
@@ -226,14 +287,16 @@ function YearRow({ g, perf }: { g: YearGrid; perf?: YearPerf }) {
 export function DensityGrid({
   grids,
   perf,
+  ret,
 }: {
   grids: YearGrid[];
   perf: Record<string, YearPerf>;
+  ret: Record<string, EntryReturn>;
 }) {
   return (
     <div className="flex flex-col">
       {grids.map((g) => (
-        <YearRow key={g.year} g={g} perf={perf[String(g.year)]} />
+        <YearRow key={g.year} g={g} perf={perf[String(g.year)]} ret={ret} />
       ))}
     </div>
   );
