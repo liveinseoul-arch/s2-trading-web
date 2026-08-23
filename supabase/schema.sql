@@ -70,8 +70,11 @@ create table executions (
   ticker        text    not null,
   name          text    not null,
   market        text    not null,
-  action        text    not null check (action in
-                  ('buy_new','buy_add','sell_1','sell_2','sell_3','stop','newlow_stop')),
+  -- ★2026-08-23 — 스톱 래칫 4단계 채택으로 sell_4 가 온다(migrations/2026-08-23_sell4_ratchet.sql).
+  --   ★열거가 아니라 정규식이다 — 단계 수가 또 바뀌어도 스키마가 안 깨지게 sell_1..9 를 미리 연다.
+  --   ⚠️2026-08-12 cash_park 때와 ★같은 사고가 08-21 에 재발했다(적재 통째 실패 → 테이블 전삭제 상태).
+  action        text    not null
+                  check (action ~ '^(buy_new|buy_add|sell_[1-9]|stop|newlow_stop)$'),
   stage         smallint,
   fill_price    bigint  not null,
   qty           integer not null,
