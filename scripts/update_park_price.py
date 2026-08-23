@@ -58,7 +58,23 @@ try:
               % (len(new), len(old)))
         raise SystemExit(0)
 
-    new.to_csv(path, index=False, encoding="utf-8-sig")
+    # ★★[2026-08-23 · CAND-2026-08-22-95 · 해달별님 승인] ★원자적 교체 + 사이드카
+    #   ★결함 — 종전에는 `to_csv(path)` 로 ★직접 덮어썼다.
+    #     ⚠️★쓰다 죽으면 ★반쯤 쓰인 CSV 가 남고, ★그것을 EOD 가 그대로 읽는다.
+    #   ★형제 `update_crash_density.py:138-139` 는 ★이미 `os.replace` 를 쓴다 — ★맞춘다.
+    #   ★사이드카 — ★언제·몇 행을 썼는지 ★만든 쪽이 알려 준다(§7-4b 교훈).
+    import os as _os, json as _json, time as _time
+    _tmp = str(path) + ".tmp"
+    new.to_csv(_tmp, index=False, encoding="utf-8-sig")
+    _os.replace(_tmp, path)                 # ★원자적 — 반쯤 쓰인 CSV 를 안 남긴다
+    try:
+        with open(str(path) + ".meta.json", "w", encoding="utf-8") as _f:
+            _json.dump(dict(ts=_time.strftime("%Y-%m-%dT%H:%M:%S"), ticker=TK,
+                            rows_old=int(len(old)), rows_new=int(len(new)),
+                            last_date=str(new["date"].max())[:10]),
+                       _f, ensure_ascii=False, indent=1)
+    except Exception:                        # noqa: BLE001
+        pass                                 # ★사이드카가 본 기능을 깨뜨리면 안 된다
     print("  [park-price] %s %d행 → %d행 · 최신 %s 종가 %s원"
           % (TK, len(old), len(new), str(new["date"].max())[:10],
              format(round(float(new["close"].iloc[-1])), ",")))

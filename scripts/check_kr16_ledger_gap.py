@@ -15,6 +15,7 @@
 # 승인: 해달별님 2026-08-16 「전체 패키지」
 # [2026-08-16 랙 수리] 끝
 import glob
+import os
 import sys
 from datetime import date, timedelta
 
@@ -39,9 +40,25 @@ def main():
     if not dirs:
         print("FAIL: kr16_perf_live 원장 디렉토리 없음: " + EXP_GLOB)
         sys.exit(1)
-    xs = glob.glob(dirs[-1] + r"\*result.xlsx")
+    # ⚠️★★[2026-08-23 신설 · CAND-2026-08-22-116] ★글롭 폴백
+    #   ★최신 디렉터리에 result.xlsx 가 없으면 ★한 칸씩 뒤로 내려간다.
+    #   ★실측 — EXP-kr16_perf_live-KR 11개 중 ★3개에 result.xlsx 가 ★없다.
+    #     ★하나가 맨 뒤에 생기면 ★그날 ★신호와 ★랭 감지가 ★동시에 죽었다.
+    #   ⚠️★★폴백은 ★반드시 시끄럽게 한다 — ★조용히 낡은 원장으로
+    #     내려가면 ★죽는 것보다 ★더 위험하다(★모르고 쓴다).
+    xs = []
+    for _i in range(len(dirs) - 1, -1, -1):
+        xs = glob.glob(dirs[_i] + r"\*result.xlsx")
+        if xs:
+            if _i != len(dirs) - 1:
+                _sk = [os.path.basename(x) for x in dirs[_i + 1:]]
+                print("⚠️★글롭 폴백 — result.xlsx 가 없는 디렉터리 %d개를 건넌다: %s"
+                      % (len(_sk), ", ".join(_sk)), flush=True)
+                print("   ★읽은 원장 = %s (★최신이 아니다)"
+                      % os.path.basename(dirs[_i]), flush=True)
+            break
     if not xs:
-        print("FAIL: result.xlsx 없음: " + dirs[-1])
+        print("FAIL: result.xlsx 가 단 하나도 없음(디렉터리 %d개 전수): %s" % (len(dirs), EXP_GLOB))
         sys.exit(1)
     eq = pd.read_excel(xs[0], sheet_name="KR_자산")
     last = pd.to_datetime(eq["date"]).max().date()
