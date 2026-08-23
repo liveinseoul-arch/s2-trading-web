@@ -7,6 +7,7 @@ const MARGINKI_TABS = [
   { href: "/", label: "오늘", match: (p: string) => p === "/" || p.startsWith("/day") },
   { href: "/dashboard", label: "대시보드", match: (p: string) => p.startsWith("/dashboard") },
   { href: "/stocks", label: "종목", match: (p: string) => p.startsWith("/stocks") || p.startsWith("/trades") },
+  { href: "/crowded", label: "과밀일", match: (p: string) => p.startsWith("/crowded") },
   { href: "/rules", label: "규칙", match: (p: string) => p.startsWith("/rules") },
 ];
 

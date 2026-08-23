@@ -10,6 +10,7 @@ const MARGINKI_RIGHT: Tab[] = [
   { href: "/",         label: "오늘",       match: (p) => p === "/" || p.startsWith("/day") },
   { href: "/dashboard",label: "대시보드",   match: (p) => p.startsWith("/dashboard") || p.startsWith("/month") },
   { href: "/stocks",   label: "종목",       match: (p) => p.startsWith("/stocks") || p.startsWith("/trades") },
+  { href: "/crowded",  label: "과밀일",     match: (p) => p.startsWith("/crowded") },
   { href: "/rules/s2", label: "규칙(S2)",   match: (p) => p === "/rules/s2" || p === "/rules" },
 ];
 
