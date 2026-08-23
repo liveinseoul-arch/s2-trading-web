@@ -88,7 +88,7 @@ export default async function CrowdedPage() {
               outlineOffset: "-1px",
             }}
           />
-          <span>진입 0건 (과밀일 / 평일)</span>
+          <span>후보 3건+ 인데 진입 0건 (과밀일 / 평일)</span>
         </span>
       </div>
 
@@ -117,8 +117,17 @@ export default async function CrowdedPage() {
           </p>
           <p>
             <b className="text-textc">대각선</b>이 그어진 칸은{" "}
-            <b className="text-textc">후보는 떴는데 그날 진입이 한 건도 없었던 날</b>이다. 과밀일이면{" "}
-            <b className="text-up">빨간 선</b>, 평일이면 <b className="text-textc">검은 선</b>이다.
+            <b className="text-textc">후보가 3건 이상 떴는데 그날 진입이 한 건도 없었던 날</b>이다.
+            과밀일이면 <b className="text-up">빨간 선</b>, 평일이면{" "}
+            <b className="text-textc">검은 선</b>이다.
+          </p>
+          <p>
+            ⚠️ <b className="text-textc">왜 3건부터인가</b> — 후보가 적은 날 못 사는 것은{" "}
+            <b className="text-textc">놀랍지 않다</b>. 후보 1건인 날은 <b className="text-textc">77.0%</b>가
+            진입 0이다(그게 기본값이다). 후보가 많아질수록 못 사는 일이 드물어져{" "}
+            <b className="text-textc">11.1%</b>까지 내려간다. 그래서{" "}
+            <b className="text-textc">못 산 것이 놀라운 날</b>에만 긋는다 — 문턱 없이 그으면 격자의
+            대부분이 대각선이 되어 신호가 아니라 배경이 된다.
           </p>
           <p>
             ⚠️ <b className="text-textc">현금부족은 이유 중 하나일 뿐이다</b>. 발생건수는{" "}
