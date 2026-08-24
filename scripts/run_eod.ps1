@@ -10,7 +10,24 @@ $log = Join-Path $PSScriptRoot "eod.log"
 #     ★네이티브 종료코드를 ★전파하지 않는다(파이썬 rc=3 → ps1 rc=0 · 로그 줄 유무와 무관).
 #     ★즉 이 잡의 스케줄러 rc 는 ★종전에도 파이썬 실패를 못 봤다 — 로그가 ★유일한 기록이다.
 #   ★되돌리기 — [RC] 로 시작하는 줄만 지운다.
-"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] main.py=$LASTEXITCODE" | Out-File -Append -Encoding utf8 $log
+# ★★★[2026-08-24 신설 · CAND-2026-08-24-520] 아래 [RC] 줄을 ★try/catch 로 감싼다.
+#   ★문제 — 이 ps1 은 `$ErrorActionPreference = "Stop"` 이라
+#     ★맨몸 `Out-File` 이 ★새 ★중단 지점이다(디스크 가득 · 파일 잠김 · 경로 소실 · 권한).
+#     ★★그 중단이 ★뒷 단계 ★앞에서 나면 ★그 단계가 통째로 안 돌고,
+#     ★맨 끝에서 나면 ★성공한 실행이 ★rc=1 로 보인다 — ★둘 다 ★로그 한 줄 때문이다.
+#   ★★해달별님 결정(2026-08-24) — ★`$ErrorActionPreference` 는 ★Stop ★유지하고
+#     ★대신 [RC] 줄만 감싼다. ★근거 — export_eod.py 를 --dry-run 없이 돌리면
+#     ★Supabase 9테이블을 ★전삭제 후 재적재한다. ★★중간에 죽는 것보다 ★안 시작하는 것이 안전하다.
+#     ★즉 ★Stop 은 ★설계이고, ★고칠 것은 ★「로그가 새 중단 지점이 된 것」 하나다.
+#   ⚠️★★rc 는 ★먼저 변수에 담는다 — ★try 안에 나중에 네이티브 호출이 끼면 ★값이 밀린다.
+#   ★★ps1 의 자기 exit code 는 ★안 바뀐다 — ★로그만이다.
+#   ★되돌리기 — 각 사이트에서 `$rc... = $LASTEXITCODE` · `try {` · `} catch { ... }` 세 줄을 지우고
+#     [RC] 줄의 `$rc...` 를 `$LASTEXITCODE` 로 되돌린다(★다른 변경 없음).
+#   근거: quant_infra/2026-08/OPS_RC_TRYCATCH_2026-08-24.md
+$rcMain = $LASTEXITCODE
+try {
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] main.py=$rcMain" | Out-File -Append -Encoding utf8 $log
+} catch { Write-Host "[RC] 로그 기록 실패(main.py): $($_.Exception.Message)" }
 $env:S2_TIME_STOP_DAYS = "15"                                          # 기간 손절 3주
 # ★2026-08-09 채택 — MA120 위 진입분만 +3/+6.5/+10. 아래(진입의 약 65%)는 위 3/5/7 그대로.
 #   되돌리기: 이 한 줄만 지우면 원복(게이트 미설정 = 전 포지션 3/5/7).
@@ -154,7 +171,11 @@ $env:S2_CASH_PARK = "153130"                                           # KODEX �
 $env:S2_CASH_PARK_LAG = "2"                                            # ★RP — 예수금 D+2
 $env:S2_CASH_PARK_FEE = "0"                                            # ★RP — 매매비용 0
 & C:\Python314\python.exe "s2-trading-web\scripts\update_park_price.py" *>> $log   # 파킹 가격 CSV 갱신(실패해도 rc=0)
-"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] update_park_price.py=$LASTEXITCODE" | Out-File -Append -Encoding utf8 $log
+# ★[2026-08-24 · CAND-2026-08-24-520] ★try/catch — ★위 서문 참조(로그만 · rc 불변).
+$rcPark = $LASTEXITCODE
+try {
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] update_park_price.py=$rcPark" | Out-File -Append -Encoding utf8 $log
+} catch { Write-Host "[RC] 로그 기록 실패(update_park_price.py): $($_.Exception.Message)" }
 
 # ★★★[2026-08-18 채택] 과밀일 엔벨로프 완화 — 「후보 밀도가 높은 날(=시장 급락)만 문턱을 낮춘다」
 #   15거래일 후보 밀도가 ★확장창 상위 2% 인 날(약 116일 = 전체의 2.7%)만
@@ -206,7 +227,11 @@ $env:S2_ENV_TOPQ = "0.0425"                                            # ★과�
 #   근거: quant_infra/2026-08/S2_ENVMAP_REPAIR_SPEC_2026-08-23.md
 $env:S2_ENV_MAP_TAIL = "1"                                             # ★꼬리 보충(미설정=off)
 & C:\Python314\python.exe "update_env_density.py" *>> $log   # 과밀일 맵 갱신(실패해도 rc=0)
-"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] update_env_density.py=$LASTEXITCODE" | Out-File -Append -Encoding utf8 $log
+# ★[2026-08-24 · CAND-2026-08-24-520] ★try/catch — ★위 서문 참조(로그만 · rc 불변).
+$rcEnvDens = $LASTEXITCODE
+try {
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] update_env_density.py=$rcEnvDens" | Out-File -Append -Encoding utf8 $log
+} catch { Write-Host "[RC] 로그 기록 실패(update_env_density.py): $($_.Exception.Message)" }
 
 # ★★[2026-08-23 신설 · 해달별님 요청] 과밀田 페이지 데이터 적재
 #   ★왜 — 「과밀일 페이지가 ★일별로 갱신되도록 스케줄러에 포함되었으면 한다」.
@@ -221,7 +246,11 @@ $env:S2_ENV_MAP_TAIL = "1"                                             # ★꼬�
 & C:\Python314\python.exe "s2-trading-web\scripts\export_density.py" *>> $log
 Write-Host "[density] rc=$LASTEXITCODE (★항상 0 계약)"
 # ⚠️★Write-Host 는 ★무인 실행에서 사라진다 — ★같은 값을 로그에도 남긴다.
-"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] export_density.py=$LASTEXITCODE" | Out-File -Append -Encoding utf8 $log
+# ★[2026-08-24 · CAND-2026-08-24-520] ★try/catch — ★위 서문 참조(로그만 · rc 불변).
+$rcDensity = $LASTEXITCODE
+try {
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] export_density.py=$rcDensity" | Out-File -Append -Encoding utf8 $log
+} catch { Write-Host "[RC] 로그 기록 실패(export_density.py): $($_.Exception.Message)" }
 
 $env:S2_ENV_DENS_MAP = (Join-Path $PSScriptRoot "..\..\s2_env_density_map.csv" | Resolve-Path).Path
 
@@ -255,5 +284,9 @@ $env:S2_ENV_DENS_MAP = (Join-Path $PSScriptRoot "..\..\s2_env_density_map.csv" |
 $env:S2_DAY_BUF = "0.01"                                               # ★손절선 = 매도단계 목표가 −1.0%
 
 & C:\Python314\python.exe "s2-trading-web\scripts\export_eod.py" *>> $log  # executions/보유/거래/카운트/후보 적재
-"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] export_eod.py=$LASTEXITCODE" | Out-File -Append -Encoding utf8 $log
+# ★[2026-08-24 · CAND-2026-08-24-520] ★try/catch — ★위 서문 참조(로그만 · rc 불변).
+$rcEod = $LASTEXITCODE
+try {
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] export_eod.py=$rcEod" | Out-File -Append -Encoding utf8 $log
+} catch { Write-Host "[RC] 로그 기록 실패(export_eod.py): $($_.Exception.Message)" }
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  ===== eod done =====" | Out-File -Append -Encoding utf8 $log
