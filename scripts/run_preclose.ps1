@@ -5,3 +5,5 @@ Set-Location $root
 $log = Join-Path $PSScriptRoot "preclose.log"
 "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') preclose =====" | Out-File -Append -Encoding utf8 $log
 & C:\Python314\python.exe "s2-trading-web\scripts\export_preclose.py" *>> $log
+# ★★[2026-08-24 · CAND-2026-08-23-630] rc 를 로그에 남긴다(로그만 더한다 · ps1 rc 불변).
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] export_preclose.py=$LASTEXITCODE" | Out-File -Append -Encoding utf8 $log

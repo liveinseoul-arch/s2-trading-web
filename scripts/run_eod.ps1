@@ -5,6 +5,12 @@ Set-Location $root
 $log = Join-Path $PSScriptRoot "eod.log"
 "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') eod =====" | Out-File -Append -Encoding utf8 $log
 & C:\Python314\python.exe "main.py" --no-gsheets *>> $log               # 당일 EOD 캐시 갱신
+# ★★[2026-08-24 · CAND-2026-08-23-630] 아래 [RC] 줄들은 ★로그만 더한 것이다.
+#   ★★ps1 의 자기 rc 는 안 바뀐다 — 실측(2026-08-24) `powershell -File` 은 `exit` 가 없으면
+#     ★네이티브 종료코드를 ★전파하지 않는다(파이썬 rc=3 → ps1 rc=0 · 로그 줄 유무와 무관).
+#     ★즉 이 잡의 스케줄러 rc 는 ★종전에도 파이썬 실패를 못 봤다 — 로그가 ★유일한 기록이다.
+#   ★되돌리기 — [RC] 로 시작하는 줄만 지운다.
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] main.py=$LASTEXITCODE" | Out-File -Append -Encoding utf8 $log
 $env:S2_TIME_STOP_DAYS = "15"                                          # 기간 손절 3주
 # ★2026-08-09 채택 — MA120 위 진입분만 +3/+6.5/+10. 아래(진입의 약 65%)는 위 3/5/7 그대로.
 #   되돌리기: 이 한 줄만 지우면 원복(게이트 미설정 = 전 포지션 3/5/7).
@@ -148,6 +154,7 @@ $env:S2_CASH_PARK = "153130"                                           # KODEX �
 $env:S2_CASH_PARK_LAG = "2"                                            # ★RP — 예수금 D+2
 $env:S2_CASH_PARK_FEE = "0"                                            # ★RP — 매매비용 0
 & C:\Python314\python.exe "s2-trading-web\scripts\update_park_price.py" *>> $log   # 파킹 가격 CSV 갱신(실패해도 rc=0)
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] update_park_price.py=$LASTEXITCODE" | Out-File -Append -Encoding utf8 $log
 
 # ★★★[2026-08-18 채택] 과밀일 엔벨로프 완화 — 「후보 밀도가 높은 날(=시장 급락)만 문턱을 낮춘다」
 #   15거래일 후보 밀도가 ★확장창 상위 2% 인 날(약 116일 = 전체의 2.7%)만
@@ -199,6 +206,7 @@ $env:S2_ENV_TOPQ = "0.0425"                                            # ★과�
 #   근거: quant_infra/2026-08/S2_ENVMAP_REPAIR_SPEC_2026-08-23.md
 $env:S2_ENV_MAP_TAIL = "1"                                             # ★꼬리 보충(미설정=off)
 & C:\Python314\python.exe "update_env_density.py" *>> $log   # 과밀일 맵 갱신(실패해도 rc=0)
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] update_env_density.py=$LASTEXITCODE" | Out-File -Append -Encoding utf8 $log
 
 # ★★[2026-08-23 신설 · 해달별님 요청] 과밀田 페이지 데이터 적재
 #   ★왜 — 「과밀일 페이지가 ★일별로 갱신되도록 스케줄러에 포함되었으면 한다」.
@@ -212,6 +220,8 @@ $env:S2_ENV_MAP_TAIL = "1"                                             # ★꼬�
 #   ★되돌리기 — 아래 두 줄 삭제(페이지는 빈 격자가 되고 EOD 는 그대로 돈다).
 & C:\Python314\python.exe "s2-trading-web\scripts\export_density.py" *>> $log
 Write-Host "[density] rc=$LASTEXITCODE (★항상 0 계약)"
+# ⚠️★Write-Host 는 ★무인 실행에서 사라진다 — ★같은 값을 로그에도 남긴다.
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] export_density.py=$LASTEXITCODE" | Out-File -Append -Encoding utf8 $log
 
 $env:S2_ENV_DENS_MAP = (Join-Path $PSScriptRoot "..\..\s2_env_density_map.csv" | Resolve-Path).Path
 
@@ -245,3 +255,5 @@ $env:S2_ENV_DENS_MAP = (Join-Path $PSScriptRoot "..\..\s2_env_density_map.csv" |
 $env:S2_DAY_BUF = "0.01"                                               # ★손절선 = 매도단계 목표가 −1.0%
 
 & C:\Python314\python.exe "s2-trading-web\scripts\export_eod.py" *>> $log  # executions/보유/거래/카운트/후보 적재
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] export_eod.py=$LASTEXITCODE" | Out-File -Append -Encoding utf8 $log
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  ===== eod done =====" | Out-File -Append -Encoding utf8 $log
