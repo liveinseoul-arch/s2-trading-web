@@ -45,26 +45,100 @@ from config import Config                         # noqa: E402
 #   무관하게 구조적 위험을 코드로 원천 차단하는 것이 목적.
 # ══════════════════════════════════════════════════════════════════════════════
 # ★★★[2026-08-25 신설 · SPEC_DUAL_WORLD_2026-08-24 §5 · CAND-2026-08-24-660/-661]
-#   S2_CA_DB 운영 가드 — ★병설 세계(연구용 CA 사전 갈아끼우기)가 ★운영으로 새는 것을 막는다.
+#   ★dry-run 산출 격리 가드 — ★두 겹이다.
 #
-#   ⚠️★왜 필요한가 — `S2_CA_DB` 는 `backtest.py` 가 읽는 ★연구 통로다(kr_s2_engine 병설용).
-#   ★실계좌 데몬(`kw_watchloop.py`)이 ★이 스크립트의 `--dry-run` 산출 디렉터리(기본 `_dryrun`)를
-#   ★주문계획으로 그대로 읽는다(`:5363 --plan-csv` · `kw_scale.py:135`) — ★"dry-run 이니 안전"은
-#   ★틀렸다. ★그래서 ★탈출구를 두지 않는다: 예외는 ★--dry-run *이고* ★S2_DRYRUN_DIR 가
-#   ★기본값(`_dryrun`) 밖으로 물리적으로 분리됐을 때만.
-#   ★`_CA_FLOOR` 가드(아래)와 ★같은 이유로 ★`from backtest import` **이전**에 실행한다
-#   (backtest.py 는 모듈 전역이라 import 시점에 env 를 굳힌다 — CLAUDE.md §3 코딩함정).
-if os.environ.get("S2_CA_DB", "").strip():
-    _is_dry = "--dry-run" in sys.argv
+#   ①[좁은 겹 · 08-25 최초 신설] S2_CA_DB(병설 연구 통로)가 새는 것만 막는다.
+#   ②[넓은 겹 · 08-25 확장 · 해달별님 지시 "①-660 의 넓은 위험을 지금 막아줘"]
+#     ★어떤 실험이든 ★비표준 S2_* env 조합으로 `--dry-run` 을 돌리면 ★같은 문제다 —
+#     ★기본 `_dryrun/` 를 덮으면 ★그 디렉터리를 ★나중에 사람이 `kw_watchloop.py
+#     --plan-csv` 로 ★수동으로 읽을 수 있다(★실측 확인 — `--run` 과 `--plan-csv` 는
+#     ★코드로 ★막혀 있지 않다 · `load_plan()` 이 두 모드에 ★공용이다). ★"둘 다 사람이
+#     하는 수동 조작"이라 ★자동 위험은 아니지만 ★사람의 실수 사슬은 ★막을 수 있다.
+#
+#   ★★판별 — ★`run_eod.ps1` 을 ★★정본으로 삼아 ★런타임에 파싱한다(하드코딩 금지 —
+#   ★목록이 바뀌면 ★가드가 저절로 따라온다). ★그 파일이 ★설정한 것과 ★현재 환경이
+#   ★다르면(빠졌거나 · 값이 다르거나 · ★거기 없는 `S2_` 변수가 더 있거나) ★"비표준"이다.
+#   ★★`--end` 가 ★오늘이 아닌 날짜로 명시돼도 ★비표준이다(★`run_eod.ps1` 은 `--end` 를
+#   ★아예 안 쓴다 — ops-recheck 관례가 `--dry-run --no-notify --end <과거일>` 이다).
+#
+#   ⚠️★왜 탈출구가 없는가 — ★`S2_CA_DB` 가드와 같은 이유. ★opt-in env 는 ★재검정마다
+#   설정하는 습관이 되면 ★무력화된다. ★물리적 분리(디렉터리)만 ★조건으로 쓴다.
+#   ★이 블록은 ★반드시 `from backtest import` **이전**에 실행한다(§3 코딩함정과 동일).
+def _canon_s2_env():
+    """★run_eod.ps1 이 실제로 설정하는 S2_* 를 ★런타임에 파싱한다. ★정본은 그 파일이다."""
+    import re
+    ps1 = Path(__file__).resolve().parent / "run_eod.ps1"
+    out = {}
+    try:
+        text = ps1.read_text(encoding="utf-8-sig")
+    except Exception:                                             # noqa: BLE001
+        return out                                                # ★못 읽으면 ★검사를 건너뛴다(가용성 우선)
+    for m in re.finditer(r'^\$env:(S2_\w+)\s*=\s*(.+?)\s*(?:#.*)?$', text, re.M):
+        name, rhs = m.group(1), m.group(2).strip()
+        if rhs == "$null":
+            out[name] = None                                      # ★반드시 ★비어 있어야 한다
+        elif rhs.startswith('"') and rhs.endswith('"'):
+            out[name] = rhs[1:-1]                                 # ★리터럴 — ★값까지 정확히 대조
+        else:
+            out[name] = "__ANY__"                                 # ★계산식(예: S2_ENV_DENS_MAP 경로) — ★존재만 확인
+    return out
+
+
+def _nonstandard_s2_env():
+    """★현재 환경이 ★run_eod.ps1 정본과 ★다른 점을 ★사람이 읽을 문자열로 돌려준다. ★없으면 ''."""
+    canon = _canon_s2_env()
+    if not canon:
+        return ""                                                 # ★run_eod.ps1 을 못 읽었다 — 판단 보류
+    bad = []
+    for name, expected in canon.items():
+        cur = os.environ.get(name)
+        if expected is None:
+            if cur not in (None, ""):
+                bad.append(f"{name}={cur!r}(정본=비움)")
+        elif expected == "__ANY__":
+            if not cur:
+                bad.append(f"{name}=(비어있음)(정본=값 필요)")
+        else:
+            if cur != expected:
+                bad.append(f"{name}={cur!r}(정본={expected!r})")
+    extra = sorted(k for k in os.environ if k.startswith("S2_") and k not in canon
+                   and k not in ("S2_CA_DB", "S2_DRYRUN_DIR"))     # ★이 둘은 ★의도된 연구 게이트
+    if extra:
+        bad.append(f"정본에 없는 S2_* {len(extra)}개: {extra}")
+    return " · ".join(bad)
+
+
+_is_dry = "--dry-run" in sys.argv
+if _is_dry:
     _dr_dir = os.environ.get("S2_DRYRUN_DIR", "").strip()
     _isolated = bool(_dr_dir) and _dr_dir != "_dryrun" and not _dr_dir.rstrip("/\\").endswith("_dryrun")
-    if not (_is_dry and _isolated):
+
+    # ── ①좁은 겹 — S2_CA_DB ──
+    if os.environ.get("S2_CA_DB", "").strip() and not _isolated:
         raise SystemExit(
             "[export_eod] S2_CA_DB 가 설정돼 있다 — ★운영 경로는 병설 세계를 쓰지 않는다. "
             "연구용 CA 세계는 kr_s2_engine.py 로만 검증할 것(SPEC_DUAL_WORLD_2026-08-24 §5). "
             "★예외 없음 — --dry-run 이고 S2_DRYRUN_DIR 가 기본값 밖으로 분리됐을 때만 통과한다.")
-    print(f"  ⚠️[world-guard] S2_CA_DB={os.environ['S2_CA_DB']} · dry-run 격리 디렉터리 "
-          f"확인됨({_dr_dir}) — ★연구 용도로만 통과시킨다. ★Supabase 적재 금지 경로다.")
+
+    # ── ②넓은 겹 — 비표준 S2_* 조합 또는 비표준 --end ──
+    _end_val = None
+    for _i, _a in enumerate(sys.argv):
+        if _a == "--end" and _i + 1 < len(sys.argv):
+            _end_val = sys.argv[_i + 1]
+        elif _a.startswith("--end="):
+            _end_val = _a.split("=", 1)[1]
+    _end_nonstd = bool(_end_val) and _end_val != date.today().isoformat()
+    _env_bad = _nonstandard_s2_env()
+    if (_env_bad or _end_nonstd) and not _isolated:
+        raise SystemExit(
+            "[export_eod] ★비표준 설정으로 --dry-run 을 시도했다 — 기본 _dryrun/ 디렉터리를 "
+            f"덮을 수 없다(CAND-2026-08-24-660 넓은 겹 · 2026-08-25). env 불일치: {_env_bad or '(없음)'}"
+            f"{' · --end=' + _end_val + '(정본은 --end 미사용=오늘)' if _end_nonstd else ''}\n"
+            "  → S2_DRYRUN_DIR 를 기본값(_dryrun) 밖으로 지정해 물리적으로 분리할 것. "
+            "예: $env:S2_DRYRUN_DIR='_dryrun_실험이름'")
+    if os.environ.get("S2_CA_DB", "").strip() or _env_bad or _end_nonstd:
+        print(f"  ⚠️[world-guard] 비표준 설정 감지 · 격리 디렉터리 확인됨({_dr_dir}) — "
+              f"★연구 용도로만 통과시킨다. ★Supabase·kw_watchloop 소비 금지 경로다.")
 
 _CA_FLOOR = "2019-03-11"        # ★CLAUDE.md §2 금지 조합 하한 — opsDB 전용, 하드코딩
 if os.environ.get("S2_CA_ADJUST", "0") == "1":
