@@ -77,6 +77,12 @@ $env:BT_OUTPUT_DIR = "$qb\screen"
 #     off재현 파일해시 일치 · pandas 2.3.3 <-> 3.0.3 교차 읽기 양방향 확인.
 #   ★되돌리기 — 아래 1줄 삭제(기본 0 = 지문 안 남김 = 종전 동작).
 $env:BT_RS_ROW_FP = "1"
+# [2026-08-25 해달별님 승인 「켜기」] RS 오분류 가드 2종 — 17_88_cmp_sf1.py:1668·1725.
+#   BT_DELIST_SPAC_FIX(CAND-2026-08-24-211) — 폐지사유 '스팩소멸합병' 2행을 상폐사전에서 뺀다.
+#   BT_DELIST_SUFFIX_FIX(CAND-2026-08-24-212) — 사전 키 suffix 교정 + 현재거래중 가드(신규차단 0/8 확인).
+#   ★둘 다 off재현 검증 완료(§ RS_UNIVERSE_SUFFIXFIX_ROWGUARD_2026-08-24.md) · 되돌리기 = 아래 2줄 삭제.
+$env:BT_DELIST_SPAC_FIX = "1"
+$env:BT_DELIST_SUFFIX_FIX = "1"
 # [2026-08-16 랙 수리] KR 일봉 캐시를 연장본(live)으로 지정 — 17_88_cmp_sf1.py:106 이 이 env 를
 #   읽는다(기본값 _bt_daily_cache_kr.pkl · 07-24 이후 동결). live 는 금 17시대 S2_rs_kr_jp 의
 #   신설 단계 [0](append_kr_daily_cache.py)이 매주 연장한다.

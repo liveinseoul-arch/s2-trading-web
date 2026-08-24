@@ -41,6 +41,12 @@ $env:BT_OUTPUT_DIR = "$qb\screen"
 #     off재현 파일해시 일치 · pandas 2.3.3 <-> 3.0.3 교차 읽기 양방향 확인.
 #   ★되돌리기 — 아래 1줄 삭제(기본 0 = 지문 안 남김 = 종전 동작).
 $env:BT_RS_ROW_FP = "1"
+# [2026-08-25 해달별님 승인 「켜기」] RS 오분류 가드 2종 — 17_88_cmp_sf1.py:1668·1725.
+#   BT_DELIST_SPAC_FIX(CAND-2026-08-24-211) — 폐지사유 '스팩소멸합병' 2행을 상폐사전에서 뺀다.
+#   BT_DELIST_SUFFIX_FIX(CAND-2026-08-24-212) — 사전 키 suffix 교정 + 현재거래중 가드(신규차단 0/8 확인).
+#   ★둘 다 off재현 검증 완료(§ RS_UNIVERSE_SUFFIXFIX_ROWGUARD_2026-08-24.md) · 되돌리기 = 아래 2줄 삭제.
+$env:BT_DELIST_SPAC_FIX = "1"
+$env:BT_DELIST_SUFFIX_FIX = "1"
 # 절대경로 사용 — Start-Job 은 새 세션에서 시작되어 부모의 CWD 를 상속하지 않는다.
 # (상대경로였을 때 JP 잡이 ~\Documents 기준으로 풀려 매번 즉시 실패했음: 2026-07-17 확인)
 $silent = Join-Path $root "s2-trading-web\scripts\silent_run.py"
