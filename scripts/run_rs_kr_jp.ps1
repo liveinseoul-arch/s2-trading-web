@@ -29,6 +29,18 @@ Set-Location $root
 $log = Join-Path $PSScriptRoot "rs_kr_jp.log"
 $qb  = "C:\quantBacktest"
 $env:BT_OUTPUT_DIR = "$qb\screen"
+# ★★[2026-08-24 · CAND-2026-08-24-221 · 해달별님 승인 「(가) 켠다」] RS 임계값 표 ★행 지문.
+#   ★무엇을 — 표에 새 주차를 넣을 때 ★그 행이 ★어느 밑판(_kr_weekly_cache.pkl)으로 ·
+#     ★어느 라이터로 계산됐는지를 `DataFrame.attrs['_row_fp']` 에 남긴다.
+#   ★왜 — 이 pkl 은 ★주차별 증분 누적본이라 행마다 밑판이 다른데, 지금은 ★저장 행의
+#     50.5%만 잔존 백업으로 역산되고 ★49.5%는 영구 불명이다.
+#   ⚠️★★라이터가 ★둘이다 — 금 `14_RS_KR_pykrx.py`(태그 `k14` · 상폐 ★포함) ·
+#     토 `17_88_cmp_sf1.py`(태그 `s17` · 상폐 ★제외). ★밑판 파일이 같아 지문 값만으로는
+#     구별이 안 되므로 ★태그를 붙였다(CAND-2026-08-22-110 이중 라이터·이중 모집단).
+#   ★계산 무변경 — `.values` 가 attrs 유무와 완전 동일함을 실측 확인(np.array_equal) ·
+#     off재현 파일해시 일치 · pandas 2.3.3 <-> 3.0.3 교차 읽기 양방향 확인.
+#   ★되돌리기 — 아래 1줄 삭제(기본 0 = 지문 안 남김 = 종전 동작).
+$env:BT_RS_ROW_FP = "1"
 # 절대경로 사용 — Start-Job 은 새 세션에서 시작되어 부모의 CWD 를 상속하지 않는다.
 # (상대경로였을 때 JP 잡이 ~\Documents 기준으로 풀려 매번 즉시 실패했음: 2026-07-17 확인)
 $silent = Join-Path $root "s2-trading-web\scripts\silent_run.py"
