@@ -61,6 +61,14 @@ if CA_ADJUST:
     print(f"[CA-ops] S2_CA_ADJUST=1 · S2_CA_FROM={CA_FROM or '(미설정→위 가드가 주입했어야 함)'} · "
           f"사건 {len(CA_MAP):,}건 (채널① 보유 리스케일만 — 진입차단 채널②는 이식 안 함)")
 
+# ★★[2026-08-24 · CAND-2026-08-22-19 관문] CA 리스케일 ★발동 카운터.
+#   ⚠️★왜 필요한가 — 게이트를 켰는데 산출이 비트 동일하면 ★두 가지가 구별되지 않는다:
+#     ①「보유가 CA 를 관통하지 않아 표적이 정말 0건」  ②「코드가 안 돌아 0건」.
+#   ★CLAUDE.md §4-1b(2026-08-24 신설) — ★측정 도구가 없으면 「효과 없음」이 아니라 「모른다」다.
+#   ★§4-2d 관문 2 와 같은 계열(사문 + 발동 카운터).
+#   ★비용은 dict 하나 — 게이트 off 면 아무도 안 건드린다.
+CA_N = {"hit": 0, "rescale": 0, "delist": 0, "seen_pos_day": 0}
+
 # ── 운용안 상수 (s2_candidates 와 동일) ──────────────────────────────
 MUSEOB = 0.80   # 음봉 스파이크 시 사이즈 × 0.8
 PROX = 0.05                      # 예비후보 근접 허용폭(지지선 위 5%까지 포함)
@@ -898,8 +906,10 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             #    그날 op/hi/lo/cl 을 꺼내기 **전에** 실행해 어제 스케일 필드와 오늘 새 스케일
             #    가격을 같은 날 섞어 비교하는 사고를 원천 차단한다 — 모체와 동일한 배치.)
             if CA_ADJUST:
+                CA_N["seen_pos_day"] += 1                 # ★분모 — 보유 x 거래일 (표적 탐색 모집단)
                 _ev = CA_MAP.get((tk, str(d)))            # d 는 datetime.date → str(d) = "YYYY-MM-DD"
                 if _ev is not None:
+                    CA_N["hit"] += 1                      # ★★실제 발동 — 보유 중에 CA 사건일을 만났다
                     _sr, _k = _ev
                     _nq = int(round(p["qty"] * _sr))
                     if _nq < 1:
@@ -914,9 +924,11 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                         leg(p, d, "ca_delist", None, _px, _frac, nav_today)
                         _net = _frac * _px * SELL_MULT
                         cash += _net; p["proc"] += _net; p["qty"] = 0
+                        CA_N["delist"] += 1
                         close_trade(p, d, "기업행위 단주소멸")
                         del positions[tk]; closed.add(tk); last_exit[tk] = d
                         continue
+                    CA_N["rescale"] += 1
                     p["total_qty"] = max(1, int(round(p["total_qty"] * _sr)))
                     p["qty"] = _nq
                     p["avg_buy"] *= _k; p["last_buy"] *= _k; p["min_low"] *= _k
@@ -1642,6 +1654,15 @@ def main():
             print("  ⚠️★S2_PHANTOM_RC=1 — 종료코드 9 로 끕난다(감사 경로 전용).")
             import atexit
             atexit.register(lambda: os._exit(9))
+
+    # ★★CA 리스케일 발동 카운터 (§4-2d 관문 2 · CAND-2026-08-22-19) — 게이트 on 일 때만 출력
+    #   ⚠️★hit = 0 이면 「효과 없음」이 아니라 ★먼저 「표적이 정말 없는가」를 묻는다.
+    #     분모(보유x거래일)가 함께 나오므로 「코드가 안 돌았다」와 구별된다 —
+    #     ★분모가 0 이면 루프 자체를 안 탄 것이고, 분모가 크고 hit 이 0 이면 진짜 표적 0 이다.
+    if CA_ADJUST:
+        print(f"[CA-ops] ★발동 {CA_N['hit']}건 "
+              f"(리스케일 {CA_N['rescale']} · 단주소멸 {CA_N['delist']}) / "
+              f"탐색 모집단 {CA_N['seen_pos_day']:,} 보유x거래일 · CA사건 사전 {len(CA_MAP):,}건")
 
     # ★손절선 버퍼 발동 카운터 (§4-1b 사문 관문 #2) — DAY_BUF > 0 일 때만 출력
     if DAY_BUF > 0:
