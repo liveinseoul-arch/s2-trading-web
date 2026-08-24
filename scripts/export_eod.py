@@ -1431,6 +1431,65 @@ def main():
               f"{(SLIP_N['disc'] / SLIP_N['amt'] * 100) if SLIP_N['amt'] > 0 else 0:.3f}%) · "
               f"최대 추정참여율 {SLIP_N['est_max'] * 100:.3f}% · 최대 마진 {SLIP_N['m_max'] * 100:.3f}%")
 
+    # ── ★★[2026-08-24 신설 · CAND-2026-08-24-2] ★용량 지표 — 체결 현실성의 1차 판정자
+    #   [왜] §4-1b 면제 2(체결 현실성) 후보의 성공 기준은 ★「CAGR 이 오른다」가 아니라
+    #     ★「백테스트 수치가 ★실제로 달성 가능해진다」다. ★그 자가 없어서
+    #     `CAND-2026-08-23-125`(T1)가 ★목적을 못 재고 ★잘못 기각됐다(해달별님이 잡았다).
+    #     ★S2 에도 같은 벽에 막힌 후보가 셋 — `-23-126` · `-19-9` · `-19-18`.
+    #   [정의] 한 거래의 ★누적 매수액(`max_invested`) ÷ ★진입일 ★med20 거래대금
+    #     = ★「이 거래에 넣은 돈이 ★진입일 그 종목 ★하루 거래대금의 몇 %인가」.
+    #   ⚠️★★T1 은 `med20 거래량 x 진입가`로 ★추정한다(그 DB 에 거래대금 열이 없다).
+    #     ★★S2 는 `trading_value` 가 ★직접 있어 ★추정이 필요 없다 — ★분모 정의가 ★다르다.
+    #     ★로그에 `(tv)` 를 붙여 구분한다. ⚠️★두 시스템의 `cum_max` 를 ★나란히 비교하지 말 것.
+    #   [게이트] `S2_CAPACITY_LOG=1` — ★미설정 = off = ★비트 동일(계산 자체를 안 한다).
+    #   [계약] rc 를 안 바꾸고 예외를 밖으로 안 내보낸다. ★진입 집합을 안 건드린다.
+    #     ⚠️★`rc` 를 신호로 쓰지 않는다 — `run_eod.ps1:247` 이 `$LASTEXITCODE` 를 안 잡는다.
+    #   ⚠️★`shift(1)` 이 핵심 — 당일 거래대금을 쓰면 ★룩어헤드다.
+    if os.environ.get("S2_CAPACITY_LOG", "").strip() in ("1", "on", "true"):
+        try:
+            _ct = pd.DataFrame(data["trades"])
+            _ct = _ct[_ct["status"] == "closed"] if not _ct.empty else _ct
+            if len(_ct) and "trading_value" in px.columns:
+                _cq = px[["ticker", "date", "trading_value"]].copy()
+                _cq["date"] = _cq["date"].astype(str).str[:10]
+                _cq["tv20"] = (_cq.groupby("ticker", sort=False)["trading_value"]
+                               .transform(lambda s: s.shift(1)
+                                          .rolling(20, min_periods=20).median()))
+                _tv = dict(zip(_cq["ticker"].astype(str) + "|" + _cq["date"], _cq["tv20"]))
+                _rr = []
+                for _t in _ct.itertuples(index=False):
+                    _d = _tv.get("%s|%s" % (_t.ticker, str(_t.entry_date)[:10]))
+                    if _d is None or not (_d > 0):
+                        continue
+                    _rr.append((float(_t.max_invested) / float(_d) * 100.0, float(_d)))
+                if _rr:
+                    # ⚠️★★[2026-08-24 보강] ★최댓값만 찍으면 ★오독한다 —
+                    #   ★후행 `med20` 분모는 ★★유동성 국면이 ★끊기는 지점에서 ★깨진다.
+                    #   ★실측 — `232830`(2023-06-29)은 ★진입 전 20일 med20 ★**127만원**이다가
+                    #   ★진입일에 ★**6,595억**으로 폭발했다(신규·재상장형).
+                    #   ★★그 한 건이 최댓값을 4567% 로 만들고
+                    #   ★★**나머지 134건의 진짜 분포(최대 1.94%)를 통째 가린다.**
+                    #   ★따라서 p99 · 분모 미달 건수를 함께 찍어 자가진단하게 한다.
+                    _s = pd.Series([x for x, _ in _rr])
+                    _lo = sum(1 for _, _d2 in _rr if _d2 < 1e8)
+                    _hi = pd.Series([x for x, _d2 in _rr if _d2 >= 1e8])
+                    print("  [GUARD:CAPACITY] ★cum_max %.3f%% (tv) · p99 %.3f%% · "
+                          ">7.5%% %d · >10%% %d · 중앙 %.3f%% · "
+                          "거래 %d/%d"
+                          % (_s.max(), _s.quantile(0.99), int((_s > 7.5).sum()),
+                             int((_s > 10).sum()), _s.median(), len(_s), len(_ct)))
+                    print("  [GUARD:CAPACITY] ★분모<1억 %d건 제외 "
+                          "★최대 %s · >7.5%% %s"
+                          % (_lo, ("%.3f%%" % _hi.max()) if len(_hi) else "-",
+                             ("%d" % int((_hi > 7.5).sum())) if len(_hi) else "-"))
+                else:
+                    print("  [GUARD:CAPACITY] SKIP - med20 \ubd84\ubaa8 0\uac74")
+            else:
+                print("  [GUARD:CAPACITY] SKIP - closed %d \u00b7 tv\uc5f4 %s"
+                      % (len(_ct), "trading_value" in px.columns))
+        except Exception as _ce:                                 # noqa: BLE001
+            print("  [GUARD:CAPACITY] SKIP %s: %s" % (type(_ce).__name__, _ce))
+
     if args.dry_run:
         dry_run_dump(data, base_cap)
     else:
