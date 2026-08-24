@@ -27,8 +27,39 @@ ROOT = Path(__file__).resolve().parents[2]      # .../s2_method
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # scripts/ (notify)
 from config import Config                         # noqa: E402
-from backtest import _prepare                     # noqa: E402
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ★★★S2_CA_ADJUST(운영 이식) — 기업행위(CA) 보유 리스케일 채널①. 기본 off.
+#
+#   사양서: quant_infra/2026-08/SPEC_S2_OPS_CA_TRANSPLANT_2026-08-24.md
+#   `backtest.py`의 CA_MAP 로더(:176-206)·리스케일 로직(:442-474, 채널①)을 그대로
+#   재사용한다 — 새 로더 없음, `backtest.py` 무변경(import만). 진입차단(ca_block,
+#   채널②)은 이 이식의 범위 밖(CAND-2026-08-22-21 별건).
+#
+#   ⚠️★S2_CA_FROM 하한 강제 — opsDB 는 2019-03-08 이전이 이미 수정주가라
+#   S2_CA_ADJUST=1 을 그 이전까지 적용하면 이중 보정된다(CLAUDE.md §2 금지 조합).
+#   `backtest.py` 는 import 시점에 S2_CA_FROM 을 읽어 CA_MAP 을 굳히므로, 이 가드는
+#   반드시 `from backtest import ...`(아래) **이전**에 실행돼야 한다.
+#   ★하드 플로어다 — 미설정이면 안전 기본값을 자동 주입하고, 그보다 이른 값을 명시하면
+#   자동 보정하지 않고 즉시 죽는다(SystemExit). §3-4 실측(현재 표본 이중보정 미발현)과
+#   무관하게 구조적 위험을 코드로 원천 차단하는 것이 목적.
+_CA_FLOOR = "2019-03-11"        # ★CLAUDE.md §2 금지 조합 하한 — opsDB 전용, 하드코딩
+if os.environ.get("S2_CA_ADJUST", "0") == "1":
+    _ca_from_env = os.environ.get("S2_CA_FROM", "").strip()
+    if not _ca_from_env:
+        os.environ["S2_CA_FROM"] = _CA_FLOOR         # 미설정이면 안전 기본값 자동 주입
+    elif _ca_from_env < _CA_FLOOR:
+        raise SystemExit(
+            f"[export_eod] S2_CA_ADJUST=1 인데 S2_CA_FROM={_ca_from_env} 이 {_CA_FLOOR} 보다 이르다 — "
+            f"opsDB 2019-03-08 이전 이중보정 금지 조합(CLAUDE.md §2). "
+            f"S2_CA_FROM 을 {_CA_FLOOR} 이상으로 설정할 것.")
+
+from backtest import _prepare, CA_ADJUST, CA_FROM, CA_MAP  # noqa: E402
 from notify import telegram_send                  # noqa: E402
+
+if CA_ADJUST:
+    print(f"[CA-ops] S2_CA_ADJUST=1 · S2_CA_FROM={CA_FROM or '(미설정→위 가드가 주입했어야 함)'} · "
+          f"사건 {len(CA_MAP):,}건 (채널① 보유 리스케일만 — 진입차단 채널②는 이식 안 함)")
 
 # ── 운용안 상수 (s2_candidates 와 동일) ──────────────────────────────
 MUSEOB = 0.80   # 음봉 스파이크 시 사이즈 × 0.8
@@ -427,7 +458,19 @@ VB_SKIP = {"stop": 0, "add": 0, "newlow": 0, "minlow": 0}   # 가드가 실제�
 #     15건(78.9%)이 **갭하락**이고 그것은 CLAUDE.md §8-1 규약 A 가 의도한 보수 기록이다.
 #
 #   S2_PHANTOM_GUARD = off(기본) | warn | block
-#   S2_PHANTOM_MAXR  = 1.30   (배수 문턱. 실측 무변화 밴드 1.25 - 4.00)
+#   S2_PHANTOM_MAXR  = 3.00   (배수 문턱. ★2026-08-24 재산정 · CAND-2026-08-24-201)
+#     ⚠️★왜 1.30 이 아닌가 — 하한가(-30%) 다음날 트리거는 제도가 만드는 하한으로도
+#       ratio_ref = ADD_DROP 잔존율(0.93) ÷ 0.70 = **1.3286** 이 되어 ★기본값 1.30 을
+#       이미 넘는다(조율 파라미터가 아니라 산술이다). k 일 연속 하한가면
+#       ratio_ref(k) = 0.93 / 0.70^k — 1일 1.3286 · 2일 1.8980 · 3일 2.7114 ·
+#       4일 3.8734. ★실측 유령 사건(086520 5:1 분할)의 ratio_ref 는 4.0056·4.1397 로
+#       4일 연속 하한가보다도 높다. ★재계량(2026-08-24 · results/
+#       s2_ghostfill_target_2026-08-24_v2.csv 를 MAXR 스윕) — 결정창 표본에서 MAXR 을
+#       1.25 – 4.0055 어디에 두어도 검출 2건(둘 다 진짜 유령)·정상(봉 안) 오탐 0건으로
+#       ★동일하다(무변화 밴드). 그중 3.00 은 3일 연속 하한가(2.7114)를 10.6% 여유로
+#       덮고 실측 유령 사건(4.0056)보다는 25.1% 낮다 — 4일 이상 연속 하한가는 그 자체가
+#       실측 유령 사건과 구별이 어려워지므로(3.8734 vs 4.0056) 더 올리지 않았다.
+#       ⚠️단 이 문턱은 검사 A(스케일) 전용이다 — 검사 B(정지 재개)는 ERA 게이트로 별도 관리.
 #   S2_PHANTOM_HALT  = 1      (직전 정지봉 연속일 문턱. 0 이면 검사 B off)
 #   S2_PHANTOM_RC    = 0      (1 이면 발동 시 종료코드 9. ⚠️기본 0 — EOD 체인을 세우지 않는다)
 #   S2_PHANTOM_ERA   = ""     (빈 값 = 전 구간. 날짜를 넣으면 ★검사 B 를 그 날부터만 건다)
@@ -435,18 +478,28 @@ VB_SKIP = {"stop": 0, "add": 0, "newlow": 0, "minlow": 0}   # 가드가 실제�
 #       지표다. 그런데 이 DB 는 ★2019-03-08 이전이 ★이미 수정주가라(CLAUDE.md §3 무결성 1)
 #       그 구간의 재개일에는 ★스케일이 안 튄다. 실측 — 018290 2016-01-08(13일 정지 후 감자·
 #       병합 재개)에서 트리거 5,130 이 그날 봉 [4,707 – 7,166] ★안에 있었는데 검사 B 가 막아
-#       ★CAGR 13.82 → 13.41%(−0.41%p)를 냈다. ★원주가 구간(2019-03-11 이후)에서는 같은
-#       상황이 ★진짜 유령이다. 즉 이 경계는 ★조율 파라미터가 아니라 ★데이터 출처 사실이다.
+#       ★CAGR 13.82 → 13.41%(−0.41%p)를 냈다.
+#       ⚠️★[2026-08-24 정정 · CAND-2026-08-24-200] 종전 이 자리의 「즉 이 경계는 조율
+#       파라미터가 아니라 데이터 출처 사실이다」는 ★틀렸다 — opsDB 는 2019-03-11 ★이전도
+#       원주가 67.8%(362/534)라 그 구간에서도 스케일이 튄다. 018290 은 수정주가 쪽
+#       32.2%(172건)에 우연히 속한 ★n=1 사례다. ★즉 이 경계는 ★「이 창에서 오탐 비용을
+#       0 으로 만드는 사후 축」이지 「원리적 근거」가 아니다 — quant_infra/2026-08/
+#       S2_GHOSTFILL_GATE_2026-08-24.md §5-c.
 PH_MODE = os.environ.get("S2_PHANTOM_GUARD", "off").strip().lower()
-PH_MAXR = float(os.environ.get("S2_PHANTOM_MAXR", "1.30"))
+PH_MAXR = float(os.environ.get("S2_PHANTOM_MAXR", "3.00"))
 PH_HALT = int(os.environ.get("S2_PHANTOM_HALT", "1"))
 PH_ERA = os.environ.get("S2_PHANTOM_ERA", "").strip()
 PH_RC = os.environ.get("S2_PHANTOM_RC", "0") == "1"
 PH_N = {"plan_scale": 0, "plan_halt": 0, "fill_scale": 0, "fill_halt": 0}
+# ★CAND-2026-08-24-202 — 「검사 통과」(위 PH_N)와 「실제 차단」을 분리해서 센다.
+#   ⚠️검사 B(정지 재개)는 정지 기간 내내 매일 발동하지만 그 날들은 대개 무효봉이라
+#   VALID_BAR 가 이미 체결을 막고 있다 — 판정을 실제로 바꾸는 것은 재개 첫날뿐이다.
+#   PH_N 만 읽으면 「발동 45건」을 위험 규모로 오인한다(실측 · 실제 차단 1건 = 2.2%).
+PH_ACTUAL = {"plan_scale": 0, "plan_halt": 0, "fill_scale": 0, "fill_halt": 0}
 PH_LOG = []          # (site, d, ticker, reason, trigger, ref, value)
 
 
-def _phantom(p, trig, d, site, prev=False):
+def _phantom(p, trig, d, site, prev=False, would_fire=False):
     """주문 시점 정보만으로 유령 트리거를 판정한다. -> (막을까, 사유, 값)
 
     ⚠️당일 봉(o/h/l/c)을 **보지 않는다**. 다음날 주문이라 알 수 없기 때문이다.
@@ -456,6 +509,12 @@ def _phantom(p, trig, d, site, prev=False):
                기준값(`ph_ref`·`ph_halt`)만 본다. ⚠️`ref_close`/`halt_n` 은 오늘 봉으로
                이미 갱신돼 있어 그것을 쓰면 **당일 종가를 미리 보는 것**이 된다.
     prev=False 주문 측(build_order_plan) — 마지막 처리일까지의 값이 곧 「어제」다.
+
+    would_fire ★CAND-2026-08-24-202 — 이 가드가 없었다면 이 주문/체결이 실제로
+               났을까를 ★호출부가 판단해서 넘긴다(bar_ok·lo<=at·기존 skip 여부는
+               이 함수가 모른다). PH_MODE=="block" 이고 이 값이 True 일 때만
+               PH_ACTUAL 을 올린다 — 「검사를 통과했다」(PH_N)와 「실제로 무언가를
+               막았다」(PH_ACTUAL)를 가른다.
     """
     if PH_MODE == "off" or not trig or trig <= 0:
         return (False, "", 0.0)
@@ -467,10 +526,14 @@ def _phantom(p, trig, d, site, prev=False):
         ref = float(p.get("ref_close") or 0.0)
     if PH_HALT and n_halt >= PH_HALT and (not PH_ERA or str(d) >= PH_ERA):   # 검사 B - 정지 재개
         PH_N[site + "_halt"] += 1
+        if would_fire and PH_MODE == "block":
+            PH_ACTUAL[site + "_halt"] += 1
         PH_LOG.append((site, str(d), p.get("tk"), "halt", trig, None, float(n_halt)))
         return (PH_MODE == "block", "halt", float(n_halt))
     if ref > 0 and trig / ref > PH_MAXR:                   # 검사 A - 스케일 정합
         PH_N[site + "_scale"] += 1
+        if would_fire and PH_MODE == "block":
+            PH_ACTUAL[site + "_scale"] += 1
         PH_LOG.append((site, str(d), p.get("tk"), "scale", trig, ref, trig / ref))
         return (PH_MODE == "block", "scale", trig / ref)
     return (False, "", 0.0)
@@ -828,6 +891,37 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             if tk not in day:
                 continue
             p = positions[tk]; r = day[tk]
+            # ★기업행위(CA) 보유 리스케일 — S2_CA_ADJUST=1 일 때만. off 면 CA_ADJUST=False 라
+            #   이 블록이 O(1) 조건 평가만 하고 통째로 스킵돼 off 재현이 비트 동일하다.
+            #   (SPEC_S2_OPS_CA_TRANSPLANT_2026-08-24 §5-2 — backtest.py:442-474 채널①의 이식.
+            #    채널②(ca_block 진입차단)는 이식하지 않는다 — CAND-2026-08-22-21 별건.
+            #    그날 op/hi/lo/cl 을 꺼내기 **전에** 실행해 어제 스케일 필드와 오늘 새 스케일
+            #    가격을 같은 날 섞어 비교하는 사고를 원천 차단한다 — 모체와 동일한 배치.)
+            if CA_ADJUST:
+                _ev = CA_MAP.get((tk, str(d)))            # d 는 datetime.date → str(d) = "YYYY-MM-DD"
+                if _ev is not None:
+                    _sr, _k = _ev
+                    _nq = int(round(p["qty"] * _sr))
+                    if _nq < 1:
+                        # 단주 소멸 — 전일 종가(직전 루프까지 갱신된 last_close) x k x 잔여분을
+                        #   현금 정산하고 포지션을 종료한다(backtest.py 와 동일한 처리).
+                        # ★[2026-08-24 검토 수리] ex()/leg() 호출 추가 — 다른 모든 청산 경로(stop·newlow_stop·time_stop)와 같은 패턴을 따른다.
+                        #   누락 시 이 분기가 발동한 거래는 executions.csv/legs.csv 에서 통째 사라진다
+                        #   (trades.csv proceeds/pnl 합계는 맞아 NAV·CAGR 은 안 틀리지만 개별 거래 감사가 불가능해진다).
+                        _frac = p["qty"] * _sr
+                        _px = p["last_close"] * _k
+                        ex(d, p, "ca_delist", None, _px, _frac, nav_today)
+                        leg(p, d, "ca_delist", None, _px, _frac, nav_today)
+                        _net = _frac * _px * SELL_MULT
+                        cash += _net; p["proc"] += _net; p["qty"] = 0
+                        close_trade(p, d, "기업행위 단주소멸")
+                        del positions[tk]; closed.add(tk); last_exit[tk] = d
+                        continue
+                    p["total_qty"] = max(1, int(round(p["total_qty"] * _sr)))
+                    p["qty"] = _nq
+                    p["avg_buy"] *= _k; p["last_buy"] *= _k; p["min_low"] *= _k
+                    if p["stop"] is not None:
+                        p["stop"] *= _k
             op, hi, lo, cl = float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"])
             p["last_close"] = cl
             # ★유효봉 판정 — 거래정지·무거래 봉(o/h/l = 0)을 저가 기반 로직에서 배제
@@ -887,7 +981,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 #   ★`prev=True` — 오늘 체결되는 이 주문은 **어제 저녁 계획**의 산물이므로
                 #     어제까지의 기준값(`ph_ref`·`ph_halt`)으로 판정한다. 그래서 정지 재개일에는
                 #     검사 B 가 여기서도 산다(어제가 정지봉이었다는 사실은 오늘 아침에 안다).
-                _ph_block, _ph_why, _ph_v = _phantom(p, at, d, "fill", prev=True)
+                _ph_block, _ph_why, _ph_v = _phantom(
+                    p, at, d, "fill", prev=True,
+                    would_fire=(not _skip and bar_ok and lo <= at))   # §CAND-2026-08-24-202
                 if _ph_block:
                     _skip = True
                 if not _skip and not bar_ok and lo <= at:
@@ -1157,6 +1253,36 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 rs_positions=rs_rows)   # ★10번째. 9개 CSV·Supabase 스키마는 불변이다
 
 
+# ── ★daily_order_plan 일별 아카이브 (CAND-2026-08-24-203 · 기본 off) ──────────
+#   [왜] Supabase daily_order_plan 은 매 런 전삭제 후 재적재라(del_filter) 사후 감사가
+#     안 되고, dry-run CSV 도 outdir 안에 ★마지막 날 한 줄뿐이다(build_order_plan 이
+#     last_d 에 1회만 돈다). 그래서 이번 라운드는 plan-time 모집단을 executions.csv 에서
+#     근사 복원해야 했다(archive/_2026-08-24_ghostfill_target_size.py · quant_infra/
+#     2026-08/S2_GHOSTFILL_GATE_2026-08-24.md §4). 상시 아카이브가 있으면 그 근사가
+#     필요 없어진다.
+#   S2_PLAN_ARCHIVE_DIR = ""(기본 off) — 비우면 종전 동작(★새 파일을 하나도 안 만든다).
+#     채우면 그 디렉터리 아래 "{기준일}.csv" 로 그날의 daily_order_plan 을 남긴다.
+#     ⚠️★날짜별 새 파일이다 — 기존 파일을 덮어쓰지 않는다(CLAUDE.md §0-4). 스케줄러가
+#     매일 도니 하루에 한 파일씩 쌓인다("스케줄러 로테이션") — 지우거나 합치는 것은
+#     별도 결정이다.
+#   ⚠️★운영(run_eod.ps1) 점화는 §4-6 「새 파일 신설」 승인 대상이다 — 이 라운드는
+#     코드만 넣고 기본 off 로 둔다(해달별님 결정 대기).
+PLAN_ARCHIVE_DIR = os.environ.get("S2_PLAN_ARCHIVE_DIR", "").strip()
+
+
+def archive_order_plan(plan, d, outdir_str=None):
+    """★plan-time 모집단을 날짜별 CSV 로 남긴다. outdir_str(또는 S2_PLAN_ARCHIVE_DIR)이
+    비어 있거나 plan 이 비면 아무 것도 안 한다 — ★기본 동작은 종전과 비트 동일이다."""
+    outdir_str = (PLAN_ARCHIVE_DIR if outdir_str is None else outdir_str).strip()
+    if not outdir_str or not plan:
+        return
+    outdir = Path(outdir_str)
+    outdir.mkdir(parents=True, exist_ok=True)
+    dest = outdir / f"{d}.csv"
+    pd.DataFrame(plan).to_csv(dest, index=False, encoding="utf-8-sig")
+    print(f"  ★[plan_archive] {dest} ({len(plan)}행)")
+
+
 def build_order_plan(positions, d, nav, park_amount=None):
     """최신일 보유 포지션 → 다음 거래일 세팅할 감시주문 세트.
 
@@ -1193,7 +1319,8 @@ def build_order_plan(positions, d, nav, park_amount=None):
             #   block: 그 감시주문 줄을 아예 내지 않는다(거부).  warn: note 에 표시만 한다.
             #   ⚠️★클램프(가격을 바꿔서 낸다)는 채택하지 않는다 — 올바른 신 스케일 가격을
             #     주문 시점에 알 방법이 없고, 바꾼 가격은 백테스트가 검증한 규칙이 아니다.
-            _ph_block, _ph_why, _ph_v = _phantom(p, at, d, "plan")
+            _ph_block, _ph_why, _ph_v = _phantom(
+                p, at, d, "plan", would_fire=(not skip_conflict))   # §CAND-2026-08-24-202
             if _ph_block:
                 skip_conflict = True
             if not skip_conflict:
@@ -1501,10 +1628,13 @@ def main():
     # ★유령 체결 가드 발동 카운터 (§4-2d #2 — 「0건이라 효과 없음」과 「코드가 안 돌아 0건」을 가른다)
     if PH_MODE != "off":
         _pt = sum(PH_N.values())
+        _pa = sum(PH_ACTUAL.values())   # ★CAND-2026-08-24-202 — 「검사통과」와 「실제차단」분리
         print(f"[GUARD:PHANTOM] MODE={PH_MODE} · MAXR={PH_MAXR:g} · HALT={PH_HALT} · "
               f"ERA={PH_ERA or '전구간'} · "
-              f"발동 {_pt}건 — 주문측 스케일 {PH_N['plan_scale']} / 정지 {PH_N['plan_halt']} · "
-              f"원장측 스케일 {PH_N['fill_scale']} / 정지 {PH_N['fill_halt']}")
+              f"검사통과 {_pt}건(주문측 스케일 {PH_N['plan_scale']} / 정지 {PH_N['plan_halt']} · "
+              f"원장측 스케일 {PH_N['fill_scale']} / 정지 {PH_N['fill_halt']}) · "
+              f"★실제차단 {_pa}건(주문측 스케일 {PH_ACTUAL['plan_scale']} / 정지 {PH_ACTUAL['plan_halt']} · "
+              f"원장측 스케일 {PH_ACTUAL['fill_scale']} / 정지 {PH_ACTUAL['fill_halt']})")
         for _r in PH_LOG[:20]:
             _ref = "-" if _r[5] is None else format(_r[5], ",.0f")
             print(f"  ★{_r[0]} {_r[1]} {_r[2]} {_r[3]} trigger={_r[4]:,} ref={_ref} 값={_r[6]:.4f}")
@@ -1594,6 +1724,10 @@ def main():
                       % (len(_ct), "trading_value" in px.columns))
         except Exception as _ce:                                 # noqa: BLE001
             print("  [GUARD:CAPACITY] SKIP %s: %s" % (type(_ce).__name__, _ce))
+
+    # ★CAND-2026-08-24-203 — daily_order_plan 일별 아카이브(기본 off · env 로 켠다)
+    #   ⚠️dry-run·live 양쪽에 적용 — Supabase 전삭제-재적재로 사라지는 이력을 로컬에 남긴다.
+    archive_order_plan(data["daily_order_plan"], data["last_date"])
 
     if args.dry_run:
         dry_run_dump(data, base_cap)
