@@ -24,3 +24,7 @@ $rcPre = $LASTEXITCODE
 try {
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] export_preclose.py=$rcPre" | Out-File -Append -Encoding utf8 $log
 } catch { Write-Host "[RC] 로그 기록 실패(export_preclose.py): $($_.Exception.Message)" }
+# ★[2026-08-24 · 검토가 잡은 회귀 수리] ★맨몸 카나리아 — 위 [RC] 가 try/catch 안이라
+#   ★로그 쓰기 실패를 ★삼킬 수 있다(rc 탐지 채널 1 → 0). ★이 줄로 ★그 채널을 되살린다
+#   (run_eod.ps1 의 "===== eod done =====" 과 같은 설계 · 의도적으로 감싸지 않는다).
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  ===== preclose done =====" | Out-File -Append -Encoding utf8 $log
