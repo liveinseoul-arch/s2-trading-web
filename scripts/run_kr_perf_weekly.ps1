@@ -141,12 +141,18 @@ if ($LASTEXITCODE -ne 0) {
 }
 # [2026-08-16 랙 수리] 끝
 
+# [2026-08-24 · CAND-2026-08-24-305] git add/commit/push 의 rc 를 로그로 남긴다 — 로그만 더한다
+#   (f76a713 「스케줄러 ps1 rc 눈멂」 수리와 같은 계열). ps1 자신의 exit 문·제어흐름은 바꾸지 않는다.
+#   되돌리기: 아래 3개 Log "[RC] git ...=$LASTEXITCODE" 줄만 삭제.
 Set-Location $web
 $diff = git status --porcelain lib/rs96Perf.json
 if ($diff) {
     git add lib/rs96Perf.json *>> $log
+    Log "[RC] git add=$LASTEXITCODE"
     git commit -m "성과(KR) 주간 갱신: $endDate 마감 반영 (자동)" *>> $log
+    Log "[RC] git commit=$LASTEXITCODE"
     git push *>> $log
+    Log "[RC] git push=$LASTEXITCODE"
     Log "[3 deploy] pushed"
 } else {
     Log "[3 deploy] 변경 없음 — push 생략"

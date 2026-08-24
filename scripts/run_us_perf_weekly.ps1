@@ -79,12 +79,18 @@ Log "[3 detail.json] start"
 & "$qb\venv\Scripts\python.exe" "$qb\build_backtest_detail_json.py" *>> $log
 Log "[3 detail.json] done (exit=$LASTEXITCODE)"
 
+# [2026-08-24 · CAND-2026-08-24-305] git add/commit/push 의 rc 를 로그로 남긴다 — 로그만 더한다
+#   (f76a713 「스케줄러 ps1 rc 눈멂」 수리와 같은 계열). ps1 자신의 exit 문·제어흐름은 바꾸지 않는다.
+#   되돌리기: 아래 3개 Log "[RC] git ...=$LASTEXITCODE" 줄만 삭제.
 Set-Location $web
 $diff = git status --porcelain app/us-backtest/detail.json
 if ($diff) {
     git add app/us-backtest/detail.json *>> $log
+    Log "[RC] git add=$LASTEXITCODE"
     git commit -m "성과(US) 주간 갱신: $endDate 마감 반영 (yfinance 무료 증분, 자동)" *>> $log
+    Log "[RC] git commit=$LASTEXITCODE"
     git push *>> $log
+    Log "[RC] git push=$LASTEXITCODE"
     Log "[4 배포] pushed"
 } else { Log "[4 배포] 변경 없음" }
 "===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') us_perf_weekly done =====" | Out-File -Append -Encoding utf8 $log
