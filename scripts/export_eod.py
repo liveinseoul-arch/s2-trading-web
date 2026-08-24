@@ -520,6 +520,24 @@ if DAY_BUF > 0:
     print(f"[day-buf] 손절선 = 매도단계 목표가 x (1 - {DAY_BUF:g}) · 호가단위 floor "
           f"(시뮬 + 감시주문 동시 적용)")
 
+# ── ★구목표 우선 가드 (CAND-2026-08-19-9, 2026-08-25 신설, 기본 off) ─────────────────
+#   ★무엇을 고치나 — 「추가매수 발생일은 hi 기반 분할매도 검사 보류」(:1242 옵션B 주석) 가
+#     같은 봉에 ①추가매수 트리거(lo<=at) ②구(추가매수 전) 평단 기준 1단 목표가 도달(hi>=t[0])
+#     이 ★동시에 나면 ★항상 추가매수를 택하고 매도를 통째로 건너뛴다. `S2_SAMEBAR_TRUTH_2026-
+#     08-19.md` 반사실 4세계 대조 결과 이 경로(infeasible·구목표 도달)가 ★38건 중 9건(23.7%)
+#     이고 방향은 ★성과 상승(구 지정가 매도가 실제로 체결됐을 자리를 지금은 놓친다).
+#   ★어떻게 — sell_count==0 일 때만 발생하는 경로이므로 다음 단계 목표는 항상 t[0] 하나뿐이다
+#     (t 는 :1144 에서 add-buy 전 avg_buy 로 이미 계산돼 있다). hi>=t[0] 이면 오늘 add-buy 를
+#     ★건너뛰고(avg_buy 불변), 그 결과 :1245 의 기존 `if not bought:` hi 매도 블록이 그대로
+#     그 목표를 정상 체결한다 — ★매도 로직을 새로 만들지 않고 add-buy 조건 하나만 추가한다.
+#   ⚠️실계좌 감시주문(build_order_plan)에는 아직 안 옮겼다 — 시뮬 경로만. 감시주문 이식은
+#     별도 후속(§8-2 W 단계 이후 재판정 · 이 게이트가 sim 쪽에서 먼저 안전을 확인한 뒤).
+#   기본 "0" = 구 동작 비트 동일(§4-5 관문 #2). 되돌리기: env 한 줄 삭제.
+OLDTGT_PRIORITY = os.environ.get("S2_OLDTGT_PRIORITY", "0") == "1"
+OLDTGT_N = {"eval": 0, "skip_add": 0}     # ★발동 카운터 — eval=검사한 횟수 · skip_add=실제 스킵
+if OLDTGT_PRIORITY:
+    print("[oldtgt-priority] 구목표(1단) 도달 시 당일 추가매수를 건너뛰고 매도를 우선한다")
+
 # ── ★★체결 현실성 마진 2단 — 추정 참여율 비례 슬리피지 (2026-08-18 신설, 기본 off) ─────
 #
 # [무엇을 고치나] DAY_BUF 는 **상수 마진**이라 「그날 그 종목이 얼마나 말랐는지」를 못 본다.
@@ -1158,9 +1176,21 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     break
 
             bought = False
+            # ★구목표 우선 가드 — CAND-2026-08-19-9. sell_count==0 인 경로에서만 add-buy 를
+            #   보므로 다음 목표는 항상 t[0](:1144 계산, add-buy 전 avg_buy 기준) 하나뿐이다.
+            _oldtgt_hit = (OLDTGT_PRIORITY and p["sell_count"] == 0 and p["qty"] > 0
+                           and bar_ok and hi >= t[0])
+            if OLDTGT_PRIORITY and p["sell_count"] == 0 and p["buy_count"] < MAX_BUY and not p.get("knife"):
+                OLDTGT_N["eval"] += 1
+                if _oldtgt_hit:
+                    OLDTGT_N["skip_add"] += 1
             # 추가매수 — buy_count < MAX_BUY. 단 buy_count >= NL_AFTER 이고 추가매수 가격이
             # 직전 최저가 이하면 신저가 손절 발동 시점이 더 빠르므로 추가매수 skip (broker 동일 정책).
-            if p["sell_count"] == 0 and p["buy_count"] < MAX_BUY and not p.get("knife"):
+            # ⚠️`not _oldtgt_hit` — 구목표 우선 가드가 켜져 있고 오늘 hi 가 구목표(t[0])를
+            #   찍었으면 add-buy 를 건너뛴다. avg_buy 가 안 바뀌므로 :1245 의 기존
+            #   `if not bought:` hi 매도 블록이 그대로 그 목표를 정상 체결한다(로직 중복 없음).
+            if (p["sell_count"] == 0 and p["buy_count"] < MAX_BUY and not p.get("knife")
+                    and not _oldtgt_hit):
                 at = _to_tick(p["last_buy"] * (1 - ADD_DROP))   # 추가매수가 호가단위 반올림
                 _skip = (p["buy_count"] >= NL_AFTER and at <= p["min_low"])
                 # ★유령 가드 — 원장 측. ⚠️plan 측과 **같은 술어 · 같은 시점**을 쓴다.
@@ -1893,6 +1923,11 @@ def main():
               f"(실제 하향 {DAY_BUF_N['lower']}회) · "
               f"손절 청산 {DAY_BUF_N['hit_buf'] + DAY_BUF_N['hit_gap']}건 = "
               f"버퍼선 체결 {DAY_BUF_N['hit_buf']} + 갭하락 시가 체결 {DAY_BUF_N['hit_gap']}(마진 무관)")
+
+    # ★구목표 우선 가드 발동 카운터 (§4-1b 사문 관문 #2 · CAND-2026-08-19-9) — on 일 때만 출력
+    if OLDTGT_PRIORITY:
+        print(f"[oldtgt-priority] add-buy 후보 검사 {OLDTGT_N['eval']}회 · "
+              f"구목표 도달로 add-buy 스킵 {OLDTGT_N['skip_add']}건")
 
     # ★참여율 마진 발동 카운터 (§4-1b 사문 관문 #2) — SLIP_K > 0 일 때만 출력
     #   ⚠️fire = 0 이면 「효과가 없다」가 아니라 ★「코드가 안 돌았다」를 먼저 의심한다.
