@@ -240,6 +240,77 @@ MAX_BUY = int(os.environ.get("S2_MAX_BUY", "3"))   # 1차 포함 총 매수 횟�
 SIZE_ABOVE = float(os.environ.get("S2_SIZE_ABOVE", "0.18"))
 SIZE_BELOW = float(os.environ.get("S2_SIZE_BELOW", "0.09"))
 
+# ★★★[2026-08-24 신설 · CAND-2026-08-24-240 · 해달별님 지시] 유동성 참여율 상한 — ★비례 축소.
+#   ★해달별님: *"참여율이 걸리면 투입금액을 비례하여 줄이는 형태로 가면 더 좋을 것 같은데."*
+#   ★T1 채택본(`T1_LIQ_DEN=med20` · `T1_LIQ_REALLOC=1.5` · 2026-08-24 운영 반영)의 ★S2 이식이다.
+#
+#   [무엇을] 하루에 한 종목에 넣는 금액을 ★`PART_MAX x med20` 로 ★깎는다(★차단이 아니다).
+#     `med20` = 그 종목의 ★20거래일 거래대금 ★중앙값(★당일 포함 · `min_periods=1`)
+#     — ⚠️★canonical 격자(`_2026_08_24_s2_qualgate_grid.py:53`)와 ★같은 정의여야 재현된다.
+#
+#   [왜 차단이 아니라 축소인가] 차단은 그 거래의 손익을 ★통째로 없애는데 축소는 ★크기만 줄인다.
+#     ★T1 실측 — 차단형이 아니라 축소형이라 ★CAGR 을 ★잃지 않았다(13.92 → 14.07%).
+#     ★그리고 문턱 벼랑(49억과 51억이 전혀 다른 처치가 되는 불연속)이 ★사라진다.
+#
+#   [표적 실측 — 결정창 운영 원장 · 고정NAV 14.10억 · 문턱 3%]
+#     ★유형 A `med20=0` ★16 leg(14.25억) = ★**거래정지 중 매수**(정지봉 종가로 진입 · ★체결 불가).
+#       ★일부는 ★액면분할·인적분할 ★직전 정지구간이다(`017670` `086520` 은 ★CA 사건일 ★당일).
+#     ★유형 B ★5 leg = 재개 직후 초희소봉(`232830` 참여율 ★3,351 – 4,722%).
+#     ★합계 ★21 leg · 깎이는 총액 ★17.22억 / 총매수 661.78억 = ★**2.60%**.
+#
+#   [게이트] `S2_LIQ_PART_MAX`(기본 ★0 = off = 종전 비트 동일).
+#     `S2_LIQ_LEGS` — `all`(기본 · 신규+추가) · `new`(신규만).
+#     `S2_LIQ_REALLOC` — ★깎인 금액을 ★같은 날 ★비구속 종목에 재배분할 ★트랜치 배수 상한 M.
+#       ★0(기본)=재배분 없음 · ★1.5=채택 권고(T1 과 같은 값).
+#   ★되돌리기 — `S2_LIQ_PART_MAX` 를 지운다(= 0 = off).
+LIQ_PART_MAX = float(os.environ.get("S2_LIQ_PART_MAX", "0") or 0)
+LIQ_ON = LIQ_PART_MAX > 0
+LIQ_LEGS = (os.environ.get("S2_LIQ_LEGS", "all").strip().lower() or "all")
+LIQ_RA = float(os.environ.get("S2_LIQ_REALLOC", "0") or 0)
+LIQ_RA_ON = LIQ_ON and LIQ_RA > 1.0
+# ★발동 카운터 — §4-2d 관문 2. ⚠️「효과 없음」과 「코드가 안 돌았다」를 가른다.
+LIQ_N = {"eval": 0, "cut": 0, "zero": 0, "ra_in": 0, "ra_out": 0}
+_LIQ_MED = {}          # (ticker, "YYYY-MM-DD") -> med20 (원). LIQ_ON 일 때만 채운다.
+
+
+def _liq_prepare(px):
+    """★(ticker, date) → med20. ★LIQ_ON 일 때만 호출된다(off 면 dict 가 빈 채로 남는다).
+
+    ⚠️★★[2026-08-24 정정 · 해달별님이 차트로 잡았다] ★★**정지봉을 거래일로 세면 안 된다.**
+      ★초판은 `px` 전체로 rolling median 을 냈다. ★그러면 ★거래정지 구간이 길었던 종목의
+      ★재개 첫날 `med20` 이 ★**0** 이 되어 ★상한도 0 = ★사실상 차단이 된다.
+      ★★**실측 반례 — `017670` SK텔레콤 2021-11-29**:
+        · 2021-10-26 – 11-26 ★정지봉 **24개**(OHLC=0 · close 309,500 고정 · vol=0)
+        · ★2021-11-29 ★**재상장 첫날** — open 53,400 · low **50,000** · ★거래대금 **6,195억**
+        ★즉 ★그날은 ★거래가 ★폭발한 날이고 ★0.91억은 ★충분히 살 수 있다.
+        ★그런데 정지봉을 세면 직전 20봉 중 19개가 tv=0 이라 ★중앙값이 0 이 된다.
+      ★★**따라서 ★거래가 있던 봉만으로 센다** — ★T1 채택본이 이미 그렇게 한다
+        (`t1_method/backtest.py::_build_liq_map` — `v = v[v["volume"] > 0]`).
+      ★`min_periods=1` 이라 ★유효봉이 20개 미만이어도 있는 것으로 계산한다
+      (★상장 직후·재개 직후를 ★결측으로 흘리지 않는다 — 그게 이 게이트의 표적이다).
+      ⚠️★**따라서 canonical 격자(`_2026_08_24_s2_qualgate_grid.py:53`)와 ★정의가 다르다** —
+        그쪽은 정지봉을 포함한다. ★재현이 아니라 ★**정정이다**. 결과 md 에 그렇게 적는다.
+    """
+    v = px[px["trading_value"].fillna(0) > 0]        # ★거래가 있던 봉만(정지봉 제외)
+    g = v.groupby("ticker")["trading_value"]
+    med = g.transform(lambda s: s.rolling(20, min_periods=1).median())
+    for tk, dd, m in zip(v["ticker"].to_numpy(), v["date"].to_numpy(), med.to_numpy()):
+        _LIQ_MED[(tk, str(dd)[:10])] = 0.0 if m != m else float(m)
+    # ★정지봉 날짜는 맵에 ★안 넣는다 → `_liq_cap_krw` 가 None(무제한)을 돌려준다.
+    #   ★정지봉에 사는 것은 ★이 게이트가 아니라 ★유효봉 가드(VALID_BAR)의 몫이다 — 축이 다르다.
+    print("[LIQ] 참여율 상한 on — PART_MAX=%.4f · LEGS=%s · REALLOC=%s · med20 맵 %d"
+          % (LIQ_PART_MAX, LIQ_LEGS, LIQ_RA, len(_LIQ_MED)))
+
+
+def _liq_cap_krw(tk, d):
+    """★그 종목-일에 ★넣을 수 있는 최대 금액(원). ★off 면 None(무제한)."""
+    if not LIQ_ON:
+        return None
+    m = _LIQ_MED.get((tk, str(d)[:10]))
+    if m is None:
+        return None                      # ★맵에 없으면 제한하지 않는다(보수적으로 종전 동작)
+    return LIQ_PART_MAX * m
+
 # --- (실험) 변동성 국면 사이징 — 기본 off. S2_VOL_SIZING=highvol|lowvol|linear ---
 # KOSPI 추세 변동성(과거만) 기준으로 진입 사이즈 배수. look-ahead 방지 위해 확장중앙값 사용.
 VOL_SIZING = os.environ.get("S2_VOL_SIZING", "off").lower()
@@ -809,6 +880,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
     # ★S2_SLIP_K — off 면 이 줄이 통째로 skip 되어 px 에 컬럼이 아예 안 생긴다(비트 동일 보장)
     if SLIP_ON:
         px = _slip_prepare(px)
+    # ★★[CAND-2026-08-24-240] off 면 이 줄이 통째로 skip 되어 맵이 빈 채로 남는다(비트 동일)
+    if LIQ_ON:
+        _liq_prepare(px)
     all_dates = sorted(px["date"].unique())
     by_date = {d: {} for d in all_dates}
     for rec in px.to_dict("records"):
@@ -895,6 +969,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
 
     for d in all_dates:
         day = by_date[d]; nav_today = cash + cur_hv(day); closed = set()
+        # ★★[CAND-2026-08-24-240] 재배분 풀 — ★그날 안에서만 산다(다음 날로 이월하지 않는다).
+        #   ★off 면 이 변수는 만들어지되 아무도 안 건드린다(비용 = 대입 1회).
+        _ra_pool = 0.0
         for tk in list(positions):
             if tk not in day:
                 continue
@@ -1001,7 +1078,21 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 if not _skip and not bar_ok and lo <= at:
                     VB_SKIP["add"] += 1
                 if not _skip and bar_ok and lo <= at:
-                    sh = int(p["tranche"] // at)
+                    _amt_a = float(p["tranche"])
+                    # ★★[CAND-2026-08-24-240] 추가매수도 같은 상한. LEGS=new 면 건너뛴다.
+                    if LIQ_LEGS != "new":
+                        _cap_a = _liq_cap_krw(tk, d)
+                        if _cap_a is not None:
+                            LIQ_N["eval"] += 1
+                            if _amt_a > _cap_a:
+                                LIQ_N["cut"] += 1
+                                if _cap_a <= 0:
+                                    LIQ_N["zero"] += 1
+                                if LIQ_RA_ON:
+                                    _ra_pool += (_amt_a - _cap_a)
+                                    LIQ_N["ra_in"] += 1
+                                _amt_a = _cap_a
+                    sh = int(_amt_a // at)
                     if sh > 0 and lev_ok(day, sh * at):
                         _net = sh * at * BUY_MULT
                         cash -= _net; p["cost"] += _net
@@ -1127,9 +1218,34 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             _reached.sort(key=lambda x: _RISE2W.get((x[0], _dk), -1.0), reverse=True)
         for tk, price, sz, above, bull, _kn in _reached:
             n_reached += 1
-            amt = sz * nav_today; sh = int(amt // price)
+            amt = sz * nav_today
+            # ★★[CAND-2026-08-24-240] 참여율 상한 — ★비례 축소(차단 아님). off 면 cap=None.
+            _cap = _liq_cap_krw(tk, d)
+            if _cap is not None:
+                LIQ_N["eval"] += 1
+                if amt > _cap:
+                    LIQ_N["cut"] += 1
+                    if _cap <= 0:
+                        LIQ_N["zero"] += 1
+                    if LIQ_RA_ON:
+                        _ra_pool += (amt - _cap)      # ★깎인 금액을 풀로
+                        LIQ_N["ra_in"] += 1
+                    amt = _cap
+            sh = int(amt // price)
             if sh <= 0:
                 continue
+            # ★재배분 — 비구속(상한에 안 걸린) 종목이 풀에서 인출한다.
+            #   ★한 종목이 하루에 살 수 있는 상한 = LIQ_RA x (원래 사이징 금액).
+            if LIQ_RA_ON and _ra_pool > 0 and (_cap is None or sz * nav_today <= _cap):
+                _room = (LIQ_RA - 1.0) * (sz * nav_today)
+                if _cap is not None:
+                    _room = min(_room, max(0.0, _cap - sh * price))
+                _add = min(_ra_pool, _room, max(0.0, cash - sh * price * BUY_MULT))
+                _ai = int(_add // price)
+                if _ai > 0:
+                    sh += _ai
+                    _ra_pool -= _ai * price
+                    LIQ_N["ra_out"] += 1
             stub = dict(tk=tk, name=nmap.get(tk, ""), market=MKT.get(mmap.get(tk, ""), mmap.get(tk, "")),
                         entry_above=above, entry_bull=bull, buy_count=1)
             if not lev_ok(day, sh * price):
@@ -1654,6 +1770,16 @@ def main():
             print("  ⚠️★S2_PHANTOM_RC=1 — 종료코드 9 로 끕난다(감사 경로 전용).")
             import atexit
             atexit.register(lambda: os._exit(9))
+
+    # ★★유동성 참여율 상한 발동 카운터 (§4-2d 관문 2 · CAND-2026-08-24-240)
+    #   ⚠️★cut = 0 이면 「효과 없음」이 아니라 ★먼저 「eval 이 0인가」를 본다 —
+    #     eval 이 0이면 ★맵이 안 채워진 것(코드가 안 돌았다)이고, eval 이 크고 cut 이 0이면
+    #     ★진짜로 상한에 걸린 매수가 없는 것이다.
+    if LIQ_ON:
+        print("[LIQ] ★평가 %d건 → ★축소 %d건 (그중 상한 0 = %d) · "
+              "재배분 적립 %d · 인출 %d · PART_MAX=%.4f · LEGS=%s · REALLOC=%s"
+              % (LIQ_N["eval"], LIQ_N["cut"], LIQ_N["zero"],
+                 LIQ_N["ra_in"], LIQ_N["ra_out"], LIQ_PART_MAX, LIQ_LEGS, LIQ_RA))
 
     # ★★CA 리스케일 발동 카운터 (§4-2d 관문 2 · CAND-2026-08-22-19) — 게이트 on 일 때만 출력
     #   ⚠️★hit = 0 이면 「효과 없음」이 아니라 ★먼저 「표적이 정말 없는가」를 묻는다.
