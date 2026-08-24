@@ -29,3 +29,7 @@ Thumbs.db
 
 # 재검정 임시 스냅샷 (2026-08-12)
 scripts/_dr_*/
+
+# ★유령 체결 게이트 검증 산출 (2026-08-24 · CAND-2026-08-23-126)
+scripts/_ph_*/
+scripts/export_eod_backup_*.py

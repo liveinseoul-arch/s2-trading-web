@@ -411,6 +411,70 @@ if SLIP_ON:
 VALID_BAR = os.environ.get("S2_VALID_BAR", "1") == "1"
 VB_SKIP = {"stop": 0, "add": 0, "newlow": 0, "minlow": 0}   # 가드가 실제로 막은 횟수
 
+# ── ★유령 체결 가드 (CAND-2026-08-23-126 · 기본 off = 종전 동작 비트 동일) ──────
+#
+#   막는 것 — p["last_buy"] 가 **구 스케일**로 박제된 채 만들어지는 추가매수 트리거.
+#   근거   — quant_infra/2026-08/S2_PHANTOM_FILL_CA_2026-08-23.md
+#            086520(에코프로) 5:1 분할 재개일 2024-04-25 에 481,000원 x 42주가 찍혔다.
+#            그날 고가는 115,400원 = 4.1681배. 다음 날 447,500원으로 연쇄한다.
+#
+#   ⚠️★이 다리는 **다음 거래일 주문**이다 — 「그날 저가·고가」를 주문 시점에 알 수 없다.
+#     그래서 판정에 **당일 봉을 쓰지 않는다.** 주문 시점에 있는 것 둘로만 판정한다:
+#       A. 스케일 정합 — trigger / **직전 유효봉 종가** > PH_MAXR
+#       B. 정지 재개  — 직전 봉이 **무효봉**(o/h/l=0)으로 PH_HALT 일 이상 연속
+#
+#   ⚠️★「주문가가 그날 [저가, 고가] 밖」은 **쓰면 안 된다** — 실측 유령 19건 중
+#     15건(78.9%)이 **갭하락**이고 그것은 CLAUDE.md §8-1 규약 A 가 의도한 보수 기록이다.
+#
+#   S2_PHANTOM_GUARD = off(기본) | warn | block
+#   S2_PHANTOM_MAXR  = 1.30   (배수 문턱. 실측 무변화 밴드 1.25 - 4.00)
+#   S2_PHANTOM_HALT  = 1      (직전 정지봉 연속일 문턱. 0 이면 검사 B off)
+#   S2_PHANTOM_RC    = 0      (1 이면 발동 시 종료코드 9. ⚠️기본 0 — EOD 체인을 세우지 않는다)
+#   S2_PHANTOM_ERA   = ""     (빈 값 = 전 구간. 날짜를 넣으면 ★검사 B 를 그 날부터만 건다)
+#     ⚠️★왜 필요한가 — 검사 B(정지 재개)는 「정지 중에 스케일이 바뀌었을 수 있다」의 ★대리
+#       지표다. 그런데 이 DB 는 ★2019-03-08 이전이 ★이미 수정주가라(CLAUDE.md §3 무결성 1)
+#       그 구간의 재개일에는 ★스케일이 안 튄다. 실측 — 018290 2016-01-08(13일 정지 후 감자·
+#       병합 재개)에서 트리거 5,130 이 그날 봉 [4,707 – 7,166] ★안에 있었는데 검사 B 가 막아
+#       ★CAGR 13.82 → 13.41%(−0.41%p)를 냈다. ★원주가 구간(2019-03-11 이후)에서는 같은
+#       상황이 ★진짜 유령이다. 즉 이 경계는 ★조율 파라미터가 아니라 ★데이터 출처 사실이다.
+PH_MODE = os.environ.get("S2_PHANTOM_GUARD", "off").strip().lower()
+PH_MAXR = float(os.environ.get("S2_PHANTOM_MAXR", "1.30"))
+PH_HALT = int(os.environ.get("S2_PHANTOM_HALT", "1"))
+PH_ERA = os.environ.get("S2_PHANTOM_ERA", "").strip()
+PH_RC = os.environ.get("S2_PHANTOM_RC", "0") == "1"
+PH_N = {"plan_scale": 0, "plan_halt": 0, "fill_scale": 0, "fill_halt": 0}
+PH_LOG = []          # (site, d, ticker, reason, trigger, ref, value)
+
+
+def _phantom(p, trig, d, site, prev=False):
+    """주문 시점 정보만으로 유령 트리거를 판정한다. -> (막을까, 사유, 값)
+
+    ⚠️당일 봉(o/h/l/c)을 **보지 않는다**. 다음날 주문이라 알 수 없기 때문이다.
+    ★결측이면 발동하지 않는다(fail-open) — EOD 를 세우는 쪽이 더 비싸다(§4-5 ④).
+
+    prev=True  원장 측(simulate) — 그 주문은 **어제 저녁에** 냈다. 그래서 어제까지의
+               기준값(`ph_ref`·`ph_halt`)만 본다. ⚠️`ref_close`/`halt_n` 은 오늘 봉으로
+               이미 갱신돼 있어 그것을 쓰면 **당일 종가를 미리 보는 것**이 된다.
+    prev=False 주문 측(build_order_plan) — 마지막 처리일까지의 값이 곧 「어제」다.
+    """
+    if PH_MODE == "off" or not trig or trig <= 0:
+        return (False, "", 0.0)
+    if prev:
+        n_halt = int(p.get("ph_halt", 0) or 0)
+        ref = float(p.get("ph_ref") or 0.0)
+    else:
+        n_halt = int(p.get("halt_n", 0) or 0)
+        ref = float(p.get("ref_close") or 0.0)
+    if PH_HALT and n_halt >= PH_HALT and (not PH_ERA or str(d) >= PH_ERA):   # 검사 B - 정지 재개
+        PH_N[site + "_halt"] += 1
+        PH_LOG.append((site, str(d), p.get("tk"), "halt", trig, None, float(n_halt)))
+        return (PH_MODE == "block", "halt", float(n_halt))
+    if ref > 0 and trig / ref > PH_MAXR:                   # 검사 A - 스케일 정합
+        PH_N[site + "_scale"] += 1
+        PH_LOG.append((site, str(d), p.get("tk"), "scale", trig, ref, trig / ref))
+        return (PH_MODE == "block", "scale", trig / ref)
+    return (False, "", 0.0)
+
 MKT = {"KOSPI": "KS", "KOSDAQ": "KQ"}
 
 
@@ -768,6 +832,15 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             p["last_close"] = cl
             # ★유효봉 판정 — 거래정지·무거래 봉(o/h/l = 0)을 저가 기반 로직에서 배제
             bar_ok = (not VALID_BAR) or (op > 0 and hi > 0 and lo > 0)
+            # ★유령 가드용 기준값 — **유효봉의** 종가와 정지 연속일. off 여도 유지 비용은 상수다.
+            #   ⚠️VALID_BAR 와 따로 판정한다 — S2_VALID_BAR=0 이어도 기준은 유효봉이어야 한다.
+            #   ⚠️★`ph_*` 는 **갱신 직전 값**(= 어제까지)이다. 오늘 체결되는 주문은 어제 저녁에
+            #     냈으므로 원장 측 판정은 반드시 이 쪽을 본다(당일 종가 선취 금지).
+            p["ph_ref"] = p.get("ref_close"); p["ph_halt"] = int(p.get("halt_n", 0) or 0)
+            if op > 0 and hi > 0 and lo > 0:
+                p["ref_close"] = cl; p["halt_n"] = 0
+            else:
+                p["halt_n"] = p["ph_halt"] + 1
             # 매도단계 후 손절 (장초 갭 포함)
             if p["sell_count"] >= 1 and p["qty"] > 0 and not bar_ok and lo <= p["stop"]:
                 VB_SKIP["stop"] += 1
@@ -810,6 +883,13 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             if p["sell_count"] == 0 and p["buy_count"] < MAX_BUY and not p.get("knife"):
                 at = _to_tick(p["last_buy"] * (1 - ADD_DROP))   # 추가매수가 호가단위 반올림
                 _skip = (p["buy_count"] >= NL_AFTER and at <= p["min_low"])
+                # ★유령 가드 — 원장 측. ⚠️plan 측과 **같은 술어 · 같은 시점**을 쓴다.
+                #   ★`prev=True` — 오늘 체결되는 이 주문은 **어제 저녁 계획**의 산물이므로
+                #     어제까지의 기준값(`ph_ref`·`ph_halt`)으로 판정한다. 그래서 정지 재개일에는
+                #     검사 B 가 여기서도 산다(어제가 정지봉이었다는 사실은 오늘 아침에 안다).
+                _ph_block, _ph_why, _ph_v = _phantom(p, at, d, "fill", prev=True)
+                if _ph_block:
+                    _skip = True
                 if not _skip and not bar_ok and lo <= at:
                     VB_SKIP["add"] += 1
                 if not _skip and bar_ok and lo <= at:
@@ -1109,12 +1189,22 @@ def build_order_plan(positions, d, nav, park_amount=None):
         if p["sell_count"] == 0 and p["buy_count"] < MAX_BUY:
             at = _to_tick(p["last_buy"] * (1 - ADD_DROP))   # 추가매수가 호가단위 반올림
             skip_conflict = (p["buy_count"] >= NL_AFTER and at <= p["min_low"])
+            # ★유령 가드 — **주문 측**. 이 자리가 실주문이 나가는 다리다.
+            #   block: 그 감시주문 줄을 아예 내지 않는다(거부).  warn: note 에 표시만 한다.
+            #   ⚠️★클램프(가격을 바꿔서 낸다)는 채택하지 않는다 — 올바른 신 스케일 가격을
+            #     주문 시점에 알 방법이 없고, 바꾼 가격은 백테스트가 검증한 규칙이 아니다.
+            _ph_block, _ph_why, _ph_v = _phantom(p, at, d, "plan")
+            if _ph_block:
+                skip_conflict = True
             if not skip_conflict:
                 sh = int(p["tranche"] // at)
+                _note = f"{p['buy_count']+1}차 매수(직전매수가 -{ADD_DROP*100:g}%)"
+                if _ph_why:
+                    _note = f"⚠️★유령 의심({_ph_why} {_ph_v:.4f}) — 확인 전 집행 금지. " + _note
                 plan.append(dict(d=d, ticker=tk, name=p["name"], market=p["market"], order_type="buy_add",
                     stage=p["buy_count"] + 1, trigger_price=round(at), qty=sh,
                     port_pct=round(p["tranche"] / nav * 100, 2) if nav > 0 else None, diff=diff,
-                    note=f"{p['buy_count']+1}차 매수(직전매수가 -{ADD_DROP*100:g}%)"))
+                    note=_note))
         _tp = p.get("targets", S)                                     # ★포지션별 목표(조건부 매도 반영)
         t = [_to_tick(p["avg_buy"] * p.get("tgt_mult", 1.0) * (1 + s)) for s in _tp]   # 목표가 호가단위 반올림(포지션별)                       # 매도 감시(미체결 단계)
         for stg in range(p["sell_count"] + 1, N_STAGES + 1):
@@ -1407,6 +1497,21 @@ def main():
     if VB_SKIP["minlow"]:
         print(f"  ★min_low 오염 차단 {VB_SKIP['minlow']}건 — 막지 않았다면 "
               f"그 포지션들의 신저가 손절이 영구 비활성화됐다.")
+
+    # ★유령 체결 가드 발동 카운터 (§4-2d #2 — 「0건이라 효과 없음」과 「코드가 안 돌아 0건」을 가른다)
+    if PH_MODE != "off":
+        _pt = sum(PH_N.values())
+        print(f"[GUARD:PHANTOM] MODE={PH_MODE} · MAXR={PH_MAXR:g} · HALT={PH_HALT} · "
+              f"ERA={PH_ERA or '전구간'} · "
+              f"발동 {_pt}건 — 주문측 스케일 {PH_N['plan_scale']} / 정지 {PH_N['plan_halt']} · "
+              f"원장측 스케일 {PH_N['fill_scale']} / 정지 {PH_N['fill_halt']}")
+        for _r in PH_LOG[:20]:
+            _ref = "-" if _r[5] is None else format(_r[5], ",.0f")
+            print(f"  ★{_r[0]} {_r[1]} {_r[2]} {_r[3]} trigger={_r[4]:,} ref={_ref} 값={_r[6]:.4f}")
+        if PH_RC and _pt:
+            print("  ⚠️★S2_PHANTOM_RC=1 — 종료코드 9 로 끕난다(감사 경로 전용).")
+            import atexit
+            atexit.register(lambda: os._exit(9))
 
     # ★손절선 버퍼 발동 카운터 (§4-1b 사문 관문 #2) — DAY_BUF > 0 일 때만 출력
     if DAY_BUF > 0:
