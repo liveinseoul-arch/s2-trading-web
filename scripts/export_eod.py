@@ -43,6 +43,29 @@ from config import Config                         # noqa: E402
 #   ★하드 플로어다 — 미설정이면 안전 기본값을 자동 주입하고, 그보다 이른 값을 명시하면
 #   자동 보정하지 않고 즉시 죽는다(SystemExit). §3-4 실측(현재 표본 이중보정 미발현)과
 #   무관하게 구조적 위험을 코드로 원천 차단하는 것이 목적.
+# ══════════════════════════════════════════════════════════════════════════════
+# ★★★[2026-08-25 신설 · SPEC_DUAL_WORLD_2026-08-24 §5 · CAND-2026-08-24-660/-661]
+#   S2_CA_DB 운영 가드 — ★병설 세계(연구용 CA 사전 갈아끼우기)가 ★운영으로 새는 것을 막는다.
+#
+#   ⚠️★왜 필요한가 — `S2_CA_DB` 는 `backtest.py` 가 읽는 ★연구 통로다(kr_s2_engine 병설용).
+#   ★실계좌 데몬(`kw_watchloop.py`)이 ★이 스크립트의 `--dry-run` 산출 디렉터리(기본 `_dryrun`)를
+#   ★주문계획으로 그대로 읽는다(`:5363 --plan-csv` · `kw_scale.py:135`) — ★"dry-run 이니 안전"은
+#   ★틀렸다. ★그래서 ★탈출구를 두지 않는다: 예외는 ★--dry-run *이고* ★S2_DRYRUN_DIR 가
+#   ★기본값(`_dryrun`) 밖으로 물리적으로 분리됐을 때만.
+#   ★`_CA_FLOOR` 가드(아래)와 ★같은 이유로 ★`from backtest import` **이전**에 실행한다
+#   (backtest.py 는 모듈 전역이라 import 시점에 env 를 굳힌다 — CLAUDE.md §3 코딩함정).
+if os.environ.get("S2_CA_DB", "").strip():
+    _is_dry = "--dry-run" in sys.argv
+    _dr_dir = os.environ.get("S2_DRYRUN_DIR", "").strip()
+    _isolated = bool(_dr_dir) and _dr_dir != "_dryrun" and not _dr_dir.rstrip("/\\").endswith("_dryrun")
+    if not (_is_dry and _isolated):
+        raise SystemExit(
+            "[export_eod] S2_CA_DB 가 설정돼 있다 — ★운영 경로는 병설 세계를 쓰지 않는다. "
+            "연구용 CA 세계는 kr_s2_engine.py 로만 검증할 것(SPEC_DUAL_WORLD_2026-08-24 §5). "
+            "★예외 없음 — --dry-run 이고 S2_DRYRUN_DIR 가 기본값 밖으로 분리됐을 때만 통과한다.")
+    print(f"  ⚠️[world-guard] S2_CA_DB={os.environ['S2_CA_DB']} · dry-run 격리 디렉터리 "
+          f"확인됨({_dr_dir}) — ★연구 용도로만 통과시킨다. ★Supabase 적재 금지 경로다.")
+
 _CA_FLOOR = "2019-03-11"        # ★CLAUDE.md §2 금지 조합 하한 — opsDB 전용, 하드코딩
 if os.environ.get("S2_CA_ADJUST", "0") == "1":
     _ca_from_env = os.environ.get("S2_CA_FROM", "").strip()
