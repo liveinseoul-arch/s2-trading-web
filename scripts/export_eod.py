@@ -367,6 +367,22 @@ REENTRY_MAX_COUNT = int(_rmc_s) if _rmc_s else None
 _rrd_s = os.environ.get("S2_REENTRY_RESET_DAYS", "").strip()
 REENTRY_RESET_DAYS = int(_rrd_s) if _rrd_s else None
 
+# ★★★[2026-08-26 신설 · CAND-2026-08-26-12] 재진입 손실비례 쿨다운 — ★39개월리셋
+#   (위 4개)과 병행하는 별도 축. mc=2·reset=39개월만으로는 「직전 청산이 대형손실이어도
+#   즉시(1~2일 내) 재진입」을 못 막는다(S2_REENTRY_OPSPORT_2026-08-26.md §3 실측 —
+#   168330 3연속 재진입 손절). ★해달별님과의 대화형 탐색(§4-4~§4-8) 끝에 확정한
+#   설계 — 직전 청산의 「1차매수금액 대비 pnl」손실률이 임계 이하이면, 청산일로부터
+#   이 일수가 지날 때까지 그 종목 재진입 자체를 막는다(mc 카운터와 무관 · reentry_relax
+#   여부와도 무관 — REENTRY_COOLDOWN_DAYS 만으로 독립 작동 가능하게 설계했다).
+#   [게이트] `S2_REENTRY_COOLDOWN_DAYS`(기본 빈 문자열=off=None=canonical 항등).
+#   ★되돌리기 — 이 env 를 지운다.
+_rcd_s = os.environ.get("S2_REENTRY_COOLDOWN_DAYS", "").strip()
+REENTRY_COOLDOWN_DAYS = int(_rcd_s) if _rcd_s else None
+# 쿨다운을 발동시키는 손실률 임계(1차매수금액 기준 · %). 기본 -20.0 —
+# CAND-2026-08-26-12 §4-4·4-5 사후근사에서 가장 깨끗하게 분리됐던 값을 그대로 사용.
+REENTRY_COOLDOWN_THRESHOLD = float(os.environ.get("S2_REENTRY_COOLDOWN_THRESHOLD", "-20.0"))
+REENTRY_CD_N = {"blocked": 0}   # ★발동 카운터(VB_SKIP·PH_N 과 같은 패턴)
+
 # ★★★[2026-08-24 신설 · CAND-2026-08-24-240 · 해달별님 지시] 유동성 참여율 상한 — ★비례 축소.
 #   ★해달별님: *"참여율이 걸리면 투입금액을 비례하여 줄이는 형태로 가면 더 좋을 것 같은데."*
 #   ★T1 채택본(`T1_LIQ_DEN=med20` · `T1_LIQ_REALLOC=1.5` · 2026-08-24 운영 반영)의 ★S2 이식이다.
@@ -1037,6 +1053,10 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
     # ★반복재진입 카운터(2026-08-26 · CAND-2026-08-26-2) — REENTRY_RELAX=False 면 영원히 빈 채로
     #   남아 아래 분기가 전부 죽는다(canonical 항등).
     s2_reentry_ct = {}
+    # ★재진입 손실비례 쿨다운용(2026-08-26 · CAND-2026-08-26-12) — 직전 청산의
+    #   「1차매수금액 대비 pnl」 손실률(%). REENTRY_COOLDOWN_DAYS 가 None(기본)이면
+    #   값은 계속 채워지지만 아래 게이트 분기가 통째로 죽어 canonical 항등이다.
+    last_exit_lossrate = {}
     cash = float(start_cap); peak = cash
     executions, trades, legs, nav_rows, snaps = [], [], [], [], []
     candidates, counts = [], []
@@ -1088,6 +1108,11 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             holding_days=didx[d] - didx[p["entry_date"]], exit_reason=reason, status="closed"))
         for lg in p["legs"]:
             legs.append(dict(_tid=p["tid"], **lg))
+        # ★재진입 손실비례 쿨다운용(2026-08-26 · CAND-2026-08-26-12) — off(REENTRY_COOLDOWN_DAYS
+        #   =None)면 이 값이 채워져도 아래 게이트가 안 읽으므로 canonical 항등이다.
+        _fba = p.get("first_buy_amount", 0.0)
+        if _fba > 0:
+            last_exit_lossrate[p["tk"]] = ((p["proc"] - p["cost"]) / _fba) * 100
 
     # (실험) 낙주필터용 — 종목별 최근 5거래일 수익률 사전계산.
     _RET5 = {}
@@ -1372,6 +1397,14 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 s2_reentry_ct[tk] = 0
             if REENTRY_RELAX and REENTRY_MAX_COUNT is not None and s2_reentry_ct.get(tk, 0) >= REENTRY_MAX_COUNT:
                 continue
+            # ★재진입 손실비례 쿨다운(2026-08-26 · CAND-2026-08-26-12) — reentry_relax 와
+            #   무관하게 독립 작동한다(mc=2·39개월리셋은 「횟수」를, 이 게이트는 「즉시재진입」
+            #   을 따로 막는다 — 대체재가 아니라 병행 장치, §4-8). off(None)면 canonical 항등.
+            if (REENTRY_COOLDOWN_DAYS is not None and tk in last_exit
+                    and last_exit_lossrate.get(tk, 0.0) <= REENTRY_COOLDOWN_THRESHOLD
+                    and (d - last_exit[tk]).days < REENTRY_COOLDOWN_DAYS):
+                REENTRY_CD_N["blocked"] += 1
+                continue
             ml = r.get("ma_long"); above = bool(pd.notna(ml) and price > ml); bull = smy.get((tk, d))
             sz = SIZE_ABOVE if above else SIZE_BELOW
             if bull is False:
@@ -1464,7 +1497,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 tranche=amt, avg_buy=price, last_buy=price, buy_count=1, sell_count=0, stop=None,
                 qty=sh, total_qty=sh, min_low=price, last_close=price,
                 entry_above=above, entry_bull=bull, tid=tid_seq, cost=_cost, proc=0.0, legs=[],
-                is_reentry=bool(REENTRY_RELAX and tk in last_exit))
+                is_reentry=bool(REENTRY_RELAX and tk in last_exit), first_buy_amount=_cost)
             positions[tk] = p
             ex(d, p, "buy_new", 1, price, sh, nav_today)
             leg(p, d, "buy_new", 1, price, sh, nav_today)
@@ -1945,6 +1978,11 @@ def main():
     if VB_SKIP["minlow"]:
         print(f"  ★min_low 오염 차단 {VB_SKIP['minlow']}건 — 막지 않았다면 "
               f"그 포지션들의 신저가 손절이 영구 비활성화됐다.")
+
+    # ★재진입 쿨다운 발동 카운터(2026-08-26 · CAND-2026-08-26-12)
+    if REENTRY_COOLDOWN_DAYS is not None:
+        print(f"[REENTRY_COOLDOWN] 임계 {REENTRY_COOLDOWN_THRESHOLD}% · "
+              f"쿨다운 {REENTRY_COOLDOWN_DAYS}일 · 차단 {REENTRY_CD_N['blocked']}건")
 
     # ★유령 체결 가드 발동 카운터 (§4-2d #2 — 「0건이라 효과 없음」과 「코드가 안 돌아 0건」을 가른다)
     if PH_MODE != "off":
