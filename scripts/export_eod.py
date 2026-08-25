@@ -383,6 +383,22 @@ REENTRY_COOLDOWN_DAYS = int(_rcd_s) if _rcd_s else None
 REENTRY_COOLDOWN_THRESHOLD = float(os.environ.get("S2_REENTRY_COOLDOWN_THRESHOLD", "-20.0"))
 REENTRY_CD_N = {"blocked": 0}   # ★발동 카운터(VB_SKIP·PH_N 과 같은 패턴)
 
+# ★★★[2026-08-26 신설 · CAND-2026-08-26-14] F4 반사실 전용 — 지정 종목을 유니버스에서
+#   완전히 제외(신규진입 자체를 막음 · 기존 보유는 영향 없음, 애초에 이 게이트를 켠
+#   런에는 그 종목 보유가 없다). ★연구용 일회성 게이트 — 기본 빈 문자열=off=canonical
+#   항등. 되돌리기 — env 를 지운다.
+_f4x_s = os.environ.get("S2_F4_EXCLUDE_TICKERS", "").strip()
+# ★tk 의 실제 dtype(str 6자리 zfill vs int)을 코드 확인 없이도 안전하게 매칭하려고
+#   문자열(원본·6자리zfill)과 int 세 가지 표현을 전부 넣는다 — 과잉이어도 무해하다.
+F4_EXCLUDE = set()
+for _x in (t.strip() for t in _f4x_s.split(",") if t.strip()):
+    F4_EXCLUDE.add(_x)
+    F4_EXCLUDE.add(_x.zfill(6))
+    try:
+        F4_EXCLUDE.add(int(_x))
+    except ValueError:
+        pass
+
 # ★★★[2026-08-24 신설 · CAND-2026-08-24-240 · 해달별님 지시] 유동성 참여율 상한 — ★비례 축소.
 #   ★해달별님: *"참여율이 걸리면 투입금액을 비례하여 줄이는 형태로 가면 더 좋을 것 같은데."*
 #   ★T1 채택본(`T1_LIQ_DEN=med20` · `T1_LIQ_REALLOC=1.5` · 2026-08-24 운영 반영)의 ★S2 이식이다.
@@ -1372,6 +1388,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
         _reached = []                                  # (tk, price, sz, above, bull) — 체결 대상 수집
         for tk, r in day.items():
             if tk in positions or tk in closed:
+                continue
+            if tk in F4_EXCLUDE:      # ★F4 반사실 전용(2026-08-26 · CAND-2026-08-26-14). 기본 빈 set=off=무영향
                 continue
             if not (pd.notna(r["ma20"]) and r["date"] >= period_start):
                 continue
