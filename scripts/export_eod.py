@@ -337,6 +337,19 @@ MAX_BUY = int(os.environ.get("S2_MAX_BUY", "3"))   # 1차 포함 총 매수 횟�
 SIZE_ABOVE = float(os.environ.get("S2_SIZE_ABOVE", "0.18"))
 SIZE_BELOW = float(os.environ.get("S2_SIZE_BELOW", "0.09"))
 
+# ★★★[2026-08-25 신설 · CAND-2026-08-25-10] 종목당 집중 상한 — ★kr_s2_engine `name_cap` 이식.
+#   [배경] `kr_s2_engine.py --mode`(운영 패치 0개) 격자에서 cap 0.20 – 0.25 가 CAGR·MDD·
+#     Calmar 를 동시에 개선했다(S2_NAMECAP_GRID_2026-08-25.md). ⚠️단 그 최고 낙폭 사건이
+#     ★진짜 운영 세계(export_eod.py — env 밀도맵·스톱래칫·유동성캡 등 전부 포함)와 다르다
+#     (CLAUDE.md §4-2d 관문4). ★그래서 여기(운영 패치 전체가 살아 있는 세계)에서 재실측한다.
+#   [무엇을] 한 종목의 「진입가 x 보유수량」 평가액이 NAME_CAP x nav_today 를 넘지 않도록
+#     신규진입·추가매수 수량을 깎는다. room 이 0 이면 그 매수는 skip — 기존 보유는
+#     강제 매도하지 않는다(kr_s2_engine.sim() 의 name_cap 과 같은 설계).
+#   [게이트] `S2_NAME_CAP`(기본 빈 문자열 = off = None = 종전 비트 동일).
+#   ★되돌리기 — `S2_NAME_CAP` 를 지운다.
+_ncap_s = os.environ.get("S2_NAME_CAP", "").strip()
+NAME_CAP = float(_ncap_s) if _ncap_s else None
+
 # ★★★[2026-08-24 신설 · CAND-2026-08-24-240 · 해달별님 지시] 유동성 참여율 상한 — ★비례 축소.
 #   ★해달별님: *"참여율이 걸리면 투입금액을 비례하여 줄이는 형태로 가면 더 좋을 것 같은데."*
 #   ★T1 채택본(`T1_LIQ_DEN=med20` · `T1_LIQ_REALLOC=1.5` · 2026-08-24 운영 반영)의 ★S2 이식이다.
@@ -1220,6 +1233,13 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                                     LIQ_N["ra_in"] += 1
                                 _amt_a = _cap_a
                     sh = int(_amt_a // at)
+                    # ★★★[2026-08-25 신설 · CAND-2026-08-25-10] 종목당 집중 상한 — 추가매수.
+                    #   room = NAME_CAP*nav_today - 현재 보유평가액(수량 x 이 추가매수가).
+                    #   room<=0 이면 이 추가매수는 skip(수량 0) — 기존 보유는 그대로 둔다
+                    #   (kr_s2_engine.sim() 의 add-buy name_cap 과 같은 room 계산).
+                    if NAME_CAP is not None and sh > 0:
+                        _nc_room = NAME_CAP * nav_today - p["qty"] * at
+                        sh = min(sh, max(0, int(_nc_room // at))) if _nc_room > 0 else 0
                     if sh > 0 and lev_ok(day, sh * at):
                         _net = sh * at * BUY_MULT
                         cash -= _net; p["cost"] += _net
@@ -1373,6 +1393,16 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     sh += _ai
                     _ra_pool -= _ai * price
                     LIQ_N["ra_out"] += 1
+            # ★★★[2026-08-25 신설 · CAND-2026-08-25-10] 종목당 집중 상한 — 신규진입.
+            #   [무엇을] 이 매수로 만들어질 평가액(sh x price)이 NAME_CAP x nav_today 를
+            #     넘지 않도록 수량을 깎는다. off(None)면 이 블록 자체가 skip(종전과 동일).
+            #   ★재배분(realloc) 뒤에 적용 — realloc 이 수량을 늘릴 수 있어 ★맨 마지막에 재클램프.
+            #   ⚠️신규진입은 기존 보유가 없으므로(qty=0) room = NAME_CAP*nav_today 그대로다.
+            #     추가매수 쪽은 §buy_add 블록에서 p["qty"]*at 을 뺀 room 으로 별도 적용한다.
+            if NAME_CAP is not None and sh > 0:
+                sh = min(sh, max(0, int((NAME_CAP * nav_today) // price)))
+            if sh <= 0:
+                continue
             stub = dict(tk=tk, name=nmap.get(tk, ""), market=MKT.get(mmap.get(tk, ""), mmap.get(tk, "")),
                         entry_above=above, entry_bull=bull, buy_count=1)
             if not lev_ok(day, sh * price):
