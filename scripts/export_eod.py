@@ -350,6 +350,23 @@ SIZE_BELOW = float(os.environ.get("S2_SIZE_BELOW", "0.09"))
 _ncap_s = os.environ.get("S2_NAME_CAP", "").strip()
 NAME_CAP = float(_ncap_s) if _ncap_s else None
 
+# ★★★[2026-08-26 신설 · CAND-2026-08-26-2] 반복재진입 제한 — ★kr_s2_engine reentry_* 이식.
+#   [배경] `kr_s2_engine.py` 에서 해달별님과 확정(S2_REENTRY_FINAL_2026-08-25.md) —
+#     reentry_relax=True(청산종목 재진입 자격게이트 완화) · reentry_max_count=2(영구차단전
+#     허용 재진입 횟수) · reentry_size_frac=0.75(재진입 매수액 배수) ·
+#     reentry_reset_days=1186(39개월, 이 일수 지나면 카운터 리셋 — 고갈방지).
+#     ⚠️채택 근거는 성과 우위가 아니라 「청산종목의 44–47%가 창 안에서 영구차단되는」
+#     고갈 방지(구조적 근거) — §4-6 다.
+#   [게이트] 4개 전부 기본값 = canonical 항등(S2_REENTRY_RELAX 미설정=off).
+#     되돌리기 — 4개 env 를 전부 지운다(REENTRY_RELAX 만 지워도 나머지는 무의미해진다).
+_rrx_s = os.environ.get("S2_REENTRY_RELAX", "").strip().lower()
+REENTRY_RELAX = _rrx_s in ("1", "true", "yes")
+REENTRY_SIZE_FRAC = float(os.environ.get("S2_REENTRY_SIZE_FRAC", "1.0"))
+_rmc_s = os.environ.get("S2_REENTRY_MAX_COUNT", "").strip()
+REENTRY_MAX_COUNT = int(_rmc_s) if _rmc_s else None
+_rrd_s = os.environ.get("S2_REENTRY_RESET_DAYS", "").strip()
+REENTRY_RESET_DAYS = int(_rrd_s) if _rrd_s else None
+
 # ★★★[2026-08-24 신설 · CAND-2026-08-24-240 · 해달별님 지시] 유동성 참여율 상한 — ★비례 축소.
 #   ★해달별님: *"참여율이 걸리면 투입금액을 비례하여 줄이는 형태로 가면 더 좋을 것 같은데."*
 #   ★T1 채택본(`T1_LIQ_DEN=med20` · `T1_LIQ_REALLOC=1.5` · 2026-08-24 운영 반영)의 ★S2 이식이다.
@@ -1017,6 +1034,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
         by_date[rec["date"]][rec["ticker"]] = rec
 
     positions, last_exit = {}, {}
+    # ★반복재진입 카운터(2026-08-26 · CAND-2026-08-26-2) — REENTRY_RELAX=False 면 영원히 빈 채로
+    #   남아 아래 분기가 전부 죽는다(canonical 항등).
+    s2_reentry_ct = {}
     cash = float(start_cap); peak = cash
     executions, trades, legs, nav_rows, snaps = [], [], [], [], []
     candidates, counts = [], []
@@ -1341,7 +1361,16 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             if price > support * (1 + PROX):          # 지지선에서 너무 멀면 후보 아님
                 continue
             rs = sm.get((tk, d))
-            if rs is None or (tk in last_exit and not (rs > last_exit[tk])):
+            if rs is None:
+                continue
+            if (not REENTRY_RELAX) and (tk in last_exit and not (rs > last_exit[tk])):
+                continue
+            if (REENTRY_RELAX and REENTRY_RESET_DAYS is not None and tk in last_exit
+                    and s2_reentry_ct.get(tk, 0) > 0 and (d - last_exit[tk]).days >= REENTRY_RESET_DAYS):
+                # ★재진입 시간경과 리셋 — 직전 청산일로부터 REENTRY_RESET_DAYS 일 이상
+                #   지났으면 카운터를 0으로 되돌린다(고갈 방지 · kr_s2_engine 과 동일 로직).
+                s2_reentry_ct[tk] = 0
+            if REENTRY_RELAX and REENTRY_MAX_COUNT is not None and s2_reentry_ct.get(tk, 0) >= REENTRY_MAX_COUNT:
                 continue
             ml = r.get("ma_long"); above = bool(pd.notna(ml) and price > ml); bull = smy.get((tk, d))
             sz = SIZE_ABOVE if above else SIZE_BELOW
@@ -1366,6 +1395,10 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
         for tk, price, sz, above, bull, _kn in _reached:
             n_reached += 1
             amt = sz * nav_today
+            # ★재진입 사이징 축소(2026-08-26 · CAND-2026-08-26-2) — REENTRY_RELAX=False(기본)
+            #   면 위 게이트가 이미 재진입을 거의 다 걸러 이 분기는 사실상 무의미(canonical 항등).
+            if REENTRY_RELAX and REENTRY_SIZE_FRAC != 1.0 and tk in last_exit:
+                amt *= REENTRY_SIZE_FRAC
             # ★★[CAND-2026-08-24-240] 참여율 상한 — ★비례 축소(차단 아님). off 면 cap=None.
             _cap = _liq_cap_krw(tk, d)
             if _cap is not None:
@@ -1430,11 +1463,14 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 knife=_kn, tgt_mult=_tmult,
                 tranche=amt, avg_buy=price, last_buy=price, buy_count=1, sell_count=0, stop=None,
                 qty=sh, total_qty=sh, min_low=price, last_close=price,
-                entry_above=above, entry_bull=bull, tid=tid_seq, cost=_cost, proc=0.0, legs=[])
+                entry_above=above, entry_bull=bull, tid=tid_seq, cost=_cost, proc=0.0, legs=[],
+                is_reentry=bool(REENTRY_RELAX and tk in last_exit))
             positions[tk] = p
             ex(d, p, "buy_new", 1, price, sh, nav_today)
             leg(p, d, "buy_new", 1, price, sh, nav_today)
             n_bought += 1
+            if REENTRY_RELAX and tk in last_exit:
+                s2_reentry_ct[tk] = s2_reentry_ct.get(tk, 0) + 1
         counts.append(dict(d=d, n_candidates=n_cand, n_reached=n_reached,
                            n_bought=n_bought, n_blocked=n_blocked))
 
