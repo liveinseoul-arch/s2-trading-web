@@ -83,6 +83,14 @@ $env:BT_RS_ROW_FP = "1"
 #   ★둘 다 off재현 검증 완료(§ RS_UNIVERSE_SUFFIXFIX_ROWGUARD_2026-08-24.md) · 되돌리기 = 아래 2줄 삭제.
 $env:BT_DELIST_SPAC_FIX = "1"
 $env:BT_DELIST_SUFFIX_FIX = "1"
+# [2026-08-26 해달별님 승인 「통합패치 적용해 -23-910·-24-210 둘 다 켠다」] — 17_88_cmp_sf1.py:1677.
+#   BT_DELIST_TRANSFER_FIX(CAND-2026-08-23-910/CAND-2026-08-24-210) — 이전상장 구표기
+#   '증권거래소 상장'(21행)·'한국증권거래소 상장'(5행)·'코스닥시장 상장'(4행)을 transfer_mask 에 추가.
+#   살아 있는데 상폐로 오분류돼 차단되던 19종목(예: HD한국조선해양·NCSOFT·이수페타시스·코웨이)이
+#   해제된다 · 034300(신세계건설·2025-02-24 진짜상폐)은 :1687 행가드가 보존(회귀 아님, 검증 완료).
+#   off재현 해시 2026-08-24 참조값과 비트동일 재확인(archive/_2026-08-26_transfer_fix_enable_verify.py)
+#   · 되돌리기 = 아래 1줄 삭제.
+$env:BT_DELIST_TRANSFER_FIX = "1"
 # [2026-08-16 랙 수리] KR 일봉 캐시를 연장본(live)으로 지정 — 17_88_cmp_sf1.py:106 이 이 env 를
 #   읽는다(기본값 _bt_daily_cache_kr.pkl · 07-24 이후 동결). live 는 금 17시대 S2_rs_kr_jp 의
 #   신설 단계 [0](append_kr_daily_cache.py)이 매주 연장한다.
