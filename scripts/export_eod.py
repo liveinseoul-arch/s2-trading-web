@@ -383,6 +383,25 @@ REENTRY_COOLDOWN_DAYS = int(_rcd_s) if _rcd_s else None
 REENTRY_COOLDOWN_THRESHOLD = float(os.environ.get("S2_REENTRY_COOLDOWN_THRESHOLD", "-20.0"))
 REENTRY_CD_N = {"blocked": 0}   # ★발동 카운터(VB_SKIP·PH_N 과 같은 패턴)
 
+# ★★★[2026-08-26 채택 · CAND-2026-08-22-120 · 해달별님 결정] 무상증자 권리락 진입차단
+#   ★배경 — `S2_CA_ADJUST`(채널①)는 보유 리스케일만 하고, 진입 판정은 `close` 로만 본다.
+#   corporate_actions.db 는 상장주식수 변화일만 사건으로 잡는데 무상증자는 권리락일에
+#   먼저 떨어지고 신주는 수주 뒤 상장돼 그 사이 주식수가 그대로라 권리락일이 사건으로
+#   안 잡힌다 — `backtest.py:139` `S2_EXRIGHTS_BLOCK`(canonical 전용, 기본 off)이 이미
+#   있는 방어를 운영에는 이식하지 않고 있었다. 결정창 진입 8건 · NAV영향 1.52% · 순
+#   −7,394,350원(손해 방향) — ③=0.0242(문턱 미달)이나 무결성(가짜신호 차단) 근거로 채택.
+#   ★탐지(backtest.py:294-334 이식, 룩어헤드 0) — ①전일 종가 대비 하락률이 그날 가격제한폭
+#   밖(2015-06-15 이후 ±30%/이전 ±15%) ②하락 방향만(무상증자 권리락 특성 — 상승 이탈은
+#   재상장이라 별개) ③직전봉 거래(volume>0) ④당일 유효봉(o/h/l>0). 조치는 진입 차단만
+#   (가격 리스케일 안 함) — ma_period 거래일 동안 그 종목 신규진입을 막는다. 보유 매도는
+#   정상 작동.
+#   ★off재현 — 기본 "0" = canonical 항등(가드 전체가 O(1) 조건평가만 하고 스킵).
+#   ★되돌리기 — run_eod.ps1 의 env 줄 삭제.
+#   근거: quant_infra/2026-08/REPRICE_S2_TRANSFER_2026-08-22.md §0·§2-3
+EXRIGHTS_BLOCK = os.environ.get("S2_EXRIGHTS_BLOCK", "0") == "1"
+EXR_N = {"hit": 0}              # ★발동 카운터(canonical 과 동일 이름 — 대조 검증용)
+EXR_HITS = []                   # (ticker, date, ratio)
+
 # ★★★[2026-08-26 신설 · CAND-2026-08-26-14] F4 반사실 전용 — 지정 종목을 유니버스에서
 #   완전히 제외(신규진입 자체를 막음 · 기존 보유는 영향 없음, 애초에 이 게이트를 켠
 #   런에는 그 종목 보유가 없다). ★연구용 일회성 게이트 — 기본 빈 문자열=off=canonical
@@ -1141,6 +1160,35 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     _RET5[(_tk, str(_D[_e])[:10])] = _c[_e] / _c[_e - 5] - 1
         print(f"[entry-filter] ret5<{ENTRY_MIN_RET5} 사전계산 {len(_RET5)}건")
 
+    # ★무상증자 권리락 진입차단(CAND-2026-08-22-120) — backtest.py:294-334 이식.
+    #   종목별 (진입차단 종료일 포함) 날짜 집합을 미리 만든다 — 룩어헤드 0(그날까지 정보만).
+    _EX_BLOCK: set = set()          # {(ticker, "YYYY-MM-DD"), ...}
+    if EXRIGHTS_BLOCK:
+        _MA_PERIOD = 20              # backtest.py Config.ma_period 기본값과 동일(ma20 지지선 길이)
+        _has_vol = "volume" in px.columns
+        for _tk, _g in px.groupby("ticker"):
+            _g = _g.sort_values("date")
+            _dates = _g["date"].to_numpy()
+            _cl = _g["close"].to_numpy(dtype=float)
+            _op = _g["open"].to_numpy(dtype=float)
+            _hi = _g["high"].to_numpy(dtype=float)
+            _lo = _g["low"].to_numpy(dtype=float)
+            _vo = _g["volume"].to_numpy(dtype=float) if _has_vol else None
+            _dstr = [str(x)[:10] for x in _dates]
+            for _i in range(1, len(_g)):
+                _pc, _cc = _cl[_i - 1], _cl[_i]
+                if _pc <= 0 or _cc <= 0:
+                    continue
+                _lim = 0.30 if _dstr[_i] >= "2015-06-15" else 0.15
+                if (_cc / _pc < (1.0 - _lim) - 1e-9
+                        and (_vo is None or _vo[_i - 1] > 0)
+                        and _op[_i] > 0 and _hi[_i] > 0 and _lo[_i] > 0):
+                    EXR_N["hit"] += 1
+                    EXR_HITS.append((_tk, _dstr[_i], round(_cc / _pc, 6)))
+                    for _m in range(_i, min(len(_g), _i + _MA_PERIOD)):
+                        _EX_BLOCK.add((_tk, _dstr[_m]))
+        print(f"[exrights-block] 권리락 진입차단 on — 발동 {EXR_N['hit']}건 · 차단일수 {len(_EX_BLOCK)}종목-일")
+
     # (실험) 종목별 최근 RISE2W_WIN 거래일 순방향 최대상승폭(저점→이후고점) — 매수우선순위·차등목표 공용.
     _RISE2W = {}
     if BUY_PRIORITY == "rise2w" or _WIDE_T is not None:
@@ -1390,6 +1438,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             if tk in positions or tk in closed:
                 continue
             if tk in F4_EXCLUDE:      # ★F4 반사실 전용(2026-08-26 · CAND-2026-08-26-14). 기본 빈 set=off=무영향
+                continue
+            if EXRIGHTS_BLOCK and (tk, str(r["date"])[:10]) in _EX_BLOCK:   # ★CAND-2026-08-22-120. off=빈 set=무영향
                 continue
             if not (pd.notna(r["ma20"]) and r["date"] >= period_start):
                 continue
