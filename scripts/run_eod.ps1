@@ -350,6 +350,29 @@ $env:S2_PLAN_ARCHIVE_DIR = (Join-Path $root "results\daily_order_plan_archive")
 $env:S2_LIQ_PART_MAX = "0.03"                                          # ★하루 한 종목 <= 3% x med20
 $env:S2_LIQ_LEGS = "all"                                               # ★신규 + 추가매수(1차만 막으면 샌다)
 
+# ★[2026-08-26 · CAND-2026-08-26-2/-12 · 해달별님 채택결정] 재진입 2회제한(39개월리셋)
+#   + 손실비례 쿨다운 병행 게이트 — env게이트 6줄.
+#   [무엇을] 청산 종목의 재진입 자격게이트를 완화하되(reentry_relax) mc=2 넘으면 영구
+#     차단, reset_days 지나면 카운터 리셋(고갈 방지 · 성과근거 아님 — 원 채택근거는
+#     §4-6다). 여기에 손실비례쿨다운(직전청산 1차매수금액대비 손실 -20%이상이면
+#     60일간 재진입 자체를 막음)을 병행 — mc=2 단독으로는 못 막던 즉시재진입 참사
+#     (내츄럴엔도텍 3연속손절 사례)를 억제.
+#   ★§4-5 4셀 실측(순수기준 대비 A+B) — CAGR 14.16→17.39%(+3.23%p) ·
+#     MDD −7.81→−10.47%(−2.66%p 악화) · |ΔCAGR/ΔMDD|=1.21>1(★해달별님 채택기준).
+#   ⚠️인용 한정 — 「MDD 개선」이 아니라 「재진입허용의 부작용(−7.85%p)을 66% 상쇄」.
+#     「반복손실형」(내츄럴엔도텍류)만 방지 — 「돌발악재형」(메지온 FDA임상실패류)은
+#     원리적으로 못 막음(§4-2d 관문4 세계지문 확인 완료).
+#   ★되돌리기 — 아래 6줄을 지운다(= off = CSV 9/9 비트 동일 · 실측 완료).
+#   근거: quant_infra/2026-08/S2_REENTRY_COOLDOWN_2026-08-26.md
+#         quant_infra/2026-08/S2_REENTRY_OPSPORT_2026-08-26.md
+#         사전등록 quant_infra/prereg/2026-08-26_s2_reentry_cooldown_gate.md
+$env:S2_REENTRY_RELAX = "1"                                            # ★재진입 자격게이트 완화
+$env:S2_REENTRY_MAX_COUNT = "2"                                        # ★재진입 2회 초과시 영구차단
+$env:S2_REENTRY_SIZE_FRAC = "0.75"                                     # ★재진입 매수액 0.75배 축소
+$env:S2_REENTRY_RESET_DAYS = "1186"                                    # ★39개월 지나면 카운터 리셋
+$env:S2_REENTRY_COOLDOWN_DAYS = "60"                                   # ★손실 임계 초과시 60일 재진입 금지
+$env:S2_REENTRY_COOLDOWN_THRESHOLD = "-20.0"                           # ★1차매수금액대비 손실률 임계(%)
+
 & C:\Python314\python.exe "s2-trading-web\scripts\export_eod.py" *>> $log  # executions/보유/거래/카운트/후보 적재
 # ★[2026-08-24 · CAND-2026-08-24-520] ★try/catch — ★위 서문 참조(로그만 · rc 불변).
 $rcEod = $LASTEXITCODE
