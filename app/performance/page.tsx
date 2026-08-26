@@ -29,11 +29,15 @@ export default function Performance() {
         <Stat label="완결 거래" value={`${meta.nTrades}건`} />
         <Stat label="승률" value={`${meta.winRate.toFixed(1)}%`} />
         <Stat label="매매당 평균" value={pct(meta.avgRet)} tone={signClass(meta.avgRet)} />
+        <Stat label="자본가중 평균" value={pct(meta.capwRet)} tone={signClass(meta.capwRet)} />
       </div>
       <p className="mb-4 text-xs text-muted">
         기준자본 1억 · {meta.start} ~ {meta.end} · 최종 {meta.finalMult.toFixed(2)}배 · 원화 기준.
         구성: {meta.config}. 저승률·고손익비 순정 모멘텀(−8% 손절로 손실 조기 차단 + EMA 트레일로 승자 보유).
         비용·슬리피지 일부 미반영. 자세히는 규칙 화면 참고.
+        <br />
+        <b>매매당 평균</b>은 거래 수로 나눈 단순평균이고 <b>자본가중 평균</b>은 Σ손익÷Σ투입(진입가×수량)이다 —
+        포지션 크기가 다른 건을 투입액 비중대로 반영해 큰 포지션의 성과를 더 무겁게 본다.
       </p>
 
       <Section title="연도별 성과" sub="연도를 누르면 그 해 월별·거래 상세. 전략 vs KOSPI·KOSDAQ 비교.">
@@ -110,7 +114,7 @@ export default function Performance() {
               <thead className="text-xs text-muted">
                 <tr className="border-b border-[var(--color-borderc)] text-right">
                   <th className="py-1.5 text-left">월</th><th>월수익률</th><th>거래</th><th>보유</th>
-                  <th>승률</th><th>평균</th><th>실현손익</th><th>MDD</th>
+                  <th>승률</th><th>평균</th><th>자본가중</th><th>실현손익</th><th>MDD</th>
                 </tr>
               </thead>
               <tbody>
@@ -124,6 +128,7 @@ export default function Performance() {
                     <td className="text-muted">{rs96Perf.held[m.month]?.length ?? 0}</td>
                     <td>{m.num > 0 ? `${m.win.toFixed(0)}%` : "-"}</td>
                     <td className={signClass(m.avg)}>{m.num > 0 ? pct(m.avg) : "-"}</td>
+                    <td className={signClass(m.capw)}>{m.num > 0 ? pct(m.capw) : "-"}</td>
                     <td className={signClass(m.pnl)}>{m.num > 0 ? eok(m.pnl) : "-"}</td>
                     <td className="text-down">{pct(m.mdd)}</td>
                   </tr>

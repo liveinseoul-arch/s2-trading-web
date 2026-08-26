@@ -5,15 +5,15 @@ import raw from "./rs96Perf.json";
 
 export interface RsPerfMeta {
   cagr: number; mdd: number; calmar: number; nTrades: number;
-  winRate: number; avgRet: number; finalMult: number;
+  winRate: number; avgRet: number; capwRet: number; finalMult: number;
   start: string; end: string; base: number; config: string;
 }
 export interface RsPerfYear {
   year: number; ret: number; mdd: number; kospi: number | null; kosdaq: number | null;
-  num: number; win: number; avg: number; pnl: number;
+  num: number; win: number; avg: number; capw: number; pnl: number;
 }
 export interface RsPerfMonth {
-  month: string; ret: number; mdd: number; num: number; win: number; avg: number; pnl: number;
+  month: string; ret: number; mdd: number; num: number; win: number; avg: number; capw: number; pnl: number;
 }
 export interface RsPerfTrade {
   ticker: string; name: string; entry: string; exit: string;

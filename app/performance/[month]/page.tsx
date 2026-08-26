@@ -31,6 +31,7 @@ export default async function PerfMonth({ params }: { params: Promise<{ month: s
             { k: "거래", v: `${stat.num}건` },
             { k: "승률", v: stat.num > 0 ? `${stat.win.toFixed(0)}%` : "-" },
             { k: "매매당 평균", v: stat.num > 0 ? pct(stat.avg) : "-", c: signClass(stat.avg) },
+            { k: "자본가중 평균", v: stat.num > 0 ? pct(stat.capw) : "-", c: signClass(stat.capw) },
             { k: "실현손익", v: stat.num > 0 ? eok(stat.pnl) : "-", c: signClass(stat.pnl) },
             { k: "MDD", v: pct(stat.mdd), c: "text-down" },
           ].map((s) => (

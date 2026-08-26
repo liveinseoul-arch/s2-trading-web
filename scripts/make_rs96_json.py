@@ -24,10 +24,14 @@ def i(x): return None if pd.isna(x) else int(x)
 yrs = (nav["date"].iloc[-1]-nav["date"].iloc[0]).days/365.25
 cagr = (nav["equity"].iloc[-1]/BASE)**(1/yrs)-1
 mdd = (nav["equity"]/nav["equity"].cummax()-1).min()
+# ★자본가중(전체) = Σ손익 ÷ Σ투입(entry_price×shares) — CAND-2026-08-26-47.
+#   CAND-2026-08-23-601(T1 웹앱)과 동형 병기. 단순평균(avgRet)은 그대로 유지, 신규 필드만 추가.
+inv_all = (tr["entry_price"] * tr["shares"]).sum()
+capw_all = (tr["pnl_$"].sum() / inv_all * 100) if inv_all > 0 else 0
 meta = dict(
     cagr=round(cagr*100,2), mdd=round(mdd*100,2), calmar=round(cagr/abs(mdd),2),
     nTrades=int(len(tr)), winRate=round((tr["pnl_%"]>0).mean()*100,1),
-    avgRet=round(tr["pnl_%"].mean(),2), finalMult=round(nav["equity"].iloc[-1]/BASE,2),
+    avgRet=round(tr["pnl_%"].mean(),2), capwRet=round(capw_all,2), finalMult=round(nav["equity"].iloc[-1]/BASE,2),
     start=nav["date"].iloc[0].strftime("%Y-%m-%d"), end=nav["date"].iloc[-1].strftime("%Y-%m-%d"),
     base=int(BASE),
     config="영업이익 C≥25% + 거래대금 상위20% + ATR 0.7%·2×ATR + EMA 트레일링(+20%→21EMA/+50%→50EMA) + −8% 손절",
@@ -35,11 +39,11 @@ meta = dict(
 
 yearly = [dict(year=int(r.year), ret=d(r.return_pct), mdd=d(r.mdd_pct),
                kospi=d(r.kospi), kosdaq=d(r.kosdaq), num=i(r.num_trades),
-               win=round(r.win_rate,0), avg=d(r.avg_ret), pnl=int(r.realized_pnl))
+               win=round(r.win_rate,0), avg=d(r.avg_ret), capw=d(r.capw_ret), pnl=int(r.realized_pnl))
           for _, r in yr.iterrows()]
 
 monthly = [dict(month=r.month, ret=d(r.return_pct), mdd=d(r.mdd_pct), num=i(r.num_trades),
-                win=round(r.win_rate,0), avg=d(r.avg_ret), pnl=int(r.realized_pnl))
+                win=round(r.win_rate,0), avg=d(r.avg_ret), capw=d(r.capw_ret), pnl=int(r.realized_pnl))
            for _, r in mon.iterrows()]
 
 # trades — 상세용 (exit 기준 정렬)

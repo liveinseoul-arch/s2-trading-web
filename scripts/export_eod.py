@@ -151,7 +151,7 @@ if os.environ.get("S2_CA_ADJUST", "0") == "1":
             f"opsDB 2019-03-08 이전 이중보정 금지 조합(CLAUDE.md §2). "
             f"S2_CA_FROM 을 {_CA_FLOOR} 이상으로 설정할 것.")
 
-from backtest import _prepare, CA_ADJUST, CA_FROM, CA_MAP  # noqa: E402
+from backtest import _prepare, CA_ADJUST, CA_FROM, CA_MAP, format_avg_return  # noqa: E402
 from notify import telegram_send                  # noqa: E402
 
 if CA_ADJUST:
@@ -1824,7 +1824,10 @@ def dry_run_dump(data, base_cap):
     print(f"  체결 {len(data['executions'])} (미체결 {sum(1 for e in data['executions'] if e['blocked_by_leverage'])}) | "
           f"완결거래 {len(closed)} | 미청산 {len(tr)-len(closed)} | 월 {len(data['monthly_stats'])}")
     if len(closed):
-        print(f"  완결 평균수익률 {closed['ret_pct'].mean():+.2f}% | 승률 {(closed['pnl']>0).mean()*100:.1f}%")
+        # ★CAND-2026-08-24-581 — s2_method/backtest.py 의 format_avg_return() 을 그대로
+        #   import 재사용(진짜 공용 헬퍼). 단순평균 표시는 그대로 두고 자본가중만 병기.
+        print(f"  완결 평균수익률 {format_avg_return(closed, pnl_col='pnl', invested_col='max_invested', pct_col='ret_pct', signed=True)} | "
+              f"승률 {(closed['pnl']>0).mean()*100:.1f}%")
     print(f"  최신 감시주문 플랜 {len(data['daily_order_plan'])}건 (기준일 {data['last_date']})")
     # ★S2_COMBO_RS — 10번째 파일. ★off 면 안 만든다(9개 CSV 목록·해시 불변 계약)
     if COMBO_RS:

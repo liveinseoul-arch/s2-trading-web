@@ -31,6 +31,7 @@ export default async function PerfYear({ params }: { params: Promise<{ year: str
             { k: "KOSDAQ", v: pct(y.kosdaq), c: signClass(y.kosdaq) },
             { k: "거래", v: `${y.num}건` },
             { k: "승률", v: y.num > 0 ? `${y.win.toFixed(0)}%` : "-" },
+            { k: "평균(자본가중)", v: y.num > 0 ? `${pct(y.avg)} (${pct(y.capw)})` : "-", c: signClass(y.avg) },
           ].map((s) => (
             <div key={s.k} className="rounded-lg border border-[var(--color-borderc)] bg-surface p-2">
               <div className="text-xs text-muted">{s.k}</div>
@@ -47,7 +48,7 @@ export default async function PerfYear({ params }: { params: Promise<{ year: str
               <thead className="text-xs text-muted">
                 <tr className="border-b border-[var(--color-borderc)] text-right">
                   <th className="py-1.5 text-left">월</th><th>월수익률</th><th>거래</th><th>보유</th>
-                  <th>승률</th><th>평균</th><th>실현손익</th><th>MDD</th>
+                  <th>승률</th><th>평균</th><th>자본가중</th><th>실현손익</th><th>MDD</th>
                 </tr>
               </thead>
               <tbody>
@@ -61,6 +62,7 @@ export default async function PerfYear({ params }: { params: Promise<{ year: str
                     <td className="text-muted">{rs96Perf.held[m.month]?.length ?? 0}</td>
                     <td>{m.num > 0 ? `${m.win.toFixed(0)}%` : "-"}</td>
                     <td className={signClass(m.avg)}>{m.num > 0 ? pct(m.avg) : "-"}</td>
+                    <td className={signClass(m.capw)}>{m.num > 0 ? pct(m.capw) : "-"}</td>
                     <td className={signClass(m.pnl)}>{m.num > 0 ? eok(m.pnl) : "-"}</td>
                     <td className="text-down">{pct(m.mdd)}</td>
                   </tr>

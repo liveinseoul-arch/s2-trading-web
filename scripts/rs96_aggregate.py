@@ -39,8 +39,12 @@ for ym, g in eq.groupby("ym"):
     n = len(ex); win = (ex["pnl_%"] > 0).mean()*100 if n else 0
     avg = ex["pnl_%"].mean() if n else 0
     pnl = ex["pnl_$"].sum() if n else 0
+    # ★자본가중 = Σ손익 ÷ Σ투입(entry_price×shares) — CAND-2026-08-26-47(CAND-2026-08-23-601 과 동형).
+    #   단순평균은 건당 성과를 거래 수로만 나눠 큰 포지션과 작은 포지션을 같은 무게로 만든다.
+    inv = (ex["entry_price"] * ex["shares"]).sum() if n else 0
+    capw = (pnl / inv * 100) if inv > 0 else 0
     mrows.append(dict(month=ym, nav_start=nav_start, nav_end=nav_end, return_pct=ret*100,
-                      mdd_pct=mdd*100, num_trades=n, win_rate=win, avg_ret=avg, realized_pnl=pnl))
+                      mdd_pct=mdd*100, num_trades=n, win_rate=win, avg_ret=avg, capw_ret=capw, realized_pnl=pnl))
     prev_end = nav_end
 monthly = pd.DataFrame(mrows)
 
@@ -59,8 +63,11 @@ for yr, g in eq.groupby("yr"):
     ex = tr[tr["exit_date"].dt.year == yr]
     n = len(ex); win = (ex["pnl_%"] > 0).mean()*100 if n else 0
     avg = ex["pnl_%"].mean() if n else 0; pnl = ex["pnl_$"].sum() if n else 0
+    # ★자본가중 — 월별과 동일 정의(CAND-2026-08-26-47).
+    inv = (ex["entry_price"] * ex["shares"]).sum() if n else 0
+    capw = (pnl / inv * 100) if inv > 0 else 0
     yrows.append(dict(year=yr, return_pct=ret*100, mdd_pct=mdd*100, kospi=ks_ret*100,
-                      kosdaq=kq_ret*100, num_trades=n, win_rate=win, avg_ret=avg, realized_pnl=pnl))
+                      kosdaq=kq_ret*100, num_trades=n, win_rate=win, avg_ret=avg, capw_ret=capw, realized_pnl=pnl))
     prev_end = nav_end; prev_ks = ks_end; prev_kq = kq_end
 yearly = pd.DataFrame(yrows)
 
@@ -68,8 +75,11 @@ yearly = pd.DataFrame(yrows)
 yrs = (eq["date"].iloc[-1]-eq["date"].iloc[0]).days/365.25
 cagr = (eq["equity"].iloc[-1]/BASE)**(1/yrs)-1
 mdd_all = eq["dd"].min()
+inv_all = (tr["entry_price"] * tr["shares"]).sum()          # ★자본가중 전체 — CAND-2026-08-26-47
+capw_all = (tr["pnl_$"].sum() / inv_all * 100) if inv_all > 0 else 0
 print(f"전체: CAGR {cagr*100:.2f}% · MDD {mdd_all*100:.2f}% · Calmar {cagr/abs(mdd_all):.2f} "
       f"· 거래 {len(tr)} · 승률 {(tr['pnl_%']>0).mean()*100:.1f}% · 평균 {tr['pnl_%'].mean():+.2f}% "
+      f"· 자본가중 {capw_all:+.2f}% "
       f"· 최종 {eq['equity'].iloc[-1]/BASE:.2f}배 · 기간 {yrs:.1f}년")
 
 print("\n연도별 성과 (전략 vs KOSPI vs KOSDAQ)")
