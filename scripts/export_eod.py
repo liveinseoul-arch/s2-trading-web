@@ -164,7 +164,10 @@ if CA_ADJUST:
 #   ★CLAUDE.md §4-1b(2026-08-24 신설) — ★측정 도구가 없으면 「효과 없음」이 아니라 「모른다」다.
 #   ★§4-2d 관문 2 와 같은 계열(사문 + 발동 카운터).
 #   ★비용은 dict 하나 — 게이트 off 면 아무도 안 건드린다.
-CA_N = {"hit": 0, "rescale": 0, "delist": 0, "seen_pos_day": 0}
+CA_N = {"hit": 0, "rescale": 0, "delist": 0, "seen_pos_day": 0,
+        # ★★[2026-08-27 · CAND-2026-08-23-53] rs_pos(S2_COMBO_RS) 채널 전용 카운터.
+        #   ★S2_COMBO_RS 가 기본 off 라 이 셋은 지금 운영에서 영원히 0이다.
+        "rs_seen_pos_day": 0, "rs_hit": 0, "rs_rescale": 0, "rs_delist": 0}
 
 # ── 운용안 상수 (s2_candidates 와 동일) ──────────────────────────────
 MUSEOB = 0.80   # 음봉 스파이크 시 사이즈 × 0.8
@@ -1578,6 +1581,46 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
         # ══ ★S2_COMBO_RS — RS 슬리브. **S2 다음**(엔진 run():620-626 순서) ══
         #    off 면 COMBO_RS 가 False 라 이 블록 전체가 skip 된다 → 완전 무영향.
         if COMBO_RS:
+            # ★★[2026-08-27 · CAND-2026-08-23-53] rs_pos ★CA 보유 리스케일 이식.
+            #   ★배경 — rs_pos 는 별도 dict 라 §7-1 채널①(S2 positions 리스케일, :1216-1250)이
+            #     안 닿는다. S2_CA_ADJUST=1 이 운영에 이미 켜져 있어(2026-08-24 반영) 표적이
+            #     생기면 ★조용히 깨지는 종류다 — 0-런 측정(결정창 337거래 중 20건 겹침 · 실제
+            #     시뮬 재현 1건 발동)이 quant_infra/2026-08/COMBO_RSPOS_CA_INTEGRATION_2026-08-27.md 에 있다.
+            #   ★off 계약 — S2_CA_ADJUST=0(기본) 이면 CA_ADJUST=False 라 이 블록이 O(1)
+            #     조건평가만 하고 통째로 skip → 비트 동일. S2_COMBO_RS=0(기본) 이면 rs_pos 가
+            #     애초에 영원히 빈 dict 라 ★이중으로 무해하다.
+            #   ★패턴 — S2 positions 채널(:1216-1250)과 같은 처리(qty*=shares_ratio 반올림·
+            #     단주소멸 시 현금정산). rs_pos 는 avg_buy 가 없고 cost 가 ★총액(원)이라
+            #     last_close 만 k 배 하고 cost 는 그대로 둔다(진입 시점 실투입 현금은 불변).
+            if CA_ADJUST and rs_pos:
+                for tk in list(rs_pos):
+                    if tk not in day:
+                        continue
+                    p = rs_pos[tk]
+                    CA_N["rs_seen_pos_day"] += 1
+                    _ev = CA_MAP.get((tk, str(d)))
+                    if _ev is None:
+                        continue
+                    CA_N["rs_hit"] += 1
+                    _sr, _k = _ev
+                    _nq = int(round(p["qty"] * _sr))
+                    if _nq < 1:
+                        # 단주 소멸 — 전일 종가(직전 마크투마켓까지의 last_close) x k x 잔여분을
+                        #   현금 정산하고 종료(S2 positions 채널의 :1230-1244 와 같은 처리).
+                        _frac = p["qty"] * _sr
+                        _px = p["last_close"] * _k
+                        _net = _frac * _px * SELL_MULT
+                        cash += _net
+                        rs_rows.append(dict(d=d, tk=tk, action="ca_delist", qty=0,
+                                            price=round(_px), amount=round(_net),
+                                            entry_date=p["entry_date"], exit_date=p["exit_date"],
+                                            w=p["w"], pnl=round(_net - p["cost"])))
+                        CA_N["rs_delist"] += 1
+                        del rs_pos[tk]
+                        continue
+                    CA_N["rs_rescale"] += 1
+                    p["qty"] = _nq
+                    p["last_close"] *= _k
             # ① 청산 — exit_date 경과분 전부(휴장 등 날짜 불일치 방지. 엔진 rs_step:554)
             for tk in [t for t, p in rs_pos.items() if p["exit_date"] <= d]:
                 p = rs_pos.pop(tk)
@@ -2091,6 +2134,11 @@ def main():
         print(f"[CA-ops] ★발동 {CA_N['hit']}건 "
               f"(리스케일 {CA_N['rescale']} · 단주소멸 {CA_N['delist']}) / "
               f"탐색 모집단 {CA_N['seen_pos_day']:,} 보유x거래일 · CA사건 사전 {len(CA_MAP):,}건")
+    # ★★[2026-08-27 · CAND-2026-08-23-53] rs_pos 채널 — COMBO_RS·CA_ADJUST 둘 다 on 일 때만
+    if CA_ADJUST and COMBO_RS:
+        print(f"[CA-ops][rs_pos] ★발동 {CA_N['rs_hit']}건 "
+              f"(리스케일 {CA_N['rs_rescale']} · 단주소멸 {CA_N['rs_delist']}) / "
+              f"탐색 모집단 {CA_N['rs_seen_pos_day']:,} 보유x거래일")
 
     # ★손절선 버퍼 발동 카운터 (§4-1b 사문 관문 #2) — DAY_BUF > 0 일 때만 출력
     if DAY_BUF > 0:
