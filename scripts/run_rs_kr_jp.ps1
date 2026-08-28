@@ -55,6 +55,14 @@ $env:BT_DELIST_SUFFIX_FIX = "1"
 #   off재현 해시 2026-08-24 참조값과 비트동일 재확인(archive/_2026-08-26_transfer_fix_enable_verify.py)
 #   · 되돌리기 = 아래 1줄 삭제.
 $env:BT_DELIST_TRANSFER_FIX = "1"
+# [2026-08-28 해달별님 승인 「point-in-time 통일 게이트를 켠다」] — CAND-2026-08-22-110 이중
+#   라이터·이중 모집단(금 14_RS_KR_pykrx.py=상폐 항상포함 · 토 17_88_cmp_sf1.py=상폐 전기간제외)
+#   충돌을 해소한다. run_kr_perf_weekly.ps1(토)에도 같은 줄이 들어가 있다 — 반드시 짝으로 유지할 것
+#   (한쪽만 켜면 오히려 더 갈라진다). 캐시충돌방지 설계상 자동으로 별도 파일
+#   (kr_screen_rs_table_pitdel.pkl)에 쓰게 돼 두 라이터가 그 새 파일 위에서 통일된다.
+#   ★off재현 검증 — 이 줄을 빼면 기존 동작(kr_screen_rs_table.pkl 그대로)과 완전히 같다.
+#   되돌리기: 아래 1줄 삭제.
+$env:BT_RS_PCTILE_PIT_DELIST = "1"
 # 절대경로 사용 — Start-Job 은 새 세션에서 시작되어 부모의 CWD 를 상속하지 않는다.
 # (상대경로였을 때 JP 잡이 ~\Documents 기준으로 풀려 매번 즉시 실패했음: 2026-07-17 확인)
 $silent = Join-Path $root "s2-trading-web\scripts\silent_run.py"

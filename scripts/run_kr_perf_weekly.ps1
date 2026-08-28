@@ -91,6 +91,16 @@ $env:BT_DELIST_SUFFIX_FIX = "1"
 #   off재현 해시 2026-08-24 참조값과 비트동일 재확인(archive/_2026-08-26_transfer_fix_enable_verify.py)
 #   · 되돌리기 = 아래 1줄 삭제.
 $env:BT_DELIST_TRANSFER_FIX = "1"
+# [2026-08-28 해달별님 승인 「point-in-time 통일 게이트를 켠다」] — CAND-2026-08-22-110 이중
+#   라이터·이중 모집단(금 14_RS_KR_pykrx.py=상폐 항상포함 · 토 17_88_cmp_sf1.py=상폐 전기간제외)
+#   충돌을 해소한다. 이 게이트를 켜면 build_kr_rs_table 이 상폐 종목을 "그 주차 기준으로만"
+#   제외해 두 라이터의 모집단 정의가 일치한다. 캐시충돌방지 설계상 자동으로 별도 파일
+#   (kr_screen_rs_table_pitdel.pkl)에 쓰게 돼 두 라이터가 그 새 파일 위에서 통일된다
+#   (기존 kr_screen_rs_table.pkl은 이후 더는 갱신되지 않고 동결됨 — 과거값 참조용으로만 남음).
+#   ★반드시 run_rs_kr_jp.ps1(금)에도 같은 줄을 넣어야 한다 — 한쪽만 켜면 오히려 더 갈라진다.
+#   ★off재현 검증 — 이 줄을 빼면 기존 동작(kr_screen_rs_table.pkl 그대로)과 완전히 같다.
+#   되돌리기: 아래 1줄 삭제.
+$env:BT_RS_PCTILE_PIT_DELIST = "1"
 # [2026-08-16 랙 수리] KR 일봉 캐시를 연장본(live)으로 지정 — 17_88_cmp_sf1.py:106 이 이 env 를
 #   읽는다(기본값 _bt_daily_cache_kr.pkl · 07-24 이후 동결). live 는 금 17시대 S2_rs_kr_jp 의
 #   신설 단계 [0](append_kr_daily_cache.py)이 매주 연장한다.
