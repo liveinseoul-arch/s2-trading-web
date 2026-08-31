@@ -335,6 +335,21 @@ ORD_TGT_PCT = {}
 #   ⚠️`add_drop` 자체는 **튜닝 대상이 아니다** — 0.100 → 0.105 한 스텝에 MDD −11.42 → −20.75.
 ADD_DROP = float(os.environ.get("S2_ADD_DROP", "0.07"))
 MAX_BUY = int(os.environ.get("S2_MAX_BUY", "3"))   # 1차 포함 총 매수 횟수(기본3=추가매수 2회)
+# ★★★[2026-09-01 신설 · CAND-2026-09-01-11 · ★해달별님 발안] 갭 조건부 추가매수 차단.
+#   ★해달별님: 「갭 <= -10% AND 차수=2에 대해 추가 진입을 막는 형태는 어떠한가?」
+#   ★그날 시가가 전일 유효봉 종가 대비 GAP% 이하로 갭하락했고 이미 MIN_BC 번 이상 샀으면
+#   ★그날 그 종목의 추가매수를 건너뛴다. ★기존 포지션은 손대지 않는다(청산은 원래 규칙대로).
+#   ⚠️★기본 off(GAP=0) = 종전 동작. 되돌리기는 이 env 를 지우는 것 한 줄이다.
+#   ★기준값은 p["ph_ref"](= 어제까지의 유효봉 종가)다 — 당일 종가를 선취하지 않고
+#     정지봉(OHL=0)이 만드는 가짜 갭도 타지 않는다(§8-1 정지봉 결함과 같은 계열).
+#   ★사전 계량(백테스트 0런) — GAP=-10·MIN_BC=2 는 결정창 1건 / 프로덕션창 2건이 걸리고
+#     ★전부 newlow_stop 이며 ★이익건 부수 피해가 0이다. 문턱 -8/-10/-12 가 같은 표적이라
+#     ★조율할 파라미터가 없다. ⚠️MIN_BC 를 1로 내리면 정밀도가 100 -> 50%로 무너진다.
+#   → prereg/2026-09-01_S2_갭조건부_추가매수차단.md
+ADDBLK_GAP = float(os.environ.get("S2_ADDBLOCK_GAP", "0"))      # 0 = off. 예: -10 (%)
+ADDBLK_MIN_BC = int(os.environ.get("S2_ADDBLOCK_MIN_BC", "2"))  # 이 차수 이상에서만 본다
+ADDBLK_ON = ADDBLK_GAP < 0
+ADDBLK_N = {"eval": 0, "block": 0, "noref": 0}
 # 사이징 (NAV %) — 120일선 위 SIZE_ABOVE / 아래 SIZE_BELOW. 기본 0.18 / 0.09.
 # env S2_SIZE_ABOVE / S2_SIZE_BELOW (예: 0.15 / 0.075 = 구 설정)
 SIZE_ABOVE = float(os.environ.get("S2_SIZE_ABOVE", "0.18"))
@@ -1318,6 +1333,16 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     and not _oldtgt_hit):
                 at = _to_tick(p["last_buy"] * (1 - ADD_DROP))   # 추가매수가 호가단위 반올림
                 _skip = (p["buy_count"] >= NL_AFTER and at <= p["min_low"])
+                # ★★[CAND-2026-09-01-11] 갭 조건부 차단 — ★원장 측. plan 측(:하단)과 같은 술어.
+                if ADDBLK_ON and p["buy_count"] >= ADDBLK_MIN_BC:
+                    _ar = p.get("ph_ref")     # ★어제까지의 유효봉 종가(당일 선취 금지)
+                    if not _ar or _ar <= 0 or op <= 0:
+                        ADDBLK_N["noref"] += 1
+                    else:
+                        ADDBLK_N["eval"] += 1
+                        if (op / _ar - 1.0) * 100.0 <= ADDBLK_GAP:
+                            ADDBLK_N["block"] += 1
+                            _skip = True
                 # ★유령 가드 — 원장 측. ⚠️plan 측과 **같은 술어 · 같은 시점**을 쓴다.
                 #   ★`prev=True` — 오늘 체결되는 이 주문은 **어제 저녁 계획**의 산물이므로
                 #     어제까지의 기준값(`ph_ref`·`ph_halt`)으로 판정한다. 그래서 정지 재개일에는
@@ -1780,6 +1805,13 @@ def build_order_plan(positions, d, nav, park_amount=None):
         if p["sell_count"] == 0 and p["buy_count"] < MAX_BUY:
             at = _to_tick(p["last_buy"] * (1 - ADD_DROP))   # 추가매수가 호가단위 반올림
             skip_conflict = (p["buy_count"] >= NL_AFTER and at <= p["min_low"])
+            # ★★[CAND-2026-09-01-11] 갭 조건부 차단 — ★계획 측에는 ★넣지 않는다.
+            #   ★왜 — 계획은 ★전날 저녁에 내는데 ★갭은 ★이튿날 09:00 시가로 정해진다.
+            #   ★즉 계획 시점에는 ★판정할 정보가 원리적으로 없다(유령 가드가 `prev=True` 로
+            #   ★어제 기준값을 쓰는 것과 다르다 — 저건 어제 값이면 되지만 이건 내일 값이 필요하다).
+            #   ⚠️★★따라서 ★실주문 데몬(`autotrade/kw_watchloop.py`)이 이 계획을 받아 발주하면
+            #     ★이 가드가 ★실계좌에 반영되지 않는다 — ★데몬 쪽 이식은 ★별개 축이고
+            #     ★실주문 경로라 ★반드시 해달별님 확인을 받는다(§4-6 「그래도 언제나 묻는 것」).
             # ★유령 가드 — **주문 측**. 이 자리가 실주문이 나가는 다리다.
             #   block: 그 감시주문 줄을 아예 내지 않는다(거부).  warn: note 에 표시만 한다.
             #   ⚠️★클램프(가격을 바꿔서 낸다)는 채택하지 않는다 — 올바른 신 스케일 가격을
@@ -2125,6 +2157,14 @@ def main():
               "재배분 적립 %d · 인출 %d · PART_MAX=%.4f · LEGS=%s · REALLOC=%s"
               % (LIQ_N["eval"], LIQ_N["cut"], LIQ_N["zero"],
                  LIQ_N["ra_in"], LIQ_N["ra_out"], LIQ_PART_MAX, LIQ_LEGS, LIQ_RA))
+
+    # ★★[CAND-2026-09-01-11] 갭 조건부 추가매수 차단 발동 카운터 (§4-2d 관문 2).
+    #   ⚠️★block = 0 이면 「효과 없음」이 아니라 ★먼저 eval 을 본다 — eval 이 0이면
+    #     ★루프를 안 탄 것(사문)이고, eval 이 크고 block 이 0이면 ★진짜 표적 0 이다.
+    if ADDBLK_ON:
+        print("[ADDBLK] ★평가 %d건 → ★차단 %d건 (기준값 없음 %d) · GAP=%.2f%% · MIN_BC=%d"
+              % (ADDBLK_N["eval"], ADDBLK_N["block"], ADDBLK_N["noref"],
+                 ADDBLK_GAP, ADDBLK_MIN_BC))
 
     # ★★CA 리스케일 발동 카운터 (§4-2d 관문 2 · CAND-2026-08-22-19) — 게이트 on 일 때만 출력
     #   ⚠️★hit = 0 이면 「효과 없음」이 아니라 ★먼저 「표적이 정말 없는가」를 묻는다.
