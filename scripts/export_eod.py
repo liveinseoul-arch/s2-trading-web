@@ -364,6 +364,11 @@ ADDBLK_N = {"eval": 0, "hit": 0, "stop": 0, "noref": 0}
 #   `close_lim` ★★[해달별님 지시 2026-09-01] ★종가가 ★지정가 ★이하일 때만 종가 매수 —
 #     ★아니면(종가가 지정가보다 비싸면) ★차단한다. ⚠️★`close` 는 그 검사가 없어
 #     ★종가가 지정가보다 비싼 날 ★더 비싸게 산다.
+#   `mix` ★★★[2026-09-01 신설] ★차수마다 다르게 — ★**2차는 종가 매수 · 3차 이상은 차단**.
+#     ★왜 — 실측상 ①(3차 차단)과 ④(2차부터 종가)가 ★서로 다른 것을 얻는다:
+#       ①은 2015-04-30 사건을 없애고(그날 손절), ④는 2023-24 낙폭을 줄인다.
+#       ★즉 ★둘을 합칠 수 있는지 보는 것이 이 모드다.
+#     ⚠️`MIN_BC=1` 과 함께 써야 2차가 표적에 들어온다.
 ADDBLK_MODE = os.environ.get("S2_ADDBLOCK_MODE", "skip").strip().lower()
 # ★★[CAND-2026-09-01-13] 포지션 생성 시 `ref_close` 를 채운다 — ★기본 off(종전 동작).
 #   ⚠️★왜 필요한가 — 종전에는 진입 다음 ★첫 거래일에만 `p["ph_ref"]` 가 None 이라
@@ -1374,6 +1379,18 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                                 ADDBLK_N["stop"] += 1
                             if ADDBLK_MODE == "skip":
                                 _skip = True
+                            elif ADDBLK_MODE == "mix":
+                                # ★★차수 분기 — buy_count==1(=2차 매수 시도)은 ★종가 매수,
+                                #   buy_count>=2(=3차 이상)는 ★차단.
+                                if p["buy_count"] >= 2:
+                                    _skip = True
+                                elif _would and bar_ok and cl <= at:
+                                    ADDBLK_N2["close_fill"] += 1
+                                    at = _to_tick(cl)
+                                else:
+                                    if _would:
+                                        ADDBLK_N2["close_skip"] += 1
+                                    _skip = True
                             elif ADDBLK_MODE == "close_lim":
                                 # ★★해달별님 조건 — ①장중 지정가 도달 ②★종가 <= 지정가.
                                 #   ★둘 다여야 종가 매수. 아니면 차단(더 비싸게 사지 않는다).
