@@ -398,6 +398,23 @@ SIZE_BELOW = float(os.environ.get("S2_SIZE_BELOW", "0.09"))
 EXPO_CUT_AT = float(os.environ.get("S2_EXPO_CUT_AT", "0"))     # 0 = off · 예: 0.50
 EXPO_CUT_PCT = float(os.environ.get("S2_EXPO_CUT_PCT", "0.20"))
 EXPO_CUT_ON = EXPO_CUT_AT > 0
+# ★★★[2026-09-01 신설 · CAND-2026-09-01-26 · ★해달별님 발안] 노출 ★히스테리시스 적응형 사이징.
+#   ★해달별님: 「50%가 넘어가면 MA120 위에서는 0.15 적용하고, 30% 이하로 내려오면 0.18 적용.
+#             ★거꾸로 다시 50%가 넘어가기까지는 0.18 을 계속 적용.
+#             ★30에서 50% 사이는 ★전환이 이루어지지 않으면 ★예전 방식을 적용」
+#   ★즉 ★**상태 기계**다 — 문턱이 둘이고 ★그 사이는 ★직전 상태를 유지한다(chattering 방지).
+#     1차분 노출 > HI  → ★축소 모드(SIZE = BASE)
+#     1차분 노출 < LO  → ★확대 모드(SIZE = BASE x (1+PREM))
+#     LO <= 노출 <= HI → ★★직전 모드 유지
+#   ⚠️★기본 off(HI=0) = 종전 동작.
+#   ★★`CAND-2026-09-01-24`(조건부 할인 · 기각)와 다른 점 — ★총량을 ★유지하며 ★재분배한다.
+#   → prereg/2026-09-01_S2_적응형_사이징.md
+ADAPT_HI = float(os.environ.get("S2_ADAPT_HI", "0"))
+ADAPT_LO = float(os.environ.get("S2_ADAPT_LO", "0.30"))
+ADAPT_BASE = float(os.environ.get("S2_ADAPT_BASE", "0.15"))
+ADAPT_PREM = float(os.environ.get("S2_ADAPT_PREM", "0.20"))
+ADAPT_ON = ADAPT_HI > 0
+ADAPT_N = {"cut": 0, "prem": 0, "hold": 0, "flip": 0}
 EXPO_N = {"eval": 0, "cut": 0, "amt_before": 0.0, "amt_after": 0.0}
 
 # ★★★[2026-08-25 신설 · CAND-2026-08-25-10] 종목당 집중 상한 — ★kr_s2_engine `name_cap` 이식.
@@ -1169,6 +1186,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
 
     # ★S2_CASH_PARK — off 면 PARK_RET 이 None 이라 일말 블록이 통째로 skip
     PARK_RET = load_park_returns(all_dates) if PARK_TK else None
+    # ★★[CAND-2026-09-01-26] 적응형 모드 상태. ★초기 = 확대(노출 0 에서 시작).
+    adapt_mode = "prem"
     park_bal = 0.0        # 전일말 파킹 잔고(= 오늘 수익을 받는 원금)
     park_hist = []        # 일말 cash 이력 — D+2 지연(RP) 판정용
     park_earn_tot = park_fee_tot = 0.0
@@ -1613,16 +1632,33 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
         # ★★[CAND-2026-09-01-24] 그날 ★1차분 노출을 ★한 번만 계산한다(진입 루프 밖).
         #   ⚠️★그날 매수분은 아직 안 들어갔다 — ★판정 시점을 「진입 계산 직전」으로 고정한다.
         _expo_frac = 0.0
-        if EXPO_CUT_ON and nav_today > 0:
+        if (EXPO_CUT_ON or ADAPT_ON) and nav_today > 0:
             _ev1 = 0.0
             for _p in positions.values():
                 _bc = max(1, int(_p.get("buy_count", 1) or 1))
                 _ev1 += (_p.get("qty", 0) * _p.get("avg_buy", 0.0)) / _bc
             _expo_frac = _ev1 / nav_today
         _expo_hit = EXPO_CUT_ON and _expo_frac >= EXPO_CUT_AT
+        # ★★[CAND-2026-09-01-26] 히스테리시스 — 문턱 둘 · 사이는 ★직전 상태 유지.
+        if ADAPT_ON:
+            _prev = adapt_mode
+            if _expo_frac > ADAPT_HI:
+                adapt_mode = "cut"
+            elif _expo_frac < ADAPT_LO:
+                adapt_mode = "prem"
+            else:
+                ADAPT_N["hold"] += 1
+            if adapt_mode != _prev:
+                ADAPT_N["flip"] += 1
+            ADAPT_N[adapt_mode] += 1
         for tk, price, sz, above, bull, _kn in _reached:
             n_reached += 1
             amt = sz * nav_today
+            # ★★[CAND-2026-09-01-26] 적응형 — 모드에 따라 SIZE 를 갈아끼운다.
+            #   ⚠️`sz` 는 above/below 로 이미 갈렸으므로 ★같은 비율로 스케일한다.
+            if ADAPT_ON and SIZE_ABOVE > 0:
+                _tgt = ADAPT_BASE * (1.0 + ADAPT_PREM) if adapt_mode == "prem" else ADAPT_BASE
+                amt = (sz / SIZE_ABOVE) * _tgt * nav_today
             # ★★[CAND-2026-09-01-24] 노출 조건부 할인 — ★비례 축소(상한 아님).
             if EXPO_CUT_ON:
                 EXPO_N["eval"] += 1
@@ -2271,6 +2307,13 @@ def main():
     # ★★[CAND-2026-09-01-11] 갭 조건부 추가매수 차단 발동 카운터 (§4-2d 관문 2).
     #   ⚠️★block = 0 이면 「효과 없음」이 아니라 ★먼저 eval 을 본다 — eval 이 0이면
     #     ★루프를 안 탄 것(사문)이고, eval 이 크고 block 이 0이면 ★진짜 표적 0 이다.
+    # ★★[CAND-2026-09-01-26] 적응형 사이징 카운터(§4-2d 관문 2).
+    if ADAPT_ON:
+        print("[ADAPT] ★확대 %d일 · ★축소 %d일 · ★중간유지 %d일 · ★★모드전환 %d회 "
+              "· HI=%.2f LO=%.2f BASE=%.4f PREM=%.2f"
+              % (ADAPT_N["prem"], ADAPT_N["cut"], ADAPT_N["hold"], ADAPT_N["flip"],
+                 ADAPT_HI, ADAPT_LO, ADAPT_BASE, ADAPT_PREM))
+
     # ★★[CAND-2026-09-01-24] 노출 조건부 사이징 할인 발동 카운터(§4-2d 관문 2).
     if EXPO_CUT_ON:
         print("[EXPOCUT] ★평가 %d건 → ★할인 %d건 · 금액 %s → %s원 "
