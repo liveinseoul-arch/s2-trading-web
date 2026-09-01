@@ -356,6 +356,24 @@ ADDBLK_ON = ADDBLK_GAP < 0
 #   ★그래서 §4-2d 관문 2(사문 판별)가 ★무뎌진다 — ★「많이 막았다」로 오독하게 한다.
 #   ★★`hit` = 신호 일치(종전 block) · ★`stop` = ★그날 실제로 체결됐을 것을 막은 수.
 ADDBLK_N = {"eval": 0, "hit": 0, "stop": 0, "noref": 0}
+# ★★★[2026-09-01 · 해달별님 질의] ★갭 조건 성립 시 ★무엇을 하나 — 3가지 모드.
+#   `skip`  (★기본 · ★현재 채택) 그날 추가매수를 ★건너뛴다
+#   `close` ★장중 지정가 대신 ★그날 ★종가에 산다 — ★현행에서 체결됐을 것만(★공정 비교)
+#   `close_all` ★갭 조건이면 ★무조건 종가에 산다(★장중에 지정가까지 안 내려온 날도 산다)
+#   ⚠️★`close`·`close_all` 은 ★종가가 지정가보다 ★비쌀 수도 있다 — 그때는 ★더 비싸게 산다.
+#   `close_lim` ★★[해달별님 지시 2026-09-01] ★종가가 ★지정가 ★이하일 때만 종가 매수 —
+#     ★아니면(종가가 지정가보다 비싸면) ★차단한다. ⚠️★`close` 는 그 검사가 없어
+#     ★종가가 지정가보다 비싼 날 ★더 비싸게 산다.
+ADDBLK_MODE = os.environ.get("S2_ADDBLOCK_MODE", "skip").strip().lower()
+# ★★[CAND-2026-09-01-13] 포지션 생성 시 `ref_close` 를 채운다 — ★기본 off(종전 동작).
+#   ⚠️★왜 필요한가 — 종전에는 진입 다음 ★첫 거래일에만 `p["ph_ref"]` 가 None 이라
+#     ★갭 게이트가 그날 판정을 못 했다(`MIN_BC=1` 셀에서 ★82%가 판정 불가).
+#     ★S2 보유 중앙이 1일이라 ★2차 매수의 대부분이 바로 그날 일어난다.
+#   ⚠️★★같은 값을 ★유령 가드(`:819 ref = float(p.get("ref_close") or 0.0)`)도 쓴다 —
+#     ★거기서는 `or 0.0` 이라 조용히 0 이 됐다. ★켜면 그 동작도 바뀔 수 있으므로
+#     ★반드시 off 재현을 ★파일 해시로 확인하고 켠다.
+ADDBLK_SEED_REF = os.environ.get("S2_ADDBLOCK_SEED_REF", "0") == "1"
+ADDBLK_N2 = {"close_fill": 0, "close_extra": 0, "close_skip": 0}
 # 사이징 (NAV %) — 120일선 위 SIZE_ABOVE / 아래 SIZE_BELOW. 기본 0.18 / 0.09.
 # env S2_SIZE_ABOVE / S2_SIZE_BELOW (예: 0.15 / 0.075 = 구 설정)
 SIZE_ABOVE = float(os.environ.get("S2_SIZE_ABOVE", "0.18"))
@@ -1351,9 +1369,36 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                             # ★★실차단 — ★이 주문이 ★오늘 실제로 체결됐을 것인가.
                             #   ⚠️★`_skip` 은 ★신저가 충돌 가드가 이미 세웠을 수 있으니
                             #     ★그 경우는 ★이 게이트의 공로가 아니다(중복 계상 금지).
-                            if (not _skip) and bar_ok and lo <= at:
+                            _would = (not _skip) and bar_ok and lo <= at
+                            if _would:
                                 ADDBLK_N["stop"] += 1
-                            _skip = True
+                            if ADDBLK_MODE == "skip":
+                                _skip = True
+                            elif ADDBLK_MODE == "close_lim":
+                                # ★★해달별님 조건 — ①장중 지정가 도달 ②★종가 <= 지정가.
+                                #   ★둘 다여야 종가 매수. 아니면 차단(더 비싸게 사지 않는다).
+                                if _would and bar_ok and cl <= at:
+                                    ADDBLK_N2["close_fill"] += 1
+                                    at = _to_tick(cl)
+                                else:
+                                    if _would:
+                                        ADDBLK_N2["close_skip"] += 1
+                                    _skip = True
+                            elif ADDBLK_MODE in ("close", "close_all"):
+                                # ★★종가 매수 — 지정가를 ★그날 종가로 갈아끼운다.
+                                #   ★`close`     : 현행에서 체결됐을 것만(공정 비교)
+                                #   ★`close_all` : 갭 조건이면 무조건(장중 미도달일도 산다)
+                                if _would or (ADDBLK_MODE == "close_all" and bar_ok
+                                              and not _skip):
+                                    if _would:
+                                        ADDBLK_N2["close_fill"] += 1
+                                    else:
+                                        ADDBLK_N2["close_extra"] += 1
+                                    at = _to_tick(cl)
+                                else:
+                                    _skip = True
+                            else:
+                                _skip = True
                 # ★유령 가드 — 원장 측. ⚠️plan 측과 **같은 술어 · 같은 시점**을 쓴다.
                 #   ★`prev=True` — 오늘 체결되는 이 주문은 **어제 저녁 계획**의 산물이므로
                 #     어제까지의 기준값(`ph_ref`·`ph_halt`)으로 판정한다. 그래서 정지 재개일에는
@@ -1603,6 +1648,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 knife=_kn, tgt_mult=_tmult,
                 tranche=amt, avg_buy=price, last_buy=price, buy_count=1, sell_count=0, stop=None,
                 qty=sh, total_qty=sh, min_low=price, last_close=price,
+                # ★★[CAND-2026-09-01-13 · 게이트 S2_ADDBLOCK_SEED_REF] 진입일 종가를
+                #   ★유효봉 기준값으로 심는다 — 다음 날 첫 판정이 비지 않게. 기본 off.
+                **({"ref_close": price} if ADDBLK_SEED_REF else {}),
                 entry_above=above, entry_bull=bull, tid=tid_seq, cost=_cost, proc=0.0, legs=[],
                 is_reentry=bool(REENTRY_RELAX and tk in last_exit), first_buy_amount=_cost)
             positions[tk] = p
@@ -2174,9 +2222,14 @@ def main():
     #     ★루프를 안 탄 것(사문)이고, eval 이 크고 block 이 0이면 ★진짜 표적 0 이다.
     if ADDBLK_ON:
         print("[ADDBLK] ★평가 %d건 → ★신호일치 %d건 → ★★실차단 %d건 "
-              "(기준값 없음 %d) · GAP=%.2f%% · MIN_BC=%d"
+              "(기준값 없음 %d) · GAP=%.2f%% · MIN_BC=%d · ★MODE=%s"
               % (ADDBLK_N["eval"], ADDBLK_N["hit"], ADDBLK_N["stop"],
-                 ADDBLK_N["noref"], ADDBLK_GAP, ADDBLK_MIN_BC))
+                 ADDBLK_N["noref"], ADDBLK_GAP, ADDBLK_MIN_BC, ADDBLK_MODE))
+        if ADDBLK_MODE != "skip":
+            print("[ADDBLK] ★종가매수 %d건 (★장중 미도달인데 산 것 %d건 · "
+                  "★종가>지정가라 차단 %d건) · SEED_REF=%s"
+                  % (ADDBLK_N2["close_fill"], ADDBLK_N2["close_extra"],
+                     ADDBLK_N2["close_skip"], ADDBLK_SEED_REF))
 
     # ★★CA 리스케일 발동 카운터 (§4-2d 관문 2 · CAND-2026-08-22-19) — 게이트 on 일 때만 출력
     #   ⚠️★hit = 0 이면 「효과 없음」이 아니라 ★먼저 「표적이 정말 없는가」를 묻는다.
