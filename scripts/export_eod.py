@@ -383,6 +383,22 @@ ADDBLK_N2 = {"close_fill": 0, "close_extra": 0, "close_skip": 0}
 # env S2_SIZE_ABOVE / S2_SIZE_BELOW (예: 0.15 / 0.075 = 구 설정)
 SIZE_ABOVE = float(os.environ.get("S2_SIZE_ABOVE", "0.18"))
 SIZE_BELOW = float(os.environ.get("S2_SIZE_BELOW", "0.09"))
+# ★★★[2026-09-01 신설 · CAND-2026-09-01-24 · ★해달별님 발안] 노출 조건부 사이징 할인.
+#   ★해달별님: 「1차매수가 50%나 60%를 넘어설 때 매수금액 비율을 20% 정도 할인하는 것은」
+#   ★그날 ★1차분 노출(= sum(보유 취득원가 / buy_count) / NAV)이 ★CUT_AT 이상이면
+#   ★**신규 진입 사이징만** (1-CUT_PCT) 배로 줄인다. ★추가매수는 안 건드린다.
+#   ⚠️★기본 off(CUT_AT=0) = 종전 동작. 되돌리기는 이 env 를 지우는 것 한 줄.
+#   ★★왜 이 형태인가 — HANDOFF_2026-08-17 §0-b 에서 ★총 노출 ★상한(0.70)은 ★MDD 0.60%p
+#     ★악화 · F3 실패였고 ★사이징 ★축소(0.100)는 ★MDD 3.91%p ★개선 · 거래 왜곡 0 · F3 통과였다.
+#     ★즉 ★**상한(차단)이 아니라 ★축소(비례)** 여야 한다. 오늘 실측한 ③(차단=재앙) 대
+#     ⑥(조건부=최선)과 ★같은 구조다.
+#   ★★임계 근거 — 무차입에서 ★매수가 막히기 시작하는 지점이 ★1차분 노출 ★60% 다
+#     (60-80% 구간 발생률 60.7% · 40-60% 는 8.0%). ★문턱 50-60%는 ★막히기 직전이다.
+#   → prereg/2026-09-01_S2_노출조건부_사이징할인.md
+EXPO_CUT_AT = float(os.environ.get("S2_EXPO_CUT_AT", "0"))     # 0 = off · 예: 0.50
+EXPO_CUT_PCT = float(os.environ.get("S2_EXPO_CUT_PCT", "0.20"))
+EXPO_CUT_ON = EXPO_CUT_AT > 0
+EXPO_N = {"eval": 0, "cut": 0, "amt_before": 0.0, "amt_after": 0.0}
 
 # ★★★[2026-08-25 신설 · CAND-2026-08-25-10] 종목당 집중 상한 — ★kr_s2_engine `name_cap` 이식.
 #   [배경] `kr_s2_engine.py --mode`(운영 패치 0개) 격자에서 cap 0.20 – 0.25 가 CAGR·MDD·
@@ -1594,9 +1610,27 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
         if BUY_PRIORITY == "rise2w":
             _dk = str(d)[:10]
             _reached.sort(key=lambda x: _RISE2W.get((x[0], _dk), -1.0), reverse=True)
+        # ★★[CAND-2026-09-01-24] 그날 ★1차분 노출을 ★한 번만 계산한다(진입 루프 밖).
+        #   ⚠️★그날 매수분은 아직 안 들어갔다 — ★판정 시점을 「진입 계산 직전」으로 고정한다.
+        _expo_frac = 0.0
+        if EXPO_CUT_ON and nav_today > 0:
+            _ev1 = 0.0
+            for _p in positions.values():
+                _bc = max(1, int(_p.get("buy_count", 1) or 1))
+                _ev1 += (_p.get("qty", 0) * _p.get("avg_buy", 0.0)) / _bc
+            _expo_frac = _ev1 / nav_today
+        _expo_hit = EXPO_CUT_ON and _expo_frac >= EXPO_CUT_AT
         for tk, price, sz, above, bull, _kn in _reached:
             n_reached += 1
             amt = sz * nav_today
+            # ★★[CAND-2026-09-01-24] 노출 조건부 할인 — ★비례 축소(상한 아님).
+            if EXPO_CUT_ON:
+                EXPO_N["eval"] += 1
+                if _expo_hit:
+                    EXPO_N["cut"] += 1
+                    EXPO_N["amt_before"] += amt
+                    amt *= (1.0 - EXPO_CUT_PCT)
+                    EXPO_N["amt_after"] += amt
             # ★재진입 사이징 축소(2026-08-26 · CAND-2026-08-26-2) — REENTRY_RELAX=False(기본)
             #   면 위 게이트가 이미 재진입을 거의 다 걸러 이 분기는 사실상 무의미(canonical 항등).
             if REENTRY_RELAX and REENTRY_SIZE_FRAC != 1.0 and tk in last_exit:
@@ -2237,6 +2271,15 @@ def main():
     # ★★[CAND-2026-09-01-11] 갭 조건부 추가매수 차단 발동 카운터 (§4-2d 관문 2).
     #   ⚠️★block = 0 이면 「효과 없음」이 아니라 ★먼저 eval 을 본다 — eval 이 0이면
     #     ★루프를 안 탄 것(사문)이고, eval 이 크고 block 이 0이면 ★진짜 표적 0 이다.
+    # ★★[CAND-2026-09-01-24] 노출 조건부 사이징 할인 발동 카운터(§4-2d 관문 2).
+    if EXPO_CUT_ON:
+        print("[EXPOCUT] ★평가 %d건 → ★할인 %d건 · 금액 %s → %s원 "
+              "(줄인 %s) · AT=%.2f · PCT=%.2f"
+              % (EXPO_N["eval"], EXPO_N["cut"],
+                 format(int(EXPO_N["amt_before"]), ","), format(int(EXPO_N["amt_after"]), ","),
+                 format(int(EXPO_N["amt_before"] - EXPO_N["amt_after"]), ","),
+                 EXPO_CUT_AT, EXPO_CUT_PCT))
+
     if ADDBLK_ON:
         print("[ADDBLK] ★평가 %d건 → ★신호일치 %d건 → ★★실차단 %d건 "
               "(기준값 없음 %d) · GAP=%.2f%% · MIN_BC=%d · ★MODE=%s"
