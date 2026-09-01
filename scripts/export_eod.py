@@ -349,7 +349,13 @@ MAX_BUY = int(os.environ.get("S2_MAX_BUY", "3"))   # 1차 포함 총 매수 횟�
 ADDBLK_GAP = float(os.environ.get("S2_ADDBLOCK_GAP", "0"))      # 0 = off. 예: -10 (%)
 ADDBLK_MIN_BC = int(os.environ.get("S2_ADDBLOCK_MIN_BC", "2"))  # 이 차수 이상에서만 본다
 ADDBLK_ON = ADDBLK_GAP < 0
-ADDBLK_N = {"eval": 0, "block": 0, "noref": 0}
+# ⚠️★★[2026-09-01 정정] 카운터를 ★3단으로 나눈다 — ★종전 `block` 하나는 ★부풀어 있었다.
+#   ★실측 사고 — 결정창에서 GAP=-3 이 「차단 7건」인데 ★결과가 GAP=-12(1건)와 ★원 단위까지
+#   같았다. ★원인은 이 판정이 ★체결 조건(`bar_ok and lo <= at`) ★**앞**에 있어
+#   ★**애초에 체결되지 않았을 주문까지 셌기** 때문이다.
+#   ★그래서 §4-2d 관문 2(사문 판별)가 ★무뎌진다 — ★「많이 막았다」로 오독하게 한다.
+#   ★★`hit` = 신호 일치(종전 block) · ★`stop` = ★그날 실제로 체결됐을 것을 막은 수.
+ADDBLK_N = {"eval": 0, "hit": 0, "stop": 0, "noref": 0}
 # 사이징 (NAV %) — 120일선 위 SIZE_ABOVE / 아래 SIZE_BELOW. 기본 0.18 / 0.09.
 # env S2_SIZE_ABOVE / S2_SIZE_BELOW (예: 0.15 / 0.075 = 구 설정)
 SIZE_ABOVE = float(os.environ.get("S2_SIZE_ABOVE", "0.18"))
@@ -1341,7 +1347,12 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     else:
                         ADDBLK_N["eval"] += 1
                         if (op / _ar - 1.0) * 100.0 <= ADDBLK_GAP:
-                            ADDBLK_N["block"] += 1
+                            ADDBLK_N["hit"] += 1
+                            # ★★실차단 — ★이 주문이 ★오늘 실제로 체결됐을 것인가.
+                            #   ⚠️★`_skip` 은 ★신저가 충돌 가드가 이미 세웠을 수 있으니
+                            #     ★그 경우는 ★이 게이트의 공로가 아니다(중복 계상 금지).
+                            if (not _skip) and bar_ok and lo <= at:
+                                ADDBLK_N["stop"] += 1
                             _skip = True
                 # ★유령 가드 — 원장 측. ⚠️plan 측과 **같은 술어 · 같은 시점**을 쓴다.
                 #   ★`prev=True` — 오늘 체결되는 이 주문은 **어제 저녁 계획**의 산물이므로
@@ -2162,9 +2173,10 @@ def main():
     #   ⚠️★block = 0 이면 「효과 없음」이 아니라 ★먼저 eval 을 본다 — eval 이 0이면
     #     ★루프를 안 탄 것(사문)이고, eval 이 크고 block 이 0이면 ★진짜 표적 0 이다.
     if ADDBLK_ON:
-        print("[ADDBLK] ★평가 %d건 → ★차단 %d건 (기준값 없음 %d) · GAP=%.2f%% · MIN_BC=%d"
-              % (ADDBLK_N["eval"], ADDBLK_N["block"], ADDBLK_N["noref"],
-                 ADDBLK_GAP, ADDBLK_MIN_BC))
+        print("[ADDBLK] ★평가 %d건 → ★신호일치 %d건 → ★★실차단 %d건 "
+              "(기준값 없음 %d) · GAP=%.2f%% · MIN_BC=%d"
+              % (ADDBLK_N["eval"], ADDBLK_N["hit"], ADDBLK_N["stop"],
+                 ADDBLK_N["noref"], ADDBLK_GAP, ADDBLK_MIN_BC))
 
     # ★★CA 리스케일 발동 카운터 (§4-2d 관문 2 · CAND-2026-08-22-19) — 게이트 on 일 때만 출력
     #   ⚠️★hit = 0 이면 「효과 없음」이 아니라 ★먼저 「표적이 정말 없는가」를 묻는다.
