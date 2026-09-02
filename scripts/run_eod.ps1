@@ -27,8 +27,55 @@ if ($env:S2_EOD_LOG_UTF8 -ne "0") {
     [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
     $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
 }
+
+# ★★★[2026-09-02 신설 · CAND-2026-09-02-16] stderr 보존 — ★인코딩 수리의 ★두 번째 층.
+#   ⚠️★★문제 — 오늘 인코딩 수리로 ★널바이트는 0 이 됐는데 ★원인 문자열은 ★여전히 안 보였다.
+#     ★$ErrorActionPreference = "Stop" 이 ★네이티브 명령의 ★첫 stderr 줄에서
+#     ★NativeCommandError 예외를 던져 ★파이프라인을 끊기 때문이다.
+#   ★★실측(2026-09-02 15:45) — export_eod.py 가 SystemExit("[supabase] ... 실패 {code}: {body}")
+#     로 ★HTTP 코드와 응답 본문까지 담아 던졌는데 ★로그에 ★한 글자도 안 남았다.
+#     ★로그는 plan_archive 줄에서 끊겼고 ★[RC] export_eod.py= 줄도 없었다.
+#   ★★처치 — stderr 를 ★파일로 직행시킨다(ErrorRecord 미생성 → 예외 전환 없음 → ★내용 보존).
+#     ★그리고 ★rc != 0 이면 ★명시적으로 throw 해 ★종전 중단 동작을 ★그대로 재현한다.
+#   ★★★해달별님 08-24 결정(Stop 유지)을 ★해치지 않는다 — ★오히려 ★강화한다.
+#     ★그 취지는 ★「부분 Supabase 재적재 방지」인데 ★09-02 에 ★그것이 실제로 깨졌다
+#     (Stop 은 export_eod.py ★내부 중단을 못 막는다).
+#     ★★$LASTEXITCODE 판정이 ★stderr 유무보다 ★정확하다 — ★경고만 찍고 rc=0 인 경우를
+#     ★종전에는 ★치명으로 오판했다.
+#   ★★되돌리기 — ★S2_EOD_STDERR_FILE=0 ★한 줄(종전 경로로 복귀).
+$errlog = Join-Path $PSScriptRoot "eod.err.log"
+function Invoke-Py {
+    param([Parameter(Mandatory=$true)][string[]]$PyArgs,
+          [Parameter(Mandatory=$true)][string]$Tag,
+          [switch]$Fatal)
+    if ($env:S2_EOD_STDERR_FILE -eq "0") {
+        & C:\Python314\python.exe @PyArgs *>> $log
+        return $LASTEXITCODE
+    }
+    if (Test-Path $errlog) { Remove-Item $errlog -Force -ErrorAction SilentlyContinue }
+    # ⚠️★★[2026-09-02 프로브가 잡은 설계 오류] ★`2>> $errlog` 만으로는 ★부족하다 —
+    #   ★PS5.1 은 ★리다이렉션 여부와 무관하게 ★네이티브 stderr 를 ★ErrorRecord 로 감싸
+    #   ★`Stop` 이면 ★NativeCommandError 로 ★그대로 죽는다(실측 확인).
+    #   ★★그래서 ★네이티브 호출 동안만 ★Continue 로 낮춘다. ★finally 로 반드시 되돌린다.
+    #   ★프로브 결과 — ①rc=0+경고 → ★안 죽는다 ②rc!=0 → ★throw ③원인 문자열 ★로그에 남음.
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try     { & C:\Python314\python.exe @PyArgs 1>> $log 2>> $errlog }
+    finally { $ErrorActionPreference = $prevEAP }
+    $rc = $LASTEXITCODE
+    if ((Test-Path $errlog) -and ((Get-Item $errlog).Length -gt 0)) {
+        try {
+            ("--- [STDERR] " + $Tag + " ---") | Out-File -Append -Encoding utf8 $log
+            Get-Content $errlog -Encoding UTF8 | Out-File -Append -Encoding utf8 $log
+        } catch { Write-Host ("[STDERR] append fail: " + $_.Exception.Message) }
+    }
+    if ($Fatal -and $rc -ne 0) {
+        throw ($Tag + " rc=" + $rc + " — ★원인은 로그의 [STDERR] " + $Tag + " 절 참조")
+    }
+    return $rc
+}
 "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') eod =====" | Out-File -Append -Encoding utf8 $log
-& C:\Python314\python.exe "main.py" --no-gsheets *>> $log               # 당일 EOD 캐시 갱신
+$rcMain = Invoke-Py -PyArgs @("main.py","--no-gsheets") -Tag "main.py" -Fatal               # 당일 EOD 캐시 갱신
 # ★★[2026-08-24 · CAND-2026-08-23-630] 아래 [RC] 줄들은 ★로그만 더한 것이다.
 #   ★★ps1 의 자기 rc 는 안 바뀐다 — 실측(2026-08-24) `powershell -File` 은 `exit` 가 없으면
 #     ★네이티브 종료코드를 ★전파하지 않는다(파이썬 rc=3 → ps1 rc=0 · 로그 줄 유무와 무관).
@@ -48,7 +95,6 @@ if ($env:S2_EOD_LOG_UTF8 -ne "0") {
 #   ★되돌리기 — 각 사이트에서 `$rc... = $LASTEXITCODE` · `try {` · `} catch { ... }` 세 줄을 지우고
 #     [RC] 줄의 `$rc...` 를 `$LASTEXITCODE` 로 되돌린다(★다른 변경 없음).
 #   근거: quant_infra/2026-08/OPS_RC_TRYCATCH_2026-08-24.md
-$rcMain = $LASTEXITCODE
 try {
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] main.py=$rcMain" | Out-File -Append -Encoding utf8 $log
 } catch { Write-Host "[RC] 로그 기록 실패(main.py): $($_.Exception.Message)" }
@@ -218,9 +264,8 @@ $env:S2_CASH_PARK = "153130"                                           # KODEX �
 #       ★미래에셋 이전은 ★편의 개선이지 ★모델 정합의 선결 조건이 아니다.
 $env:S2_CASH_PARK_LAG = "2"                                            # ★RP — 예수금 D+2
 $env:S2_CASH_PARK_FEE = "0"                                            # ★RP — 매매비용 0
-& C:\Python314\python.exe "s2-trading-web\scripts\update_park_price.py" *>> $log   # 파킹 가격 CSV 갱신(실패해도 rc=0)
+$rcPark = Invoke-Py -PyArgs @("s2-trading-web\scripts\update_park_price.py") -Tag "update_park_price.py"   # 파킹 가격 CSV 갱신(실패해도 rc=0)
 # ★[2026-08-24 · CAND-2026-08-24-520] ★try/catch — ★위 서문 참조(로그만 · rc 불변).
-$rcPark = $LASTEXITCODE
 try {
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] update_park_price.py=$rcPark" | Out-File -Append -Encoding utf8 $log
 } catch { Write-Host "[RC] 로그 기록 실패(update_park_price.py): $($_.Exception.Message)" }
@@ -274,9 +319,8 @@ $env:S2_ENV_TOPQ = "0.0425"                                            # ★과�
 #   ★되돌리기 = 아래 한 줄 삭제(미설정 = off = ★비트 동일 검증됨).
 #   근거: quant_infra/2026-08/S2_ENVMAP_REPAIR_SPEC_2026-08-23.md
 $env:S2_ENV_MAP_TAIL = "1"                                             # ★꼬리 보충(미설정=off)
-& C:\Python314\python.exe "update_env_density.py" *>> $log   # 과밀일 맵 갱신(실패해도 rc=0)
+$rcEnvDens = Invoke-Py -PyArgs @("update_env_density.py") -Tag "update_env_density.py"   # 과밀일 맵 갱신(실패해도 rc=0)
 # ★[2026-08-24 · CAND-2026-08-24-520] ★try/catch — ★위 서문 참조(로그만 · rc 불변).
-$rcEnvDens = $LASTEXITCODE
 try {
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] update_env_density.py=$rcEnvDens" | Out-File -Append -Encoding utf8 $log
 } catch { Write-Host "[RC] 로그 기록 실패(update_env_density.py): $($_.Exception.Message)" }
@@ -291,11 +335,10 @@ try {
 #   ★rc 는 ★항상 0 이다(체인을 안 끊는다) — 실패는 사이드카
 #     results/.density_export_last.json 과 로그의 「⚠️★★[DENSITY] 실패」 마커로 남는다.
 #   ★되돌리기 — 아래 두 줄 삭제(페이지는 빈 격자가 되고 EOD 는 그대로 돈다).
-& C:\Python314\python.exe "s2-trading-web\scripts\export_density.py" *>> $log
+$rcDensity = Invoke-Py -PyArgs @("s2-trading-web\scripts\export_density.py") -Tag "export_density.py"
 Write-Host "[density] rc=$LASTEXITCODE (★항상 0 계약)"
 # ⚠️★Write-Host 는 ★무인 실행에서 사라진다 — ★같은 값을 로그에도 남긴다.
 # ★[2026-08-24 · CAND-2026-08-24-520] ★try/catch — ★위 서문 참조(로그만 · rc 불변).
-$rcDensity = $LASTEXITCODE
 try {
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] export_density.py=$rcDensity" | Out-File -Append -Encoding utf8 $log
 } catch { Write-Host "[RC] 로그 기록 실패(export_density.py): $($_.Exception.Message)" }
@@ -508,7 +551,7 @@ $env:S2_ADDBLOCK_MIN_BC = "1"                                          # ★2차
 $env:S2_ADDBLOCK_MODE = "mix"                                          # ★2차는 종가매수 · 3차 이상은 차단
 $env:S2_ADDBLOCK_SEED_REF = "1"                                        # ★ref_close 시드(MIN_BC=1 선결조건)
 
-& C:\Python314\python.exe "s2-trading-web\scripts\export_eod.py" *>> $log  # executions/보유/거래/카운트/후보 적재
+$rcExport = Invoke-Py -PyArgs @("s2-trading-web\scripts\export_eod.py") -Tag "export_eod.py" -Fatal  # executions/보유/거래/카운트/후보 적재
 # ★[2026-08-24 · CAND-2026-08-24-520] ★try/catch — ★위 서문 참조(로그만 · rc 불변).
 $rcEod = $LASTEXITCODE
 try {
