@@ -3,6 +3,30 @@ $ErrorActionPreference = "Stop"
 $root = (Get-Item $PSScriptRoot).Parent.Parent.FullName   # s2_method
 Set-Location $root
 $log = Join-Path $PSScriptRoot "eod.log"
+# ★★★[2026-09-02 신설 · CAND-2026-09-02-1 · CAND-2026-09-01-16 계열] 로그 인코딩 통일.
+#   ⚠️★★문제 — 이 파일은 헤더를 `Out-File -Encoding utf8`(UTF-8)로 쓰는데
+#     ★파이썬 출력은 `*>> $log` 로 붙인다. ★PS5.1 의 `>>` 는 ★**UTF-16LE** 로 쓴다.
+#     ★★즉 ★한 파일에 ★두 인코딩이 섞인다. ★게다가 파이썬 stdout 이 CP949 라
+#     ★한글이 ★콘솔 단계에서 ★이미 깨진다 — ★두 겹으로 깨졌다.
+#   ★★실측(2026-09-02) — `===== 2026-09-01 15:45:01` 블록 400바이트 중 ★널바이트 **142개**.
+#     ★그래서 ★`main.py` 중단의 ★원인 문자열을 ★끝내 못 읽었다(CAND-2026-09-02-1).
+#   ★★프로브 검증(scratchpad/enc_test.ps1) — ★적용 전 널바이트 **25** · UTF-8 읽기 ★실패,
+#     ★적용 후 널바이트 ★**0** · UTF-8 읽기 ★성공 · 한글 정상.
+#   ★세 줄이 각각 다른 곳을 고친다:
+#     (1) PYTHONIOENCODING          파이썬이 ★UTF-8 로 뱉게 한다(CP949 손실 제거)
+#     (2) [Console]::OutputEncoding PowerShell 이 그것을 ★UTF-8 로 읽게 한다
+#     (3) $PSDefaultParameterValues `*>>` 가 ★UTF-8 로 쓰게 한다(PS5.1 의 `>>` 는 Out-File 로 구현된다)
+#   ★★기본 on 근거 — ★기록만 바꾸고 ★결정 경로를 안 건들인다(`WL_ORDER_LEDGER` 와 같은 계열).
+#   ★★되돌리기 — ★`S2_EOD_LOG_UTF8=0` ★한 줄(종전 비트동일).
+#   ⚠️★들여쓰기가 ★의도적이다 — run_size.ps1 래퍼가 줄 시작의 $env: 만 읽어
+#     ★재검정 러너에 ★이 설정이 새지 않게 한다(§0-5 계열).
+#   ⚠️★이미 쌓인 473KB 는 ★혼합 상태로 남는다 — ★이 수리는 ★앞으로만 고친다.
+#   근거: quant_infra/2026-09/HANDOFF_2026-09-02.md
+if ($env:S2_EOD_LOG_UTF8 -ne "0") {
+    $env:PYTHONIOENCODING = "utf-8"
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
+}
 "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') eod =====" | Out-File -Append -Encoding utf8 $log
 & C:\Python314\python.exe "main.py" --no-gsheets *>> $log               # 당일 EOD 캐시 갱신
 # ★★[2026-08-24 · CAND-2026-08-23-630] 아래 [RC] 줄들은 ★로그만 더한 것이다.
