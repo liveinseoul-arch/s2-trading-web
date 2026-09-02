@@ -172,6 +172,16 @@ CA_N = {"hit": 0, "rescale": 0, "delist": 0, "seen_pos_day": 0,
 # ── 운용안 상수 (s2_candidates 와 동일) ──────────────────────────────
 MUSEOB = 0.80   # 음봉 스파이크 시 사이즈 × 0.8
 PROX = 0.05                      # 예비후보 근접 허용폭(지지선 위 5%까지 포함)
+# ⚠️★★★[2026-09-02 · CAND-2026-09-02-10] `NL_AFTER` 는 ★하드코딩이고 ★차수와 결합돼 있다.
+#   `:_nl_cond` 가 `buy_count >= NL_AFTER` 를 요구하므로 ★어떤 차수 상한이든
+#   ★buy_count 를 2 미만으로 묶으면 ★`newlow_stop` 이 ★조용히 꺼진다.
+#   ★실측(CAND-2026-09-02-8 워크플로우 적대적 반증) — `S2_REENTRY_MAX_BUY=1` 에서
+#     ★재진입 `newlow_stop` 42 → 0(결정창) · 64 → 0(프로덕션창)
+#     ★대신 `time_stop(15d)` 3 → 37 · 4 → 58 로 폭증(훨씬 늦은 청산)
+#     ★그 크기가 MB1_P 의 −3.2212%p · MDD −10.43 → −24.39% 다.
+#   ⚠️★`newlow_stop` 은 ★S2 의 ★유일한 손실 축이다(43/431 · 자본가중 −9.22%) —
+#     ★그것이 꺼지는 것은 ★손절기 무력화다.
+#   ★아래 START 가드가 ★그 조건을 ★시작 시 경고한다(동작은 안 바꾼다).
 MA_LONG, WINDOW, NL_AFTER = 120, 60, 2
 MAX_LEV = float(os.environ.get("S2_MAX_LEV", "1.3"))   # 1.3=30% 대출 허용 / 1.0=대출없음(현금한도)
 
@@ -348,7 +358,26 @@ MAX_BUY = int(os.environ.get("S2_MAX_BUY", "3"))   # 1차 포함 총 매수 횟�
 #   근거: quant_infra/2026-09/S2_REENTRY_DEPTH_2026-09-02.md
 _rmb_s = os.environ.get("S2_REENTRY_MAX_BUY", "").strip()
 REENTRY_MAX_BUY = int(_rmb_s) if _rmb_s else None
-REENTRY_MB_N = {"blocked": 0}   # ★발동 카운터
+REENTRY_MB_N = {"blocked": 0, "nl_disabled": 0}   # ★발동 카운터
+# ★★★[2026-09-02 신설 · CAND-2026-09-02-10] 손절기 무력화 가드 — ★경고 전용(동작 무변경).
+#   ⚠️★어떤 차수 상한이든 `buy_count` 를 `NL_AFTER`(=2) 미만으로 묶으면
+#     ★`newlow_stop` 이 ★원리적으로 발동하지 않는다. ★종전에는 ★경고도 카운터도 없어
+#     ★그 사실이 ★조용히 지나갔다(2026-09-02 적대적 반증이 처음 발견).
+#   ★이 블록은 ★출력만 늘린다 — ★로직을 한 줄도 안 바꾸므로 ★해시 재현이 자동 보장된다.
+def _nl_guard(limit, where):
+    """차수 상한이 NL_AFTER 미만이면 경고한다. ★판정은 안 바꾼다."""
+    if limit is not None and limit < NL_AFTER:
+        REENTRY_MB_N["nl_disabled"] += 1
+        print("⚠️★★[NL-GUARD] %s 차수 상한 %d < NL_AFTER %d — "
+              "★`newlow_stop` 이 ★원리적으로 발동하지 않는다(손절기 무력화). "
+              "★청산이 `time_stop`(%s일)으로 밀린다. 근거: CAND-2026-09-02-10"
+              % (where, limit, NL_AFTER, os.environ.get("S2_TIME_STOP_DAYS", "?")))
+        return True
+    return False
+
+
+_nl_guard(REENTRY_MAX_BUY, "S2_REENTRY_MAX_BUY")
+_nl_guard(MAX_BUY if MAX_BUY < NL_AFTER else None, "S2_MAX_BUY")
 # ★★★[2026-09-01 신설 · CAND-2026-09-01-11 · ★해달별님 발안] 갭 조건부 추가매수 차단.
 #   ★해달별님: 「갭 <= -10% AND 차수=2에 대해 추가 진입을 막는 형태는 어떠한가?」
 #   ★그날 시가가 전일 유효봉 종가 대비 GAP% 이하로 갭하락했고 이미 MIN_BC 번 이상 샀으면
