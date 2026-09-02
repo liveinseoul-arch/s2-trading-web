@@ -335,6 +335,20 @@ ORD_TGT_PCT = {}
 #   ⚠️`add_drop` 자체는 **튜닝 대상이 아니다** — 0.100 → 0.105 한 스텝에 MDD −11.42 → −20.75.
 ADD_DROP = float(os.environ.get("S2_ADD_DROP", "0.07"))
 MAX_BUY = int(os.environ.get("S2_MAX_BUY", "3"))   # 1차 포함 총 매수 횟수(기본3=추가매수 2회)
+# ★★★[2026-09-02 신설 · CAND-2026-09-02-8] 재진입 포지션의 ★물타기 차수 제한.
+#   ⚠️★★왜 — ★결정창 573건 분해에서 ★재진입 2차이상 70건이 ★-47,544,876 이고,
+#     ★그 깊이가 ★최초 진입 물타기(평균 -42.6만)의 ★1.6배(-67.9만)다.
+#     ★재진입 1차는 253건 +148,835,913 로 ★크게 이익이다.
+#   ★★단 ★`buy_count` 는 ★결과축이라 ★그 표는 기술통계다 — ★이 게이트가 ★반사실이다.
+#   ⚠️★★물타기는 ★위험 완화 장치이기도 하다(§8-1 — 전면 금지 시 시스템 붕괴).
+#     ★그래서 ★재진입 한정이고 ★최초 진입은 안 건드린다.
+#   [게이트] `S2_REENTRY_MAX_BUY` — ★기본 빈 문자열 = off = 종전 비트동일.
+#     "1" = 재진입은 물타기 금지(1차만) · "2" = 2차까지(3차 금지).
+#   ★되돌리기 — 이 env 를 지운다.
+#   근거: quant_infra/2026-09/S2_REENTRY_DEPTH_2026-09-02.md
+_rmb_s = os.environ.get("S2_REENTRY_MAX_BUY", "").strip()
+REENTRY_MAX_BUY = int(_rmb_s) if _rmb_s else None
+REENTRY_MB_N = {"blocked": 0}   # ★발동 카운터
 # ★★★[2026-09-01 신설 · CAND-2026-09-01-11 · ★해달별님 발안] 갭 조건부 추가매수 차단.
 #   ★해달별님: 「갭 <= -10% AND 차수=2에 대해 추가 진입을 막는 형태는 어떠한가?」
 #   ★그날 시가가 전일 유효봉 종가 대비 GAP% 이하로 갭하락했고 이미 MIN_BC 번 이상 샀으면
@@ -1384,7 +1398,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             #   보므로 다음 목표는 항상 t[0](:1144 계산, add-buy 전 avg_buy 기준) 하나뿐이다.
             _oldtgt_hit = (OLDTGT_PRIORITY and p["sell_count"] == 0 and p["qty"] > 0
                            and bar_ok and hi >= t[0])
-            if OLDTGT_PRIORITY and p["sell_count"] == 0 and p["buy_count"] < MAX_BUY and not p.get("knife"):
+            # ★재진입 차수 상한(CAND-2026-09-02-8) — off(None)면 MAX_BUY 그대로 = 항등.
+            _mb = REENTRY_MAX_BUY if (REENTRY_MAX_BUY is not None and p.get("is_reentry")) else MAX_BUY
+            if OLDTGT_PRIORITY and p["sell_count"] == 0 and p["buy_count"] < _mb and not p.get("knife"):
                 OLDTGT_N["eval"] += 1
                 if _oldtgt_hit:
                     OLDTGT_N["skip_add"] += 1
@@ -1393,7 +1409,11 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             # ⚠️`not _oldtgt_hit` — 구목표 우선 가드가 켜져 있고 오늘 hi 가 구목표(t[0])를
             #   찍었으면 add-buy 를 건너뛴다. avg_buy 가 안 바뀌므로 :1245 의 기존
             #   `if not bought:` hi 매도 블록이 그대로 그 목표를 정상 체결한다(로직 중복 없음).
-            if (p["sell_count"] == 0 and p["buy_count"] < MAX_BUY and not p.get("knife")
+            if (REENTRY_MAX_BUY is not None and p.get("is_reentry")
+                    and p["sell_count"] == 0 and p["buy_count"] >= REENTRY_MAX_BUY
+                    and p["buy_count"] < MAX_BUY and not p.get("knife")):
+                REENTRY_MB_N["blocked"] += 1
+            if (p["sell_count"] == 0 and p["buy_count"] < _mb and not p.get("knife")
                     and not _oldtgt_hit):
                 at = _to_tick(p["last_buy"] * (1 - ADD_DROP))   # 추가매수가 호가단위 반올림
                 _skip = (p["buy_count"] >= NL_AFTER and at <= p["min_low"])
@@ -1739,6 +1759,13 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 #   ★유효봉 기준값으로 심는다 — 다음 날 첫 판정이 비지 않게. 기본 off.
                 **({"ref_close": price} if ADDBLK_SEED_REF else {}),
                 entry_above=above, entry_bull=bull, tid=tid_seq, cost=_cost, proc=0.0, legs=[],
+                # ⚠️★★[2026-09-02 해달별님 지적] ★`is_reentry` 에는 ★기간 제한이 없다 —
+                #   `last_exit` 은 어디서도 지워지지 않아 ★10년 전 청산도 「재진입」이다.
+                #   ★`_RESET_DAYS=1186`(39개월)은 ★`s2_reentry_ct` 카운터만 리셋하고
+                #   ★이 플래그는 ★영원히 True 다. ★즉 39개월 뒤 횟수는 리셋되는데
+                #   ★매수액은 계속 0.75배(`_SIZE_FRAC`)로 남는다 → `CAND-2026-09-02-9`.
+                #   ★★`CAND-2026-09-02-8`(차수 제한)은 ★이 정의를 ★그대로 쓴다
+                #   (해달별님 결정 「A」 — 한 번에 한 축 · §4-2b).
                 is_reentry=bool(REENTRY_RELAX and tk in last_exit), first_buy_amount=_cost)
             positions[tk] = p
             ex(d, p, "buy_new", 1, price, sh, nav_today)
