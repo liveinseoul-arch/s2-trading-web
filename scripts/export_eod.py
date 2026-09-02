@@ -184,6 +184,14 @@ PROX = 0.05                      # 예비후보 근접 허용폭(지지선 위 5
 #   ★아래 START 가드가 ★그 조건을 ★시작 시 경고한다(동작은 안 바꾼다).
 MA_LONG, WINDOW, NL_AFTER = 120, 60, 2
 MAX_LEV = float(os.environ.get("S2_MAX_LEV", "1.3"))   # 1.3=30% 대출 허용 / 1.0=대출없음(현금한도)
+# ★★★[2026-09-02 신설 · CAND-2026-09-01-27] ex-ante 레버 게이트 — ★진단 전용 · 기본 off.
+#   ★무엇을 재나 — 백테스트의 `lev_ok` 는 ①그날 종가 마크 ②그날 매도대금이 이미 들어온 현금
+#     ③순차 체결을 밑판으로 쓴다. ★실계좌(Flow A)는 15:20 에 다음 거래일치 감시주문을
+#     ★한꺼번에 내므로 그날 매도가 될지 모른 채 자본을 예약해야 한다. ★그 정보집합 차이를 잰다.
+#   "prev" = 진입(buy_new) 판정만 ★전일 장마감 (cash, hv) 를 밑판으로 쓰고 그날 안에서 누적한다.
+#   ⚠️★운영에 켜자는 제안이 아니다 — §8-1 병기 문장에 넣을 넷째 축의 크기를 재는 진단 게이트다.
+LEV_XA = os.environ.get("S2_LEV_EXANTE", "0").strip().lower()   # "0" | "prev"
+LEVXA_N = {"eval": 0, "block": 0, "same": 0}                    # ★발동 카운터(§4-2d 관문2)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # ★★★S2_COMBO_RS — S2 + RS96 **공유 자본풀** 게이트. 기본 off (2026-08-11 신설)
@@ -422,6 +430,20 @@ ADDBLK_MODE = os.environ.get("S2_ADDBLOCK_MODE", "skip").strip().lower()
 #     ★반드시 off 재현을 ★파일 해시로 확인하고 켠다.
 ADDBLK_SEED_REF = os.environ.get("S2_ADDBLOCK_SEED_REF", "0") == "1"
 ADDBLK_N2 = {"close_fill": 0, "close_extra": 0, "close_skip": 0}
+# ★★★[2026-09-02 신설 · CAND-2026-09-01-12] 추가매수 ★종가 전환 — ★갭 조건이 ★없는 전역판.
+#   ★현행 채택 `S2_ADDBLOCK_*`(GAP=-6 · mix)는 ★갭하락일에만 발동한다. 이 게이트는
+#   ★그 갭 조건을 없애고 ★전 거래일 · 차수 >= MIN_BC 인 추가매수에 항상 적용한다.
+#   ★왜 — S2 1차 진입이 원래 종가 기준이라 ★체결 방식이 전 다리에서 일관돼지고,
+#     판정에 ★어제 값도 오늘 종가 선취도 안 써서 ★룩어헤드 여지가 원리적으로 0이다
+#     (갭 게이트가 필요로 하던 ph_ref · SEED_REF 참조가 불필요).
+#   `lim`   ★종가 동시호가 지정가 — 종가 <= 지정가일 때만 종가 체결, 아니면 그날 안 산다
+#   `touch` ★장중 지정가 도달을 확인한 뒤 종가 매수 — 도달했으면 종가가 비싸도 산다
+#   ⚠️★산술 — cl >= lo 이므로 「종가 지정가」는 ★새 체결을 만들 수 없다(표적이 닫혀 있다).
+#   ⚠️★기본 off(MIN_BC=0) = 종전 동작 비트동일.
+CLOSEBUY_MIN_BC = int(os.environ.get("S2_CLOSEBUY_MIN_BC", "0"))   # 0 = off. 1 = 2차부터
+CLOSEBUY_MODE = os.environ.get("S2_CLOSEBUY_MODE", "lim").strip().lower()
+CLOSEBUY_ON = CLOSEBUY_MIN_BC >= 1
+CB_N = {"eval": 0, "fill": 0, "skip": 0}
 # 사이징 (NAV %) — 120일선 위 SIZE_ABOVE / 아래 SIZE_BELOW. 기본 0.18 / 0.09.
 # env S2_SIZE_ABOVE / S2_SIZE_BELOW (예: 0.15 / 0.075 = 구 설정)
 SIZE_ABOVE = float(os.environ.get("S2_SIZE_ABOVE", "0.18"))
@@ -696,6 +718,20 @@ TIME_STOP_DAYS = int(os.environ.get("S2_TIME_STOP_DAYS", "15"))
 TIME_STOP_REF = os.environ.get("S2_TIME_STOP_REF", "entry").lower()
 # 신저가 손절 트리거 기준: "intraday" = 그날 lo (장중) / "close" = 그날 cl (종가만)
 NEWLOW_TRIGGER = os.environ.get("S2_NEWLOW_TRIGGER", "intraday").lower()
+# ★★★[2026-09-02 신설 · CAND-2026-09-01-19] `not bought` 유예 — ★규명 게이트 · 기본 off.
+#   ★무엇인가 — `_nl_cond` 의 `and not bought` 는 「그날 추가매수한 종목은 그날 신저가
+#     손절을 내지 않는다」는 ★설계선이다. 실주문 데몬 kw_watchloop 의 ★배타 규칙 E-2
+#     (buy_add 체결 → 그날 newlow 판정 해제)와 ★같은 규칙의 두 구현이라 ★현재 정합하다.
+#   ★재는 것 — 그 한 줄이 S2 성과의 얼마를 만들고 있나.
+#   `hold`    ★기본 = 종전(유예한다) / `release` 유예를 끊는다 / `extend` 유예를 늘린다(F3 역방향)
+#   ⚠️★채택 제안이 아니다 — 계획 측(:newlow_stop 감시주문)에는 그 주문이 원리적으로 없어
+#     (2차 매수일에는 buy_count=1) ★백테스트를 덜 현실적으로 만든다. ★규명 전용.
+NL_BOUGHT_MODE = os.environ.get("S2_NL_BOUGHT_MODE", "hold").strip().lower()
+NL_BOUGHT_MARGIN = float(os.environ.get("S2_NL_BOUGHT_MARGIN", "0"))
+NL_EXTEND_DAYS = int(os.environ.get("S2_NL_EXTEND_DAYS", "0"))
+# ★충돌 가드 확대 — `buy_count >= NL_AFTER-1` 로 내려 2차 매수도 at <= min_low 면 안 산다.
+NL_SKIPADD = os.environ.get("S2_NL_SKIPADD", "0") == "1"
+NL_B_N = {"defer_eval": 0, "release": 0, "extend_defer": 0, "skipadd": 0}
 
 # ── ★분할매도 후 잔량 손절선 버퍼 (2026-08-18 신설, 기본 0 = 구 동작) ──────────
 # 이 스크립트는 분할매도가 나면 손절선을 **그 단계 목표가 그대로**(마진 0) 잡아 왔다
@@ -1248,6 +1284,19 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
         hv = cur_hv(day); nav = cash + hv
         return nav > 0 and (hv + cost) <= MAX_LEV * nav
 
+    def lev_ok_entry(day, cost):
+        """★[CAND-2026-09-01-27] 진입 전용 레버 판정. off("0")면 lev_ok 와 ★항등."""
+        if LEV_XA != "prev":
+            return lev_ok(day, cost)
+        LEVXA_N["eval"] += 1
+        nav = _xa_cash + _xa_hv
+        ok = nav > 0 and (_xa_hv + cost) <= MAX_LEV * nav
+        if not ok:
+            LEVXA_N["block"] += 1
+        elif lev_ok(day, cost):
+            LEVXA_N["same"] += 1
+        return ok
+
     def ex(d, p, action, stage, price, qty, nav_today, blocked=False):
         executions.append(dict(d=d, ticker=p["tk"], name=p["name"], market=p["market"],
             action=action, stage=stage, fill_price=round(price), qty=int(qty),
@@ -1329,8 +1378,12 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 _RISE2W[(_tk, str(_D[_e])[:10])] = _best
         print(f"[buy-priority] rise2w 사전계산 {len(_RISE2W)}건 (win={RISE2W_WIN})")
 
+    # ★[CAND-2026-09-01-27] ex-ante 밑판 — 전일 장마감 (cash, hv). 첫날은 (시작자본, 0.0).
+    _EOD_PREV = (cash, 0.0)
+    _xa_cash, _xa_hv = _EOD_PREV
     for d in all_dates:
         day = by_date[d]; nav_today = cash + cur_hv(day); closed = set()
+        _xa_cash, _xa_hv = _EOD_PREV        # ★그날치 ex-ante 밑판을 연다(off 면 아무도 안 읽는다)
         # ★★[CAND-2026-08-24-240] 재배분 풀 — ★그날 안에서만 산다(다음 날로 이월하지 않는다).
         #   ★off 면 이 변수는 만들어지되 아무도 안 건드린다(비용 = 대입 1회).
         _ra_pool = 0.0
@@ -1445,7 +1498,11 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             if (p["sell_count"] == 0 and p["buy_count"] < _mb and not p.get("knife")
                     and not _oldtgt_hit):
                 at = _to_tick(p["last_buy"] * (1 - ADD_DROP))   # 추가매수가 호가단위 반올림
-                _skip = (p["buy_count"] >= NL_AFTER and at <= p["min_low"])
+                # ★[CAND-2026-09-01-19] 충돌 가드 확대 — off 면 _nl_gate_bc = NL_AFTER 로 항등.
+                _nl_gate_bc = (NL_AFTER - 1) if NL_SKIPADD else NL_AFTER
+                _skip = (p["buy_count"] >= _nl_gate_bc and at <= p["min_low"])
+                if NL_SKIPADD and _skip and p["buy_count"] < NL_AFTER:
+                    NL_B_N["skipadd"] += 1
                 # ★★[CAND-2026-09-01-11] 갭 조건부 차단 — ★원장 측. plan 측(:하단)과 같은 술어.
                 if ADDBLK_ON and p["buy_count"] >= ADDBLK_MIN_BC:
                     _ar = p.get("ph_ref")     # ★어제까지의 유효봉 종가(당일 선취 금지)
@@ -1500,6 +1557,26 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                                     _skip = True
                             else:
                                 _skip = True
+                # ★★[CAND-2026-09-01-12] 추가매수 종가 전환 — ★갭 조건 없는 전역판.
+                #   ⚠️★ADDBLOCK 블록 ★뒤 · 유령 가드 ★앞이어야 한다 —
+                #     뒤여야 ADDBLOCK 의 `_skip`(3차 갭일 차단)을 안 풀고,
+                #     앞이어야 유령 가드가 ★바뀐 `at` 을 본다.
+                if CLOSEBUY_ON and (not _skip) and p["buy_count"] >= CLOSEBUY_MIN_BC:
+                    _cb_would = bar_ok and lo <= at        # ★현행에서 오늘 체결됐을 것인가
+                    if _cb_would:
+                        CB_N["eval"] += 1
+                    if CLOSEBUY_MODE == "touch":
+                        if _cb_would:
+                            CB_N["fill"] += 1
+                            at = _to_tick(cl)
+                    else:                                   # "lim"
+                        if _cb_would and cl <= at:
+                            CB_N["fill"] += 1
+                            at = _to_tick(cl)
+                        else:
+                            if _cb_would:
+                                CB_N["skip"] += 1
+                            _skip = True
                 # ★유령 가드 — 원장 측. ⚠️plan 측과 **같은 술어 · 같은 시점**을 쓴다.
                 #   ★`prev=True` — 오늘 체결되는 이 주문은 **어제 저녁 계획**의 산물이므로
                 #     어제까지의 기준값(`ph_ref`·`ph_halt`)으로 판정한다. 그래서 정지 재개일에는
@@ -1545,8 +1622,19 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     elif sh > 0:
                         ex(d, p, "buy_add", p["buy_count"] + 1, at, sh, nav_today, blocked=True)
             _trigger_px = lo if NEWLOW_TRIGGER == "intraday" else cl
+            # ★★[CAND-2026-09-01-19] `not bought` 유예 — off("hold")면 _nl_defer = bought 로 항등.
+            _nl_defer = bought
+            if NL_BOUGHT_MODE == "release" and bought:
+                NL_B_N["defer_eval"] += 1
+                if _trigger_px < p["min_low"] * (1.0 - NL_BOUGHT_MARGIN):
+                    _nl_defer = False
+                    NL_B_N["release"] += 1
+            elif NL_BOUGHT_MODE == "extend" and (not bought) and NL_EXTEND_DAYS > 0:
+                if (didx[d] - p["last_buy_idx"]) <= NL_EXTEND_DAYS and p["buy_count"] >= NL_AFTER:
+                    _nl_defer = True
+                    NL_B_N["extend_defer"] += 1
             _nl_cond = (p["sell_count"] == 0 and (p["buy_count"] >= NL_AFTER or p.get("knife"))
-                        and not bought and _trigger_px < p["min_low"])
+                        and not _nl_defer and _trigger_px < p["min_low"])
             if _nl_cond and not bar_ok:
                 VB_SKIP["newlow"] += 1
             if _nl_cond and bar_ok:
@@ -1759,13 +1847,16 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 continue
             stub = dict(tk=tk, name=nmap.get(tk, ""), market=MKT.get(mmap.get(tk, ""), mmap.get(tk, "")),
                         entry_above=above, entry_bull=bull, buy_count=1)
-            if not lev_ok(day, sh * price):
+            if not lev_ok_entry(day, sh * price):     # ★[CAND-2026-09-01-27] off 면 lev_ok 와 항등
                 ex(d, stub, "buy_new", 1, price, sh, nav_today, blocked=True)
                 n_blocked += 1
                 continue
             tid_seq += 1
             _cost = sh * price * BUY_MULT
             cash -= _cost
+            if LEV_XA == "prev":                      # ★ex-ante 밑판 누적(그날 안에서만)
+                _xa_cash -= _cost
+                _xa_hv += sh * price
             # ★조건부 매도 — MA120 위 진입분은 S_ABOVE. off(None)면 S 라 종전과 동일.
             _base_t = S_ABOVE if (above and S_ABOVE is not None) else S
             # 잠재력 종목(2주 순방향 상승 rise2w >= 임계)이면 넓은 목표가, 아니면 기본
@@ -1898,6 +1989,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
 
         # 일말: NAV·스냅샷
         hv = cur_hv(day); nav = cash + hv; peak = max(peak, nav)
+        _EOD_PREV = (cash, hv)          # ★[CAND-2026-09-01-27] 내일의 ex-ante 밑판
         dd = (nav / peak - 1) * 100 if peak > 0 else 0.0
         lev = (hv + max(0.0, -cash)) / nav if nav > 0 else 0.0   # gross/nav 근사
         nav_rows.append(dict(d=d, nav=round(nav), cash=round(cash), stock_value=round(hv),
@@ -2389,6 +2481,23 @@ def main():
                   "★종가>지정가라 차단 %d건) · SEED_REF=%s"
                   % (ADDBLK_N2["close_fill"], ADDBLK_N2["close_extra"],
                      ADDBLK_N2["close_skip"], ADDBLK_SEED_REF))
+
+    # ★★발동 카운터 3종 (§4-2d 관문 2) — ★게이트 on 일 때만 출력한다(off 면 이 줄이 없다).
+    if CLOSEBUY_ON:
+        print("[CLOSEBUY] ★평가 %d건 → ★종가체결 %d건 · ★미체결(종가>지정가) %d건 "
+              "· MIN_BC=%d · ★MODE=%s"
+              % (CB_N["eval"], CB_N["fill"], CB_N["skip"], CLOSEBUY_MIN_BC, CLOSEBUY_MODE))
+    if NL_BOUGHT_MODE != "hold" or NL_SKIPADD:
+        print("[NL-BOUGHT] ★MODE=%s · MARGIN=%.4f · EXTEND_DAYS=%d · SKIPADD=%s "
+              "→ ★평가 %d · ★유예해제 %d · ★유예연장 %d · ★추가매수건너뜀 %d"
+              % (NL_BOUGHT_MODE, NL_BOUGHT_MARGIN, NL_EXTEND_DAYS, NL_SKIPADD,
+                 NL_B_N["defer_eval"], NL_B_N["release"],
+                 NL_B_N["extend_defer"], NL_B_N["skipadd"]))
+    if LEV_XA == "prev":
+        print("[LEV-EXANTE] ★MODE=prev · 평가 %d건 → ★실차단(ex-ante) %d건 "
+              "· 양쪽 다 통과 %d건 · ex-ante 통과인데 종전이면 막혔을 것 %d건 · MAX_LEV=%.2f"
+              % (LEVXA_N["eval"], LEVXA_N["block"], LEVXA_N["same"],
+                 LEVXA_N["eval"] - LEVXA_N["block"] - LEVXA_N["same"], MAX_LEV))
 
     # ★★CA 리스케일 발동 카운터 (§4-2d 관문 2 · CAND-2026-08-22-19) — 게이트 on 일 때만 출력
     #   ⚠️★hit = 0 이면 「효과 없음」이 아니라 ★먼저 「표적이 정말 없는가」를 묻는다.
