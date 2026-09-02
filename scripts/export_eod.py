@@ -386,6 +386,29 @@ def _nl_guard(limit, where):
 
 _nl_guard(REENTRY_MAX_BUY, "S2_REENTRY_MAX_BUY")
 _nl_guard(MAX_BUY if MAX_BUY < NL_AFTER else None, "S2_MAX_BUY")
+
+# ★★★[2026-09-02 신설 · CAND-2026-09-02-10 ★2단계 구조 수리 · ★해달별님 지시]
+#   ★1단계(위 `_nl_guard`)는 ★경고만 했다 — ★「조용함」을 ★「시끄러움」으로 바꾼 것이다.
+#   ★2단계는 ★결함 자체를 없앤다: ★손절 무장 문턱을 ★차수 상한과 ★분리한다.
+#
+#   ⚠️★★무엇이 결함인가 — `_nl_cond` 가 `buy_count >= NL_AFTER`(=2) 를 요구하는데
+#     ★차수 상한을 2 미만으로 묶으면 ★`buy_count` 가 2에 ★영영 도달하지 못한다.
+#     ★즉 ★**상한을 조이는 처치가 ★손절기를 함께 끈다**(실측 — 재진입 `newlow_stop`
+#     ★42 → 0 · 64 → 0 이고 청산이 `time_stop` 으로 밀렸다: 3 → 37 · 4 → 58).
+#     ★사용자는 ★「물타기를 줄인다」고 생각하는데 ★실제로는 ★손실 축을 함께 바꾼다.
+#
+#   ★★처치 — `effective` 모드에서 ★그 포지션의 ★유효 차수 상한이 `NL_AFTER` 미만이면
+#     ★무장 문턱을 ★그 상한까지 ★낮춘다(`arm_at = min(NL_AFTER, eff_cap)`).
+#     ★유효 상한 계산은 ★`:1484` `_mb` 와 ★같은 식을 쓴다(재진입이면 REENTRY_MAX_BUY).
+#
+#   ⚠️★★왜 `NL_AFTER` 자체를 안 내리나 — `NL_AFTER=2` 는 ★채택된 값이고 ★그것을 바꾸는 것은
+#     ★별개 관문이다(§4-5). ★이 게이트는 ★**상한이 그보다 낮을 때만** 개입하므로
+#     ★상한을 안 거는 현행 운영에서는 ★한 번도 발동하지 않는다 = ★표적 0건.
+#
+#   ★★기본 off(`count`) = ★종전과 ★비트 동일. ★되돌리기는 이 env 를 지우는 것 한 줄이다.
+#   → CAND-2026-09-02-10 · 근거 quant_infra/2026-09/S2_REENTRY_MAXBUY_2026-09-02.md §7
+NL_ARM_MODE = os.environ.get("S2_NL_ARM_MODE", "count").strip().lower()
+NL_ARM_N = {"lowered": 0, "armed_extra": 0}     # ★발동 카운터(§4-2d 관문 2)
 # ★★★[2026-09-01 신설 · CAND-2026-09-01-11 · ★해달별님 발안] 갭 조건부 추가매수 차단.
 #   ★해달별님: 「갭 <= -10% AND 차수=2에 대해 추가 진입을 막는 형태는 어떠한가?」
 #   ★그날 시가가 전일 유효봉 종가 대비 GAP% 이하로 갭하락했고 이미 MIN_BC 번 이상 샀으면
@@ -1633,7 +1656,18 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 if (didx[d] - p["last_buy_idx"]) <= NL_EXTEND_DAYS and p["buy_count"] >= NL_AFTER:
                     _nl_defer = True
                     NL_B_N["extend_defer"] += 1
-            _nl_cond = (p["sell_count"] == 0 and (p["buy_count"] >= NL_AFTER or p.get("knife"))
+            # ★★[CAND-2026-09-02-10 2단계] 무장 문턱을 차수 상한과 분리 — off 면 항등.
+            _arm_at = NL_AFTER
+            if NL_ARM_MODE == "effective":
+                _eff_cap = (REENTRY_MAX_BUY
+                            if (REENTRY_MAX_BUY is not None and p.get("is_reentry"))
+                            else MAX_BUY)
+                if _eff_cap < NL_AFTER:
+                    _arm_at = _eff_cap
+                    NL_ARM_N["lowered"] += 1
+                    if p["buy_count"] >= _arm_at > 0 and p["buy_count"] < NL_AFTER:
+                        NL_ARM_N["armed_extra"] += 1     # ★이 완화 덕에 무장된 포지션-일
+            _nl_cond = (p["sell_count"] == 0 and (p["buy_count"] >= _arm_at or p.get("knife"))
                         and not _nl_defer and _trigger_px < p["min_low"])
             if _nl_cond and not bar_ok:
                 VB_SKIP["newlow"] += 1
@@ -2418,6 +2452,16 @@ def main():
     if VB_SKIP["minlow"]:
         print(f"  ★min_low 오염 차단 {VB_SKIP['minlow']}건 — 막지 않았다면 "
               f"그 포지션들의 신저가 손절이 영구 비활성화됐다.")
+
+    # ★★재진입 차수 상한 · 손절 무장 카운터(2026-09-02 · CAND-2026-09-02-10 · -11)
+    #   ★§4-2d 관문 2 — 「0건이라 효과 없음」과 「코드가 안 돌아 0건」을 가른다.
+    #   ⚠️★`nl_disabled` 가 0 이 아니면 ★손절기가 꺼진 채로 돈 것이다(NL-GUARD 경고와 짝).
+    if REENTRY_MAX_BUY is not None or NL_ARM_MODE != "count" or REENTRY_MB_N["nl_disabled"]:
+        print(f"[REENTRY_MAXBUY] 상한={REENTRY_MAX_BUY} · 차단 {REENTRY_MB_N['blocked']}건 · "
+              f"NL-GUARD 경고 {REENTRY_MB_N['nl_disabled']}건")
+        print(f"[NL_ARM] MODE={NL_ARM_MODE} · NL_AFTER={NL_AFTER} · "
+              f"문턱 낮춤 {NL_ARM_N['lowered']}회 · ★그 덕에 무장 {NL_ARM_N['armed_extra']}회"
+              + ("" if NL_ARM_MODE != "count" else "  (off = 종전 동작)"))
 
     # ★재진입 쿨다운 발동 카운터(2026-08-26 · CAND-2026-08-26-12)
     if REENTRY_COOLDOWN_DAYS is not None:
