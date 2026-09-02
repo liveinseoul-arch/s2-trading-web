@@ -3,17 +3,25 @@
 // 갱신 시 rs96Perf.json 재생성 후 커밋(라이브 데이터 아님, 주기적 스냅샷).
 import raw from "./rs96Perf.json";
 
+// ★capw 계열은 ★optional 이다 — ★2026-09-02 신설(Vercel 4일 정지 사고).
+//   ★JSON 생성기가 두 벌이라(개발용 scripts/make_rs96_json.py · ★운영용
+//   ★C:/quantBacktest/build_kr_perf_json.py) ★한쪽만 필드를 내던 시기가 있었고,
+//   ★필수(required)로 두었더니 ★데이터 한 필드 결손이 ★빌드 전면 실패로 번져
+//   ★2026-08-29 08:09 부터 ★커밋 15건이 배포되지 않았다.
+//   ★표시 헬퍼(pct·signClass)가 null·undefined 를 "-" 로 처리하므로 ★UI 는 그대로 산다.
+//   ⚠️★값을 채우는 책임은 ★생성기 쪽이다 — 여기서 optional 로 둔 것은
+//   ★「값이 없다」를 허용한 것이지 ★「병기하지 않아도 된다」가 아니다(CLAUDE.md §3-6).
 export interface RsPerfMeta {
   cagr: number; mdd: number; calmar: number; nTrades: number;
-  winRate: number; avgRet: number; capwRet: number; finalMult: number;
+  winRate: number; avgRet: number; capwRet?: number | null; finalMult: number;
   start: string; end: string; base: number; config: string;
 }
 export interface RsPerfYear {
   year: number; ret: number; mdd: number; kospi: number | null; kosdaq: number | null;
-  num: number; win: number; avg: number; capw: number; pnl: number;
+  num: number; win: number; avg: number; capw?: number | null; pnl: number;
 }
 export interface RsPerfMonth {
-  month: string; ret: number; mdd: number; num: number; win: number; avg: number; capw: number; pnl: number;
+  month: string; ret: number; mdd: number; num: number; win: number; avg: number; capw?: number | null; pnl: number;
 }
 export interface RsPerfTrade {
   ticker: string; name: string; entry: string; exit: string;
