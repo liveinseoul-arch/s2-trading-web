@@ -534,6 +534,39 @@ _rmc_s = os.environ.get("S2_REENTRY_MAX_COUNT", "").strip()
 REENTRY_MAX_COUNT = int(_rmc_s) if _rmc_s else None
 _rrd_s = os.environ.get("S2_REENTRY_RESET_DAYS", "").strip()
 REENTRY_RESET_DAYS = int(_rrd_s) if _rrd_s else None
+REENTRY_MC_N = {"blocked": 0}   # ★MAX_COUNT 발동 카운터(2026-09-02 신설 — 종전엔 아예 없었다)
+
+# ★★★[2026-09-02 신설 · CAND-2026-09-02-45 · ★해달별님 발안] `is_reentry` ★기간 창
+#   [배경] 해달별님 지적 — *"재진입은 몇 일 이내를 재진입으로 보는가?"*
+#     `last_exit` 은 `:1269` 에서 런당 1회 초기화된 뒤 ★어디서도 지워지지 않는다
+#     (`del`·`pop` grep 0건). 따라서 종전 정의는 ★무기한이다 — 10년 전에 판 종목을
+#     오늘 다시 사도 「재진입」으로 분류돼 `SIZE_FRAC=0.75` 할인과 카운터 증가를 먹는다.
+#   ⚠️★`S2_REENTRY_RESET_DAYS=1186` 은 ★`s2_reentry_ct` ★카운터만 리셋하고 이 판정
+#     자체는 안 건드린다 — ★둘은 다른 축이다(혼동 금지).
+#   [게이트] `S2_REENTRY_WINDOW_DAYS` — ★빈 문자열 또는 ★0 = off = ★종전 비트동일.
+#     양수 W = ★직전 청산일로부터 ★W 달력일 ★미만(`< W`)에 다시 사는 것만 재진입으로 본다.
+#     ★부등호 방향은 `RESET_DAYS`(`>= W` 에서 리셋)와 ★맞췄다 — W=1186 에서 경계가 일치한다.
+#   [적용 경로] ★`is_reentry` ★판정에만 — ①플래그(`:1923` 부근) ②`SIZE_FRAC`(`:1843` 부근)
+#     ③카운터 증가(`:1928` 부근). ⚠️★`COOLDOWN`(자체 창 보유)과 ★비완화 자격게이트
+#     (`RELAX=1` 이면 이미 죽어 있다)에는 ★적용하지 않는다.
+#   ★되돌리기 — 이 env 를 지운다(한 줄).
+#   근거: quant_infra/prereg/2026-09-02_S2_재진입창.md
+_rwd_s = os.environ.get("S2_REENTRY_WINDOW_DAYS", "").strip()
+REENTRY_WINDOW_DAYS = int(_rwd_s) if _rwd_s else None
+if REENTRY_WINDOW_DAYS is not None and REENTRY_WINDOW_DAYS <= 0:
+    REENTRY_WINDOW_DAYS = None          # ★0 = off(종전 비트동일)
+REENTRY_WIN_N = {"size_demoted": 0, "ct_demoted": 0}   # ★발동 카운터(§4-2d 관문2)
+
+
+def _reentry_in_window(tk, d, last_exit):
+    """★재진입인가 — 종전 `tk in last_exit` 에 ★기간 창을 씌운 판정.
+
+    ★창이 off(None)면 `tk in last_exit` 와 ★완전히 동일하다(비트동일 보장)."""
+    if tk not in last_exit:
+        return False
+    if REENTRY_WINDOW_DAYS is None:
+        return True
+    return (d - last_exit[tk]).days < REENTRY_WINDOW_DAYS
 
 # ★★★[2026-08-26 신설 · CAND-2026-08-26-12] 재진입 손실비례 쿨다운 — ★39개월리셋
 #   (위 4개)과 병행하는 별도 축. mc=2·reset=39개월만으로는 「직전 청산이 대형손실이어도
@@ -1771,6 +1804,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 #   지났으면 카운터를 0으로 되돌린다(고갈 방지 · kr_s2_engine 과 동일 로직).
                 s2_reentry_ct[tk] = 0
             if REENTRY_RELAX and REENTRY_MAX_COUNT is not None and s2_reentry_ct.get(tk, 0) >= REENTRY_MAX_COUNT:
+                REENTRY_MC_N["blocked"] += 1   # ★2026-09-02 신설 카운터(§4-2d 관문2) — 판정 무변경
                 continue
             # ★재진입 손실비례 쿨다운(2026-08-26 · CAND-2026-08-26-12) — reentry_relax 와
             #   무관하게 독립 작동한다(mc=2·39개월리셋은 「횟수」를, 이 게이트는 「즉시재진입」
@@ -1840,8 +1874,13 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     EXPO_N["amt_after"] += amt
             # ★재진입 사이징 축소(2026-08-26 · CAND-2026-08-26-2) — REENTRY_RELAX=False(기본)
             #   면 위 게이트가 이미 재진입을 거의 다 걸러 이 분기는 사실상 무의미(canonical 항등).
+            #   ★★[2026-09-02 · CAND-2026-09-02-45] 기간 창 — `tk in last_exit` 대신
+            #   `_reentry_in_window()`. 창 off(기본)면 두 식이 ★완전히 같다.
             if REENTRY_RELAX and REENTRY_SIZE_FRAC != 1.0 and tk in last_exit:
-                amt *= REENTRY_SIZE_FRAC
+                if _reentry_in_window(tk, d, last_exit):
+                    amt *= REENTRY_SIZE_FRAC
+                else:
+                    REENTRY_WIN_N["size_demoted"] += 1   # ★창 밖 = 신규 취급(할인 면제)
             # ★★[CAND-2026-08-24-240] 참여율 상한 — ★비례 축소(차단 아님). off 면 cap=None.
             _cap = _liq_cap_krw(tk, d)
             if _cap is not None:
@@ -1920,13 +1959,20 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 #   ★매수액은 계속 0.75배(`_SIZE_FRAC`)로 남는다 → `CAND-2026-09-02-9`.
                 #   ★★`CAND-2026-09-02-8`(차수 제한)은 ★이 정의를 ★그대로 쓴다
                 #   (해달별님 결정 「A」 — 한 번에 한 축 · §4-2b).
-                is_reentry=bool(REENTRY_RELAX and tk in last_exit), first_buy_amount=_cost)
+                #   ★★[2026-09-02 · CAND-2026-09-02-45] 위 지적의 ★수리 게이트 —
+                #   `S2_REENTRY_WINDOW_DAYS` 가 켜지면 창 밖 재매수는 ★신규로 본다.
+                #   ★off(기본)면 `tk in last_exit` 와 ★비트동일.
+                is_reentry=bool(REENTRY_RELAX and _reentry_in_window(tk, d, last_exit)),
+                first_buy_amount=_cost)
             positions[tk] = p
             ex(d, p, "buy_new", 1, price, sh, nav_today)
             leg(p, d, "buy_new", 1, price, sh, nav_today)
             n_bought += 1
             if REENTRY_RELAX and tk in last_exit:
-                s2_reentry_ct[tk] = s2_reentry_ct.get(tk, 0) + 1
+                if _reentry_in_window(tk, d, last_exit):   # ★CAND-2026-09-02-45 · off 면 종전과 동일
+                    s2_reentry_ct[tk] = s2_reentry_ct.get(tk, 0) + 1
+                else:
+                    REENTRY_WIN_N["ct_demoted"] += 1       # ★창 밖 = 카운터를 안 올린다
         counts.append(dict(d=d, n_candidates=n_cand, n_reached=n_reached,
                            n_bought=n_bought, n_blocked=n_blocked))
 
@@ -2462,6 +2508,16 @@ def main():
         print(f"[NL_ARM] MODE={NL_ARM_MODE} · NL_AFTER={NL_AFTER} · "
               f"문턱 낮춤 {NL_ARM_N['lowered']}회 · ★그 덕에 무장 {NL_ARM_N['armed_extra']}회"
               + ("" if NL_ARM_MODE != "count" else "  (off = 종전 동작)"))
+
+    # ★★재진입 기간 창 · MAX_COUNT 발동 카운터(2026-09-02 · CAND-2026-09-02-45)
+    #   ★§4-2d 관문 2 — 「0건이라 효과 없음」과 「코드가 안 돌아 0건」을 가른다.
+    #   ⚠️★`size_demoted` 는 ★도달(reached) 기준이라 ★현금 제약으로 못 산 건도 센다.
+    #     ★`ct_demoted` 가 ★실제 매수 기준이다(두 값이 다른 것이 정상).
+    if REENTRY_RELAX:
+        print(f"[REENTRY_WINDOW] 창={REENTRY_WINDOW_DAYS if REENTRY_WINDOW_DAYS else 'off(무기한)'}"
+              f"일 · 신규강등 사이징 {REENTRY_WIN_N['size_demoted']}건 / 카운터 "
+              f"{REENTRY_WIN_N['ct_demoted']}건 · MAX_COUNT 차단 {REENTRY_MC_N['blocked']}건"
+              + ("  (off = 종전 동작)" if REENTRY_WINDOW_DAYS is None else ""))
 
     # ★재진입 쿨다운 발동 카운터(2026-08-26 · CAND-2026-08-26-12)
     if REENTRY_COOLDOWN_DAYS is not None:
