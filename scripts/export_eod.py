@@ -101,8 +101,11 @@ def _nonstandard_s2_env():
         else:
             if cur != expected:
                 bad.append(f"{name}={cur!r}(정본={expected!r})")
+    # ★★[2026-09-03 · CAND-2026-09-03-25] ★`S2_PREREG_*` 는 ★가드 자신의 스위치라
+    #   ★「정본에 없는 설정」이 ★아니다 — 계산에 한 톨도 안 닿는다(런 전 확인 전용).
     extra = sorted(k for k in os.environ if k.startswith("S2_") and k not in canon
-                   and k not in ("S2_CA_DB", "S2_DRYRUN_DIR"))     # ★이 둘은 ★의도된 연구 게이트
+                   and k not in ("S2_CA_DB", "S2_DRYRUN_DIR")     # ★이 둘은 ★의도된 연구 게이트
+                   and not k.startswith("S2_PREREG_"))
     if extra:
         bad.append(f"정본에 없는 S2_* {len(extra)}개: {extra}")
     return " · ".join(bad)
@@ -315,6 +318,15 @@ BUY_PRIORITY = os.environ.get("S2_BUY_PRIORITY", "none").lower()
 BUY_PRIORITY_SEED = os.environ.get("S2_BUY_PRIORITY_SEED", "0").strip()
 BUYPRI_N = {"shuffled_days": 0, "shuffled_legs": 0}   # ★발동 카운터(§4-2d 관문2)
 RISE2W_WIN   = int(os.environ.get("S2_RISE2W_WIN", "10"))   # 2주 ≈ 10 거래일
+# ★★[2026-09-03 신설 · CAND-2026-09-03-21] ★`_RISE2W` 의 ★룩어헤드를 닫는 게이트.
+#   [왜] ★창이 `_e - WIN + 1` ‥ `_e`(★당일 포함) 이라 ★그날 high/low 를 쓴다.
+#     ★T1 `spike63` 은 ★종가 진입이라 무해하나 ★★S2 는 ★장중 지정가라
+#     ★「그날 많이 오를 종목을 먼저 산다」가 된다.
+#   [게이트] `S2_RISE2W_LAG=1` → 창을 `_e - WIN` ‥ `_e - 1` 로 ★하루 뒤로 믄다(shift(1) 판).
+#     ★기본 `0` = ★종전 비트동일. ★되돌리기 — 이 env 를 지운다(한 줄).
+#   ⚠★★두 소비처가 있다 — `S2_BUY_PRIORITY=rise2w`(매수 우선순위) ·
+#     `S2_POTENTIAL_TARGETS`(차등 목표가). ★둘 다 같은 표를 읽으므로 ★게이트도 공용이다.
+RISE2W_LAG   = int(os.environ.get("S2_RISE2W_LAG", "0"))    # 0=종전(당일 포함) / 1=shift(1)
 # (실험) 낙주 진입필터 — 진입일 5거래일 수익률 < 임계면 진입 skip. None=off. (예: -0.30)
 _emr = os.environ.get("S2_ENTRY_MIN_RET5", "")
 ENTRY_MIN_RET5 = float(_emr) if _emr not in ("", "off") else None
@@ -1440,12 +1452,22 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             _H = _g["high"].to_numpy(); _L = _g["low"].to_numpy(); _D = _g["date"].to_numpy()
             for _e in range(len(_g)):
                 _rm = None; _best = 0.0
-                for _k in range(max(0, _e - RISE2W_WIN + 1), _e + 1):
+                # ★★[CAND-2026-09-03-21] `RISE2W_LAG=1` 이면 ★당일을 창에서 뺀다(shift(1) 판).
+                _hi = _e + 1 - RISE2W_LAG
+                for _k in range(max(0, _hi - RISE2W_WIN), _hi):
                     _rm = _L[_k] if _rm is None else min(_rm, _L[_k])
                     if _rm and _rm > 0:
                         _best = max(_best, _H[_k] / _rm - 1)
                 _RISE2W[(_tk, str(_D[_e])[:10])] = _best
-        print(f"[buy-priority] rise2w 사전계산 {len(_RISE2W)}건 (win={RISE2W_WIN})")
+        print(f"[buy-priority] rise2w 사전계산 {len(_RISE2W)}건 "
+              f"(win={RISE2W_WIN} · lag={RISE2W_LAG})")
+        # ★★[CAND-2026-09-03-21] ★소비처가 둘이라 ★표를 만드는 자리에서 한 번 경고한다 —
+        #   `S2_BUY_PRIORITY=rise2w`(매수 우선순위) · `S2_POTENTIAL_TARGETS`(차등 목표가).
+        #   ★종전에는 ★앞의 것에만 경고가 있어 ★뒤의 것은 ★조용히 룩어헤드였다.
+        if RISE2W_LAG == 0:
+            print("⚠★★[RISE2W] ★당일 high/low 를 포함한다 = ★룩어헤드다"
+                  "(CAND-2026-09-03-21) — ★검정 근거로 쓰지 말 것. "
+                  "★`S2_RISE2W_LAG=1` 로 shift(1) 판을 쓴다", flush=True)
 
     # ★[CAND-2026-09-01-27] ex-ante 밑판 — 전일 장마감 (cash, hv). 첫날은 (시작자본, 0.0).
     _EOD_PREV = (cash, 0.0)
@@ -1853,8 +1875,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             #   ★운영은 무해하다 — `run_eod.ps1` 에 `S2_BUY_PRIORITY` 가 ★없어 기본 `none` 이다.
             #   ★대안 — 순서 의존성을 재려면 ★`shuffle`(아래 · seed x 날짜)을 쓴다.
             #   ★고치려면 — `_RISE2W` 를 `shift(1)` 판으로 다시 만들고 ★새 모드명을 준다.
-            print("⚠️★[BUYPRI] rise2w 는 ★룩어헤드다(당일 high/low 포함 · CAND-2026-09-03-21) — "
-                  "★검정 근거로 쓰지 말 것", flush=True)
+            if RISE2W_LAG == 0:
+                print("⚠️★[BUYPRI] rise2w 는 ★룩어헤드다(당일 high/low 포함 · "
+                      "CAND-2026-09-03-21) — ★검정 근거로 쓰지 말 것", flush=True)
             _dk = str(d)[:10]
             _reached.sort(key=lambda x: _RISE2W.get((x[0], _dk), -1.0), reverse=True)
         elif BUY_PRIORITY == "shuffle" and len(_reached) > 1:
@@ -1962,6 +1985,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             # ★조건부 매도 — MA120 위 진입분은 S_ABOVE. off(None)면 S 라 종전과 동일.
             _base_t = S_ABOVE if (above and S_ABOVE is not None) else S
             # 잠재력 종목(2주 순방향 상승 rise2w >= 임계)이면 넓은 목표가, 아니면 기본
+            # ⚠️★★[CAND-2026-09-03-21] ★이 경로도 ★`_RISE2W` 를 읽는다 = ★같은 룩어헤드다.
+            #   ★`S2_RISE2W_LAG=1` 이 ★이 소비처도 함께 고친다(표가 공용이다).
             if _WIDE_T is not None and _RISE2W.get((tk, str(d)[:10]), 0.0) >= POTENTIAL_RISE:
                 _tgts = _WIDE_T
             else:
@@ -2509,6 +2534,45 @@ def main():
     ap.add_argument("--dry-run", action="store_true", help="Supabase 없이 로컬 CSV + 요약")
     ap.add_argument("--no-notify", action="store_true", help="텔레그램 알림 생략")
     args = ap.parse_args()
+
+    # ── ★★런 전 사전등록 가드 (2026-09-03 신설 · CAND-2026-09-03-25) ──────
+    #   [왜] 2026-09-03 — ★사전등록 없이 ★7런이 돌았다. `check_docs` 검사 13 은
+    #     ★md 를 훑어 ★전부 끝난 뒤에야 잡고, ★그때는 「예측」 칸을 되찾을 수 없다.
+    #   ★★[왜 여기인가] ★격자 러너들은 `run_eod.ps1` 을 ★직접 파싱해 env 를 옮기므로
+    #     ★`get_prod_env.ps1` 의 가드를 ★우회한다(실측 — 오늘 7런이 그 경로였다).
+    #     ★재검정은 ★예외 없이 `--dry-run` 을 쓰고(§4-5) ★운영 EOD 는 ★그것을 안 쓴다
+    #     = ★여기에 두면 ★모든 재검정이 지나고 ★운영은 ★영향이 0 이다.
+    #   [쓰는 법] $env:S2_PREREG_CAND='CAND-...' · $env:S2_PREREG_RUNS='8'
+    #   [모드] $env:S2_PREREG_GUARD = off | warn(★기본) | block
+    #   [되돌리기] $env:S2_PREREG_GUARD='off'  ★한 줄.
+    if args.dry_run and os.environ.get("S2_PREREG_GUARD", "warn").lower() not in (
+            "off", "0", "no", "false"):
+        try:
+            import sys                                        # noqa: PLC0415
+            _qi = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.dirname(os.path.abspath(__file__))))), "quant_infra")
+            if _qi not in sys.path:
+                sys.path.insert(0, _qi)
+            import prereg_check as _pgc                       # noqa: PLC0415
+            _cand = os.environ.get("S2_PREREG_CAND", "").strip()
+            if not _cand:
+                print("⚠★★[prereg-guard] ★`S2_PREREG_CAND` 가 없다 — ★이 런이 "
+                      "★어느 후보의 것인지 기록되지 않는다(CAND-2026-09-03-25). "
+                      "★3런 이상이면 ★사전등록을 먼저 쓸 것", flush=True)
+                if os.environ.get("S2_PREREG_GUARD", "warn").lower() == "block":
+                    raise SystemExit(3)
+            else:
+                _rc = _pgc.check(
+                    _cand,
+                    runs=int(os.environ.get("S2_PREREG_RUNS", "3") or 3),
+                    zero_run=os.environ.get("S2_PREREG_ZERORUN", "") not in ("", "0"),
+                    derived=os.environ.get("S2_PREREG_DERIVED", "") not in ("", "0"))
+                if _rc != 0:
+                    raise SystemExit(3)
+        except SystemExit:
+            raise
+        except Exception as _e:                               # noqa: BLE001
+            print("⚠[prereg-guard] 가드를 못 태웠다(런은 계속한다) — %s" % _e, flush=True)
 
     cfg = Config(); cfg.lookback_days = WINDOW
     end = date.fromisoformat(args.end) if args.end else date.today()
