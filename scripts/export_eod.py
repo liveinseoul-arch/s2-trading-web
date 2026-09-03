@@ -288,11 +288,24 @@ def load_park_returns(all_dates):
     global PARK_NAME, PARK_LAST_PX, PARK_LAST_D
     _b = os.path.basename(hits[0])
     PARK_NAME = _b[len(PARK_TK) + 1:-4].replace("_", " ") if _b.startswith(PARK_TK) else PARK_TK
-    PARK_LAST_PX = float(d["close"].iloc[-1])
-    PARK_LAST_D = hi
-    print("  ★파킹 %s(%s) · ★날짜매칭 %d/%d일(%.1f%%) · 자산기간 %s..%s · 최신종가 %s원 · LAG=%d · FEE=%.4f%%"
+    # ★[CAND-2026-09-02-51 수리] `d["close"].iloc[-1]` 는 ★CSV 파일의 「오늘 시세」였다 —
+    #   `--end` 로 과거 시뮬 날짜를 지정해도 항상 오늘 값을 썼다(재현 불가 · 미래참조).
+    #   ★`all_dates`(시뮬레이션이 실제로 돈 날짜들 · `_prepare(end_date=end)` 로 이미 --end 에
+    #   묶여 있다)의 최대값을 기준으로 ★그 날짜 이하에서 가장 가까운 종가를 쓴다.
+    #   ⚠️`--end` 미지정 운영 실행(오늘=시뮬 최신일)에서는 sim_end ≈ 오늘이라
+    #   `d["close"].iloc[-1]` 와 동일한 값이 나와야 한다(§4-5 관문② off 재현).
+    _sim_end = max(dt.date() if hasattr(dt, "date") else dt for dt in all_dates)
+    _d_upto = d[d["date"] <= _sim_end]
+    if len(_d_upto):
+        PARK_LAST_PX = float(_d_upto["close"].iloc[-1])
+        PARK_LAST_D = _d_upto["date"].iloc[-1]
+    else:
+        # ★CSV 시작일이 시뮬 시작일보다 늦는 극단 케이스 — 종전 동작(파일 최신값)으로 폴백
+        PARK_LAST_PX = float(d["close"].iloc[-1])
+        PARK_LAST_D = hi
+    print("  ★파킹 %s(%s) · ★날짜매칭 %d/%d일(%.1f%%) · 자산기간 %s..%s · 시뮬기준(%s) 종가 %s원 · LAG=%d · FEE=%.4f%%"
           % (PARK_TK, PARK_NAME, hit, len(all_dates),
-             hit / len(all_dates) * 100, lo, hi, format(round(PARK_LAST_PX), ","),
+             hit / len(all_dates) * 100, lo, hi, PARK_LAST_D, format(round(PARK_LAST_PX), ","),
              PARK_LAG, PARK_FEE * 100))
     if hit < len(all_dates) * 0.9:
         print("  ⚠️★매칭률이 90%% 미만이다 — 파킹 수익이 과소평가된다. 자산 기간을 확인할 것")
