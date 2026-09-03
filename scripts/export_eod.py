@@ -1845,6 +1845,16 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             _reached.append((tk, price, sz, above, bull, _is_knife))
         # 현금제약 시 우선순위 정렬 — rise2w 큰 종목 먼저 매수 (none=수집순=기존 동작)
         if BUY_PRIORITY == "rise2w":
+            # ⚠️★★★[2026-09-03 · CAND-2026-09-03-21] ★이 모드는 ★검정에 쓰지 말 것 — ★룩어헤드다.
+            #   ★`_RISE2W`(:1429 부근)가 창 `_e - WIN + 1` 부터 ★`_e`(★당일 포함)까지의
+            #     ★`high`/`low` 로 계산된다. ★T1 `spike63` 은 ★종가 진입이라 무해하지만
+            #     ★★S2 는 ★**장중 지정가 진입**이라 ★진입 시점에 ★그날 고가를 ★알 수 없다.
+            #   ★★즉 ★현금 천장에서 ★「그날 많이 오를 종목을 먼저 산다」가 된다.
+            #   ★운영은 무해하다 — `run_eod.ps1` 에 `S2_BUY_PRIORITY` 가 ★없어 기본 `none` 이다.
+            #   ★대안 — 순서 의존성을 재려면 ★`shuffle`(아래 · seed x 날짜)을 쓴다.
+            #   ★고치려면 — `_RISE2W` 를 `shift(1)` 판으로 다시 만들고 ★새 모드명을 준다.
+            print("⚠️★[BUYPRI] rise2w 는 ★룩어헤드다(당일 high/low 포함 · CAND-2026-09-03-21) — "
+                  "★검정 근거로 쓰지 말 것", flush=True)
             _dk = str(d)[:10]
             _reached.sort(key=lambda x: _RISE2W.get((x[0], _dk), -1.0), reverse=True)
         elif BUY_PRIORITY == "shuffle" and len(_reached) > 1:
