@@ -22,6 +22,11 @@
 //    2026-08-26  S2_REENTRY_* (6개)        — 재진입 2회 제한 + 손실비례 쿨다운
 //    2026-08-26  S2_OLDTGT_PRIORITY        — 구목표 도달 시 매도 우선
 //    2026-08-26  S2_EXRIGHTS_BLOCK         — 무상증자 권리락 진입 차단
+//    2026-09-01  S2_MAX_LEV / _SIZE_ABOVE / _BELOW — ★무차입 단계 1(셋이 한 벌)
+//    2026-09-01  S2_ADDBLOCK_*             — 갭하락일 물타기 처리
+//    2026-09-03  S2_REENTRY_WINDOW_DAYS    — 재진입 판정 기간 창 548일
+//    ★2026-09-03 감사에서 ★09-01 채택 2건이 통째로 빠져 있던 것을 발견해 반영했다
+//      (sizeAbove 18 → 15 · sizeBelow 6.5 → 5.4167 · maxLev 1.2 → 1.0)
 //    ★2026-09-01 이 파일이 2026-08-21 에서 멈춰 있던 것을 여기까지 따라잡았다
 //      (감사: quant_infra/2026-09/S2_WEBAPP_RULES_AUDIT_2026-09-01.md)
 //
@@ -45,12 +50,13 @@ export const S2_PARAMS = {
   addDrop: 7,
   /** S2_MAX_BUY */
   maxBuy: 3,
-  /** S2_SIZE_ABOVE / S2_SIZE_BELOW — NAV 대비 종목당 비중(%) */
-  sizeAbove: 18,
-  /** ★2026-08-16 채택 — 9 → 6.5. above(18)는 ★함께 내리지 말 것(단독 축소는 해롭다). */
-  sizeBelow: 6.5,
-  /** S2_MAX_LEV */
-  maxLev: 1.2,
+  /** S2_SIZE_ABOVE / S2_SIZE_BELOW — NAV 대비 종목당 비중(%).
+   *  ★★2026-09-01 채택 — 무차입 단계 1 과 **셋이 한 벌**(maxLev 1.0 · above 15 · below 5.4167).
+   *  ⚠️셋 중 하나만 되돌리지 말 것 — 레버와 사이징은 **대체재**라 중간 조합이 양끝보다 나쁘다. */
+  sizeAbove: 15,
+  sizeBelow: 5.4167,
+  /** S2_MAX_LEV — ★★2026-09-01 채택 무차입(1.2 → 1.0). 위 사이징과 한 벌. */
+  maxLev: 1.0,
   /** S2_TIME_STOP_DAYS — 1차 매도 미달 시 강제청산까지 영업일 */
   timeStopDays: 15,
   /** S2_ENTRY_MIN_RET5 — 낙주 필터(최근 5거래일 수익률 하한, %).
@@ -80,6 +86,13 @@ export const S2_PARAMS = {
   reentryResetMonths: 39,
   reentryCooldownDays: 60,
   reentryCooldownThresholdPct: -20.0,
+  /** ★★S2_REENTRY_WINDOW_DAYS — ★2026-09-03 채택. 직전 청산일로부터 이 달력일 **미만**에
+   *  다시 사는 것만 「재진입」으로 본다. 종전은 **무기한**이었다(10년 전 청산도 재진입). */
+  reentryWindowDays: 548,
+  /** ★★S2_ADDBLOCK_* — ★2026-09-01 채택. 갭하락일 물타기 처리.
+   *  gap=-6% 이하로 시작한 날, 2차는 종가매수로 돌리고 3차 이상은 차단한다(mode="mix"). */
+  addBlockGapPct: -6,
+  addBlockMinBuyCount: 1,
   /** ★S2_CA_FROM — CA 보유 리스케일 적용 하한(그 이전은 이미 수정주가라 이중 보정). */
   caAdjustFrom: "2019-03-11",
   liquidityKrw: "5,000억",
@@ -125,7 +138,8 @@ export const S2_CONFIG_LINE: string = [
     ? []
     : [`낙주필터(ret5<${S2_PARAMS.entryMinRet5})`]),
   `${S2_PARAMS.timeStopDays}영업일 기간 손절`,
-  `재진입 ${S2_PARAMS.reentryMaxCount}회 제한(×${S2_PARAMS.reentrySizeFrac})+쿨다운 ${S2_PARAMS.reentryCooldownDays}일`,
+  `재진입 ${S2_PARAMS.reentryMaxCount}회 제한(×${S2_PARAMS.reentrySizeFrac})+쿨다운 ${S2_PARAMS.reentryCooldownDays}일+창 ${S2_PARAMS.reentryWindowDays}일`,
+  `갭하락 ${S2_PARAMS.addBlockGapPct}% 물타기 처리`,
   `유동성 참여 상한 ${S2_PARAMS.liqPartMaxPct}%`,
   "시초 매도",
   "추가매수일 매도 보류",
@@ -159,6 +173,8 @@ export const S2_RULES: { t: string; d: string }[] = [
 **실측**: 원시 탐지 601건 · 완결거래 583 → **574건**(약 8건 억제) · 최대낙폭 −8.65% **동일**(같은 낙폭 사건).
 
 ⚠️**'성과를 개선한다'고 읽으면 안 된다** — 착수 전 계량한 잠재 효과가 문턱에도 못 미쳤고(ΔCalmar 상한 0.0242) 수익률은 오히려 소폭 내려간다. 채택 근거는 성과가 아니라 **무결성**이다. 옳은 문장은 **'무상증자 권리락으로 생긴 가짜 진입신호를 차단한다'**이다.` },
+  { t: "재진입 판정 기간 창 — ★2026-09-03 채택", d: `직전 청산일로부터 **${S2_PARAMS.reentryWindowDays}일(약 1.5년) 안**에 다시 사는 것만 「재진입」으로 본다. 그보다 오래 지난 재매수는 **신규로 취급**해 위 0.75배 할인을 면제하고 재진입 카운터도 올리지 않는다.\n\n**왜 필요했나** — 종전에는 판정이 **무기한**이었다. 청산 기록이 지워지지 않아 10년 전에 판 종목을 오늘 다시 사도 재진입으로 분류돼 할인과 카운터를 먹었다.\n\n⚠️**「성과를 개선한다」고 쓰면 안 된다** — 블록 부트스트랩 **0/12**로 크기를 가르지 못했다. 채택 근거는 성과가 아니라 **설계 정의**다.\n\n⚠️**프로덕션창 개선폭(+0.40%p)을 기제의 크기로 인용하면 안 된다** — 그 절반 이상(59.7%)이 한 종목의 진입일이 하루 앞당겨진 **경로 의존**이다.` },
+  { t: "갭하락일 물타기 처리 — ★2026-09-01 채택", d: `**${S2_PARAMS.addBlockGapPct}% 이하로 시작한 날**에는 추가매수를 그대로 내지 않는다. 2차는 **종가매수로 돌리고**, 3차 이상은 **차단**한다.\n\n⚠️**「수익률을 개선한다」고 쓰면 안 된다** — 수익률은 일관되게 조금 내려간다. **수익률을 조금 잃고 최대낙폭을 크게 얻는** 교환이다(결정창 기준 1 대 6.1).\n\n**기제는 「안 사기」가 아니라 「조기 손절」이다** — 그날 추가매수가 막히면 그 자리에서 정리된다.` },
   { t: "재진입 제한 + 손실비례 쿨다운 — ★2026-08-26 채택", d: `한 종목에 **재진입은 ${S2_PARAMS.reentryMaxCount}회까지**만 허용한다(초과하면 그 종목은 차단). 재진입 매수액은 **×${S2_PARAMS.reentrySizeFrac}로 줄이고**, 마지막 진입에서 ${S2_PARAMS.reentryResetMonths}개월이 지나면 카운터를 리셋한다. 여기에 더해 직전 청산이 **1차 매수금액 대비 ${S2_PARAMS.reentryCooldownThresholdPct}% 넘는 손실**이었으면 그 종목은 **${S2_PARAMS.reentryCooldownDays}일간 재진입 금지**다.
 
 **두 장치가 한 쌍이다** — 재진입 자격을 푸는 쪽(A)과 손실 뒤 쉬게 하는 쪽(B). A만 켜면 낙폭이 커지고, B가 그 대부분을 되돌린다.
