@@ -461,6 +461,7 @@ $env:S2_REENTRY_RELAX = "1"                                            # ★재�
 $env:S2_REENTRY_MAX_COUNT = "2"                                        # ★재진입 2회 초과시 영구차단
 $env:S2_REENTRY_SIZE_FRAC = "0.75"                                     # ★재진입 매수액 0.75배 축소
 $env:S2_REENTRY_RESET_DAYS = "1186"                                    # ★39개월 지나면 카운터 리셋
+$env:S2_REENTRY_WINDOW_DAYS = "548"                                  # ★★[2026-09-03 채택] 재진입 판정 기간 창 — 직전 청산일로부터 548 달력일 미만만 재진입
 $env:S2_REENTRY_COOLDOWN_DAYS = "60"                                   # ★손실 임계 초과시 60일 재진입 금지
 $env:S2_REENTRY_COOLDOWN_THRESHOLD = "-20.0"                           # ★1차매수금액대비 손실률 임계(%)
 
