@@ -301,6 +301,19 @@ PARK_LAST_PX = 0.0
 PARK_LAST_D = None
 # (실험) 현금제약 시 매수 우선순위. none=기존순서 / rise2w=최근2주 순방향 최대상승폭 큰 순.
 BUY_PRIORITY = os.environ.get("S2_BUY_PRIORITY", "none").lower()
+# ★★[2026-09-03 신설 · CAND-2026-09-02-25 · 해달별님 결정 「A」] ★순서 의존성 측정용 무작위 배급.
+#   [왜] 현금·레버 천장에 닿으면 ★어느 주문이 살고 어느 것이 죽는지가 ★설계된 규칙이 아니라
+#     ★`_reached` 수집 순서의 부산물이다(기본 `none`). ★그 순서가 결과를 ★얼마나 흔드는지를
+#     ★먼저 재야 ★「순서 규칙을 설계할 값이 있나」를 판단할 수 있다.
+#   [왜 rise2w 가 아니라 shuffle 인가] ⚠️★`rise2w` 는 ★`_RISE2W` 가 ★**당일 high/low 를 포함**해
+#     계산된다(`:1429` 창이 `_e` 까지). ★T1 은 종가 진입이라 무해하지만 ★**S2 는 장중 지정가**라
+#     ★「그날 많이 오를 종목을 먼저 산다」가 되어 ★룩어헤드다 → ★별도 후보로 등재했다.
+#   [게이트] `S2_BUY_PRIORITY=shuffle` + `S2_BUY_PRIORITY_SEED=<정수>`.
+#     ★기본 `none` = ★종전 비트동일. ★seed 와 ★날짜를 함께 섞어 ★날마다 다른 순열을 쓴다.
+#   ⚠️★**검정 전용이다** — ★운영에 켜지 않는다(무작위는 재현은 되나 ★설계가 아니다).
+#   ★되돌리기 — 이 env 를 지운다(한 줄).
+BUY_PRIORITY_SEED = os.environ.get("S2_BUY_PRIORITY_SEED", "0").strip()
+BUYPRI_N = {"shuffled_days": 0, "shuffled_legs": 0}   # ★발동 카운터(§4-2d 관문2)
 RISE2W_WIN   = int(os.environ.get("S2_RISE2W_WIN", "10"))   # 2주 ≈ 10 거래일
 # (실험) 낙주 진입필터 — 진입일 5거래일 수익률 < 임계면 진입 skip. None=off. (예: -0.30)
 _emr = os.environ.get("S2_ENTRY_MIN_RET5", "")
@@ -1834,6 +1847,12 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
         if BUY_PRIORITY == "rise2w":
             _dk = str(d)[:10]
             _reached.sort(key=lambda x: _RISE2W.get((x[0], _dk), -1.0), reverse=True)
+        elif BUY_PRIORITY == "shuffle" and len(_reached) > 1:
+            # ★★[CAND-2026-09-02-25] 순서 의존성 측정 — seed x 날짜로 재현 가능한 무작위 배급.
+            import random as _rnd
+            _rnd.Random("%s|%s" % (BUY_PRIORITY_SEED, str(d)[:10])).shuffle(_reached)
+            BUYPRI_N["shuffled_days"] += 1
+            BUYPRI_N["shuffled_legs"] += len(_reached)
         # ★★[CAND-2026-09-01-24] 그날 ★1차분 노출을 ★한 번만 계산한다(진입 루프 밖).
         #   ⚠️★그날 매수분은 아직 안 들어갔다 — ★판정 시점을 「진입 계산 직전」으로 고정한다.
         _expo_frac = 0.0
@@ -2518,6 +2537,12 @@ def main():
               f"일 · 신규강등 사이징 {REENTRY_WIN_N['size_demoted']}건 / 카운터 "
               f"{REENTRY_WIN_N['ct_demoted']}건 · MAX_COUNT 차단 {REENTRY_MC_N['blocked']}건"
               + ("  (off = 종전 동작)" if REENTRY_WINDOW_DAYS is None else ""))
+
+    # ★★[CAND-2026-09-02-25] 배급 순서 발동 카운터(§4-2d 관문2)
+    if BUY_PRIORITY != "none":
+        print("[BUYPRI] 배급 순서=%s · seed=%s · ★섞은 날 %d · ★섞은 레그 %d"
+              % (BUY_PRIORITY, BUY_PRIORITY_SEED,
+                 BUYPRI_N["shuffled_days"], BUYPRI_N["shuffled_legs"]), flush=True)
 
     # ★재진입 쿨다운 발동 카운터(2026-08-26 · CAND-2026-08-26-12)
     if REENTRY_COOLDOWN_DAYS is not None:
