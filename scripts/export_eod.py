@@ -825,6 +825,11 @@ NL_BOUGHT_MARGIN = float(os.environ.get("S2_NL_BOUGHT_MARGIN", "0"))
 NL_EXTEND_DAYS = int(os.environ.get("S2_NL_EXTEND_DAYS", "0"))
 # ★충돌 가드 확대 — `buy_count >= NL_AFTER-1` 로 내려 2차 매수도 at <= min_low 면 안 산다.
 NL_SKIPADD = os.environ.get("S2_NL_SKIPADD", "0") == "1"
+# ★★[CAND-2026-09-02-18 대조군] `S2_NL_GLOBAL_DEFER` — ★신호 무관 ★전역 N거래일 지연.
+#   ★「`bought` 여부와 무관하게 ★첫 발동일을 건너뛰 때도 같은 이득이 나는가」를 묻는다.
+#   ★이득이 이 대조군으로 설명되면 ★`extend` 의 ★조건부성은 입증되지 않는다.
+#   ⚠★기본 0 = off = ★종전 비트동일(분기 미진입).
+NL_GLOBAL_DEFER = int(os.environ.get("S2_NL_GLOBAL_DEFER", "0"))
 NL_B_N = {"defer_eval": 0, "release": 0, "extend_defer": 0, "skipadd": 0}
 
 # ── ★분할매도 후 잔량 손절선 버퍼 (2026-08-18 신설, 기본 0 = 구 동작) ──────────
@@ -1750,6 +1755,18 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                         NL_ARM_N["armed_extra"] += 1     # ★이 완화 덕에 무장된 포지션-일
             _nl_cond = (p["sell_count"] == 0 and (p["buy_count"] >= _arm_at or p.get("knife"))
                         and not _nl_defer and _trigger_px < p["min_low"])
+            # ★★[CAND-2026-09-02-18 대조군] 전역 N거래일 지연 — ★`bought` 와 무관하게
+            #   ★★무장된 손절 조건이 ★처음 참이 된 날부터 N거래일 유예한다.
+            #   ⚠★이것을 `_trigger_px < min_low` 만으로 걸면 ★사문이 된다 —
+            #     `min_low` 가 매일 갱신돼 ★무장 전에도 자주 참이기 때문이다(★2026-09-04 실측 · 사문 1회).
+            #   ★off(0)면 분기 미진입 = 종전 비트동일.
+            if NL_GLOBAL_DEFER > 0 and _nl_cond:
+                if p.get("gdefer_idx") is None:
+                    p["gdefer_idx"] = didx[d]
+                    NL_B_N["gdefer_mark"] = NL_B_N.get("gdefer_mark", 0) + 1
+                if (didx[d] - p["gdefer_idx"]) < NL_GLOBAL_DEFER:
+                    _nl_cond = False
+                    NL_B_N["gdefer_hold"] = NL_B_N.get("gdefer_hold", 0) + 1
             if _nl_cond and not bar_ok:
                 VB_SKIP["newlow"] += 1
             if _nl_cond and bar_ok:
@@ -2699,12 +2716,16 @@ def main():
         print("[CLOSEBUY] ★평가 %d건 → ★종가체결 %d건 · ★미체결(종가>지정가) %d건 "
               "· MIN_BC=%d · ★MODE=%s"
               % (CB_N["eval"], CB_N["fill"], CB_N["skip"], CLOSEBUY_MIN_BC, CLOSEBUY_MODE))
-    if NL_BOUGHT_MODE != "hold" or NL_SKIPADD:
+    # ⚠️★[2026-09-04 수리] ★`GLOBAL_DEFER` 만 켠 팔에서 ★카운터가 안 찍혔다(§4-2d 관문2 위반).
+    if NL_BOUGHT_MODE != "hold" or NL_SKIPADD or NL_GLOBAL_DEFER:
         print("[NL-BOUGHT] ★MODE=%s · MARGIN=%.4f · EXTEND_DAYS=%d · SKIPADD=%s "
               "→ ★평가 %d · ★유예해제 %d · ★유예연장 %d · ★추가매수건너뜀 %d"
               % (NL_BOUGHT_MODE, NL_BOUGHT_MARGIN, NL_EXTEND_DAYS, NL_SKIPADD,
                  NL_B_N["defer_eval"], NL_B_N["release"],
                  NL_B_N["extend_defer"], NL_B_N["skipadd"]))
+    if NL_GLOBAL_DEFER:
+        print("[NL-GDEFER] ★전역 %d거래일 지연 · ★표시 %d · ★유예 %d"
+              % (NL_GLOBAL_DEFER, NL_B_N.get("gdefer_mark", 0), NL_B_N.get("gdefer_hold", 0)))
     if LEV_XA == "prev":
         print("[LEV-EXANTE] ★MODE=prev · 평가 %d건 → ★실차단(ex-ante) %d건 "
               "· 양쪽 다 통과 %d건 · ex-ante 통과인데 종전이면 막혔을 것 %d건 · MAX_LEV=%.2f"
