@@ -345,6 +345,13 @@ _emr = os.environ.get("S2_ENTRY_MIN_RET5", "")
 ENTRY_MIN_RET5 = float(_emr) if _emr not in ("", "off") else None
 # 낙주 처리 모드: skip=진입 제외(기본) / deep=진입가를 3차매수 등가로 더 낮춰 1차매수(저가 진입)
 #              / deep_blend=deep 진입 + 매도목표를 (1·2·3차) 블렌드 평단 기준으로(상단 더 먹기)
+# ★★[CAND-2026-09-02-31] `S2_KNIFE` — ★낙주필터 계열 전체를 ★끕다.
+#   ★배경 — 낙주필터(`S2_ENTRY_MIN_RET5`)는 2026-08-09 에 ★기각돼 `run_eod.ps1:210` 에서 ★주석 처리됐다.
+#   ★그런데 ★`knife` 항은 ★백테스트 코드에 ★남아 있고 ★실주문 데몬에는 ★없다 — ★두 경로가 다르다.
+#   ★★**해달별님 결정(2026-09-04) — ★영구 폐기 확정 · 데몬 기준으로 백테스트에서도 제거한다.**
+#   ⚠★기본 "1" = 종전 동작 = 비트동일. ★"0" 이면 `knife` 가 ★전부 무효화된다(= 데몬과 일치).
+#   ★주의 — 운영에서는 ENTRY_MIN_RET5 가 None 이라 ★이미 죽은 코드다(★가격표 0 예상).
+KNIFE_ON     = os.environ.get("S2_KNIFE", "1") != "0"
 KNIFE_MODE   = os.environ.get("S2_KNIFE_MODE", "skip").lower()
 KNIFE_DEEP_N = int(os.environ.get("S2_KNIFE_DEEP_N", "2"))   # 몇 단계(−7%) 더 깊게. 2=3차매수가
 # deep_blend 목표배수: 저가진입가 대비 (가상 1·2·3차) 블렌드 평단 비율 = 목표를 그만큼 상향
@@ -1591,7 +1598,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                            and bar_ok and hi >= t[0])
             # ★재진입 차수 상한(CAND-2026-09-02-8) — off(None)면 MAX_BUY 그대로 = 항등.
             _mb = REENTRY_MAX_BUY if (REENTRY_MAX_BUY is not None and p.get("is_reentry")) else MAX_BUY
-            if OLDTGT_PRIORITY and p["sell_count"] == 0 and p["buy_count"] < _mb and not p.get("knife"):
+            if OLDTGT_PRIORITY and p["sell_count"] == 0 and p["buy_count"] < _mb and not (KNIFE_ON and p.get("knife")):
                 OLDTGT_N["eval"] += 1
                 if _oldtgt_hit:
                     OLDTGT_N["skip_add"] += 1
@@ -1602,9 +1609,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             #   `if not bought:` hi 매도 블록이 그대로 그 목표를 정상 체결한다(로직 중복 없음).
             if (REENTRY_MAX_BUY is not None and p.get("is_reentry")
                     and p["sell_count"] == 0 and p["buy_count"] >= REENTRY_MAX_BUY
-                    and p["buy_count"] < MAX_BUY and not p.get("knife")):
+                    and p["buy_count"] < MAX_BUY and not (KNIFE_ON and p.get("knife"))):
                 REENTRY_MB_N["blocked"] += 1
-            if (p["sell_count"] == 0 and p["buy_count"] < _mb and not p.get("knife")
+            if (p["sell_count"] == 0 and p["buy_count"] < _mb and not (KNIFE_ON and p.get("knife"))
                     and not _oldtgt_hit):
                 at = _to_tick(p["last_buy"] * (1 - ADD_DROP))   # 추가매수가 호가단위 반올림
                 # ★[CAND-2026-09-01-19] 충돌 가드 확대 — off 면 _nl_gate_bc = NL_AFTER 로 항등.
@@ -1753,7 +1760,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     NL_ARM_N["lowered"] += 1
                     if p["buy_count"] >= _arm_at > 0 and p["buy_count"] < NL_AFTER:
                         NL_ARM_N["armed_extra"] += 1     # ★이 완화 덕에 무장된 포지션-일
-            _nl_cond = (p["sell_count"] == 0 and (p["buy_count"] >= _arm_at or p.get("knife"))
+            _nl_cond = (p["sell_count"] == 0 and (p["buy_count"] >= _arm_at or (KNIFE_ON and p.get("knife")))
                         and not _nl_defer and _trigger_px < p["min_low"])
             # ★★[CAND-2026-09-02-18 대조군] 전역 N거래일 지연 — ★`bought` 와 무관하게
             #   ★★무장된 손절 조건이 ★처음 참이 된 날부터 N거래일 유예한다.
@@ -1850,7 +1857,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 continue
             support = float(r["support"]); price = float(r["close"]); _is_knife = False
             # 낙주(최근5일 급락) 처리 — skip: 진입 제외 / deep·deep_blend: 진입가를 3차매수 등가로 낮춰 단발 저가진입
-            if ENTRY_MIN_RET5 is not None and _RET5.get((tk, str(d)[:10]), 0.0) < ENTRY_MIN_RET5:
+            if KNIFE_ON and ENTRY_MIN_RET5 is not None and _RET5.get((tk, str(d)[:10]), 0.0) < ENTRY_MIN_RET5:
                 if KNIFE_MODE in ("deep", "deep_blend"):
                     support = support * (1 - ADD_DROP) ** KNIFE_DEEP_N
                     _is_knife = True
