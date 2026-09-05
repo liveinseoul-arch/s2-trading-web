@@ -318,6 +318,27 @@ def load_jp_mktcap_combined():
     return merged
 
 
+_WEEKLY_FOR_ROLL = {}      # ★RS_MCAP_ROLL 전용 — market 별 weekly_cache 참조
+
+
+def _close_at(tk, ts):
+    """★그 종목의 ★`ts` 이하 ★마지막 주간 종가(★RS_MCAP_ROLL 의 분모)."""
+    d = _WEEKLY_FOR_ROLL.get("KR")
+    if not d:
+        return None
+    v = d.get(tk)
+    if not v:
+        return None
+    s = v.get("close") if isinstance(v, dict) else getattr(v, "get", lambda *_: None)("close")
+    if s is None:
+        return None
+    try:
+        sub = s[s.index <= pd.Timestamp(ts)]
+        return float(sub.iloc[-1]) if len(sub) else None
+    except Exception:
+        return None
+
+
 def make_mktcap_lookup(market, mktcap_cache, shares_map, yahoo_mktcap=None):
     """mktcap_lookup(ticker, week_ts, close_at_week) → float | NaN
 
@@ -328,8 +349,29 @@ def make_mktcap_lookup(market, mktcap_cache, shares_map, yahoo_mktcap=None):
     JP: yahoo_mktcap dict 우선(정확) → shares × close (근사) → NaN.
     """
     if market == "KR":
+        # ★★★[2026-09-05 신설 · CAND-2026-09-05-1] RS_MCAP_ROLL — ★기본 off = 종전 비트동일
+        #   ⚠️★결함 — 아래 기본 경로는 ★`shares_out[그 시점] x close[그 주차]` 인데
+        #     ★`_kr_weekly_cache.pkl` 의 close 가 ★**수정주가**(현재 스케일)이고
+        #     ★`shares_out` 은 ★**그 시점 주식수**(과거 스케일)다. ★한쪽만 조정된 두 값을 곱한다.
+        #     ★실측 — 삼성전자 2018-04 = 128,386,494 x 53,000 = ★6.8조 (실제 ★329조 · ★1/48).
+        #     ★게이트 판정 뒤집힘 ★16,602건 = ★6.58%(113주차 x 252,333 종목-주차).
+        #   ★정본 = ★`mktcap[스냅샷] x (close[주차] / close[스냅샷])`
+        #     ★캐시의 `mktcap` 컬럼은 ★정확하다(삼성 2018-01 329조 · KRX 원본).
+        #     ★그것을 ★가격비로 굴리면 ★28일 stale 을 메우면서 ★스케일이 안 깨진다.
+        #   ★되돌리기 — `RS_MCAP_ROLL` 을 지우거나 "0" 으로 둔다.
+        _roll = str(os.environ.get("RS_MCAP_ROLL", "0")).strip().lower() in ("1", "true", "on", "yes")
+
         def lookup(tk, ts, close):
             df = mktcap_cache.get(tk)
+            if _roll and df is not None and "mktcap" in getattr(df, "columns", []):
+                sub = df[df.index <= pd.Timestamp(ts)]
+                if len(sub) > 0:
+                    mc = sub["mktcap"].iloc[-1]
+                    snap = sub.index[-1]
+                    c0 = _close_at(tk, snap)
+                    if (not pd.isna(mc) and mc > 0 and c0 and c0 > 0
+                            and close is not None and not np.isnan(close)):
+                        return float(mc) * (float(close) / float(c0))
             if df is not None and "shares_out" in getattr(df, "columns", []):
                 sub = df[df.index <= pd.Timestamp(ts)]
                 if len(sub) > 0:
@@ -712,6 +754,9 @@ def fetch_market(market, weeks_back):
         shares_map = load_us_shares()
         print(f"  weekly_cache: {len(weekly_cache):,}개 · RS 테이블: {len(rs_table):,}주 · "
               f"이름 매핑: {len(ticker_names):,}개  (인덱스 W-FRI 정규화 완료)")
+
+    # ★RS_MCAP_ROLL 이 쓸 ★정규화 후 weekly_cache 를 넘긴다(★off 면 안 쓴다)
+    _WEEKLY_FOR_ROLL[market] = weekly_cache
 
     mktcap_lookup = make_mktcap_lookup(market, mktcap_cache, shares_map,
                                        yahoo_mktcap=yahoo_mktcap)
