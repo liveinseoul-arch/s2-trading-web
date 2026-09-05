@@ -29,6 +29,19 @@ Set-Location $root
 $log = Join-Path $PSScriptRoot "rs_kr_jp.log"
 $qb  = "C:\quantBacktest"
 $env:BT_OUTPUT_DIR = "$qb\screen"
+
+# ★★★[2026-09-05 · CAND-2026-09-05-1 · 해달별님 승인] RS_MCAP_ROLL — KR 시총 게이트 수리.
+#   ⚠️★결함 — export_rs_weekly.py 의 KR 시총이 `shares_out[그 시점] x close[그 주차]` 인데
+#     `_kr_weekly_cache.pkl` 의 close 는 ★수정주가(현재 스케일)이고 shares_out 은 ★그 시점
+#     주식수(과거 스케일)다. ★한쪽만 조정된 두 값을 곱한다(DATA_SPEC §2-b).
+#   ★실측 — 삼성전자 2018-04-27 = 128,386,494 x 53,000 = ★6.8조 (실제 ★332.6조 · ★48.9배).
+#     게이트 판정 뒤집힘 ★17,460건 = 6.92%(113주차 x 252,333 종목-주차 · 익스포터 실경로).
+#   ★정본 = mktcap[스냅샷] x (close[주차] / close[스냅샷]) — 캐시의 mktcap 은 KRX 원본이라 정확하다.
+#   ★관문 — off 재현 ★비트동일(sha256 d816ffb8604ac34f · 4,474,801 bytes) ·
+#     원장 차이 ★rs96 265 → 266 · ★공통 261(98.5%) · 이탈 4 · 진입 5.
+#   ⚠️★성과가 아니라 ★무결성 근거로 켠다 — ΔCAGR 을 인용하지 말 것.
+#   ★되돌리기 — 아래 한 줄을 "0" 으로 두거나 지운다.
+$env:RS_MCAP_ROLL = "1"
 # ★★[2026-08-24 · CAND-2026-08-24-221 · 해달별님 승인 「(가) 켠다」] RS 임계값 표 ★행 지문.
 #   ★무엇을 — 표에 새 주차를 넣을 때 ★그 행이 ★어느 밑판(_kr_weekly_cache.pkl)으로 ·
 #     ★어느 라이터로 계산됐는지를 `DataFrame.attrs['_row_fp']` 에 남긴다.
@@ -153,6 +166,7 @@ $jobJP = Start-Job -Name "JP chain" -ScriptBlock {
     param($wd, $silent2, $qb2, $jobLog2, $gmodel)
     Set-Location $wd
     $env:BT_OUTPUT_DIR = "$qb2\screen"
+    $env:RS_MCAP_ROLL  = "1"   # ★CAND-2026-09-05-1 — KR 경로 전용이나 잡에도 명시(§0-5b)
     $env:GEMINI_MODEL  = $gmodel
     function J($label, [string[]]$a) {
         "$(Get-Date -Format 'HH:mm:ss')  [$label] start" | Out-File -Append -Encoding utf8 $jobLog2
