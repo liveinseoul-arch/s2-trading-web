@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Section, Empty } from "@/components/ui";
 import { loadGlobalThemes, fetchGlobalWeeks } from "@/lib/globalTheme";
-import { EMA_BADGE, EmaBreakBadge } from "@/components/EmaBreak";
+import { EMA_BADGE, EmaBreakBadge, emaDimClass, emaDimTitle } from "@/components/EmaBreak";
 import type { GlobalThemeStock, GlobalSubcategory } from "@/lib/globalTheme";
 import type { RsMarket } from "@/lib/types";
 
@@ -73,23 +73,9 @@ function StockRow({ s }: { s: GlobalThemeStock }) {
   const display = s.name_en || s.name || s.ticker;
   const subTicker = s.market === "JP" ? s.ticker.replace(".T", "") : s.ticker;
 
-  // EMA 이탈 종목은 이름을 흐리게 — 매도 대상이거나 이미 매도했을 종목이라
-  // 매수 관점에서 주목을 끌지 않게 한다. 둘 다 이탈이면 한 단계 더 흐리게.
-  // (RS·모멘텀 수치는 판단 재료라 흐리지 않는다.)
-  const below21 = ((s.emaBreak ?? 0) & 1) !== 0;
-  const below50 = ((s.emaBreak ?? 0) & 2) !== 0;
-  const dimClass = below21 && below50
-    ? "opacity-40"
-    : below21 || below50
-      ? "opacity-60"
-      : "";
-  const dimTitle = below21 && below50
-    ? "21EMA·50EMA 모두 하향 — 추세 약화"
-    : below21
-      ? "21EMA 하향 — 추세 약화"
-      : below50
-        ? "50EMA 하향 — 추세 약화"
-        : undefined;
+  // EMA 이탈 종목은 이름을 흐리게 — 농도는 /rs96 과 공유한다(components/EmaBreak)
+  const dimClass = emaDimClass(s.emaBreak);
+  const dimTitle = emaDimTitle(s.emaBreak);
 
   return (
     <tr className="border-b border-[var(--color-borderc)] text-right last:border-0 hover:bg-bg/40">
@@ -238,10 +224,9 @@ export default async function GlobalThemes({
     sp.week && availWeeks.includes(sp.week) ? sp.week : (availWeeks[0] ?? null);
 
   const data = await loadGlobalThemes(selectedWeek);
-  const { groups, weeks, totals, unmatched, marketSummaries, unifiedModel, unifiedSummary, subdivisionModel, compareWeek } = data;
+  const { groups, weeks, totals, unmatched, unifiedModel, unifiedSummary, subdivisionModel, compareWeek } = data;
 
   const noData = Object.values(weeks).every((w) => !w);
-  const hasAnySummary = Object.values(marketSummaries).some((s) => s);
 
   return (
     <>
@@ -378,31 +363,12 @@ export default async function GlobalThemes({
           시장별 한줄평은 각국 페이지에서도 볼 수 있어 새롭지 않은 반면,
           이것은 한미일을 묶어야만 나오는 관점이라 이 페이지의 고유 정보다. */}
       {unifiedSummary && (
-        <div className="mb-3 rounded-lg border-l-2 border-accent bg-accent/5 p-3.5">
-          <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold text-muted">
+        <div className="mb-5 rounded-lg border-l-2 border-accent bg-accent/5 p-4">
+          <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold text-muted">
             <span className="rounded bg-accent/15 px-1.5 py-0.5 text-accent">한 · 미 · 일</span>
-            3국 통합 한줄평
+            3국 통합 평가의견
           </div>
-          <p className="text-[13px] leading-relaxed text-textc">{unifiedSummary}</p>
-        </div>
-      )}
-
-      {/* Gemini 의 시장별 한줄평 */}
-      {hasAnySummary && (
-        <div className="mb-5 grid gap-2 sm:grid-cols-3">
-          {(["KR", "US", "JP"] as RsMarket[]).map((m) =>
-            marketSummaries[m] ? (
-              <div
-                key={m}
-                className="rounded-lg border-l-2 border-accent bg-surface p-3 text-xs leading-relaxed"
-              >
-                <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold text-muted">
-                  <MarketBadge m={m} /> Gemini 한줄평
-                </div>
-                <p className="text-textc">{marketSummaries[m]}</p>
-              </div>
-            ) : null,
-          )}
+          <p className="text-[13px] leading-[1.75] text-textc">{unifiedSummary}</p>
         </div>
       )}
 

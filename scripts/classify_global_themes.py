@@ -169,6 +169,38 @@ def fetch_weeks_with_data(req, weeks_back):
     return sorted(weeks, reverse=True)[:weeks_back]
 
 
+def fetch_prev_week(req, week):
+    """★그 주차 ★직전의 rs_top_weekly 주차. 없으면 None."""
+    path = (f"/rs_top_weekly?week_date=lt.{urllib.parse.quote(week)}"
+            f"&select=week_date&order=week_date.desc&limit=1")
+    rows = req("GET", path, prefer="return=representation") or []
+    return rows[0]["week_date"] if rows else None
+
+
+def build_week_diff(market_rows, prev_rows):
+    """★★[2026-09-06 · CAND-2026-09-06-2] ★전주 대비 진입·이탈을 시장별로 낸다.
+
+    ★★왜 — ★해달별님 요청. ★종전 통합 한줄평은 ★그 주 ★한 장면만 보고 썼다.
+      ★「무엇이 새로 들어오고 무엇이 빠졌나」가 있어야 ★평가의견이 된다.
+    ★반환: {시장: {"in": [행], "out": [행], "keep": 수}}
+    """
+    diff = {}
+    for mk in MARKETS_ALL:
+        cur = {r["ticker"]: r for r in market_rows.get(mk, [])}
+        prv = {r["ticker"]: r for r in (prev_rows or {}).get(mk, [])}
+        ins = [cur[t] for t in cur if t not in prv]
+        outs = [prv[t] for t in prv if t not in cur]
+        # ★모멘텀 큰 순 — 프롬프트에 몇 개만 넣으므로 대표성이 있어야 한다
+        ins.sort(key=lambda r: -(r.get("comp_return") or 0))
+        outs.sort(key=lambda r: -(r.get("comp_return") or 0))
+        diff[mk] = {"in": ins, "out": outs, "keep": len(set(cur) & set(prv))}
+    return diff
+
+
+def _name_of(r):
+    return r.get("name_en") or r.get("name") or r["ticker"]
+
+
 # ── Gemini ─────────────────────────────────────────────────
 RESPONSE_SCHEMA = {
     "type": "OBJECT",
@@ -201,7 +233,7 @@ def _fmt_mktcap(mc, market):
     return f"${mc/1e9:.1f}B" if mc >= 1e9 else f"${mc/1e6:,.0f}M"
 
 
-def build_global_prompt(week, market_rows, existing_cats=None):
+def build_global_prompt(week, market_rows, existing_cats=None, diff=None, prev_week=None):
     lines = [
         f"한미일 통합 RS96+ 모멘텀 종목 분류 — 주차: {week}",
         f"한국 {len(market_rows['KR'])}종목 + 미국 {len(market_rows['US'])}종목 + "
@@ -241,6 +273,26 @@ def build_global_prompt(week, market_rows, existing_cats=None):
             lines.append(f"  {r['ticker']:<12} | {name[:30]:<30} | {mk} | "
                          f"RS{r['rs']:>2} | {comp_s:>7} | {mc_s}")
 
+    # ★★[2026-09-06 신설 · CAND-2026-09-06-2 · 해달별님 요청] ★전주 대비 변화를 입력에 준다.
+    #   ★이것이 있어야 ★summary 가 ★「이번 주 장면 묘사」가 아니라 ★**평가의견**이 된다.
+    if diff and prev_week:
+        lines.extend([
+            "",
+            f"[전주 대비 변화 — {prev_week} → {week}] (RS96+ 진입·이탈)",
+        ])
+        for mk in MARKETS_ALL:
+            d = diff.get(mk)
+            if not d or not market_rows.get(mk):
+                continue
+            lines.append(f"  {MARKET_LABEL[mk]}: 유지 {d['keep']} · "
+                         f"신규 {len(d['in'])} · 이탈 {len(d['out'])}")
+            if d["in"]:
+                names = ", ".join(f"{_name_of(r)}({r['ticker']})" for r in d["in"][:12])
+                lines.append(f"    신규 진입: {names}")
+            if d["out"]:
+                names = ", ".join(f"{_name_of(r)}({r['ticker']})" for r in d["out"][:12])
+                lines.append(f"    이탈: {names}")
+
     # ★★[2026-09-06 신설 · CAND-2026-09-06-1] 보충 호출 — 앞 호출이 빠뜨린 종목만 다시 묻는다.
     #   ★기존 카테고리를 알려 줘야 ★같은 테마가 새 라벨로 갈라지지 않는다.
     if existing_cats:
@@ -272,14 +324,23 @@ def build_global_prompt(week, market_rows, existing_cats=None):
         "     ★★한 시장이라도 통째로 누락하면 안 됩니다 — 위에 제시된 "
         f"**{sum(len(v) for v in market_rows.values())}개 ticker 가 "
         "빠짐없이 어딘가의 tickers 배열에 한 번씩** 들어가야 합니다.",
-        "  6) summary: 이번 주 한미일 전반의 메인 트렌드 1~2문장 한국어.",
+        "",
+        "  ★★6) summary: **한미일 3국 통합 평가의견**을 한국어 **3문장 내외**로.",
+        "     ⚠️각국 시장을 따로 요약해 이어 붙이지 마세요 — 그건 각국 페이지에 이미 있습니다.",
+        "     ★**3국을 함께 보아야만 보이는 것**을 쓰세요. 아래 셋을 담습니다:",
+        "       (a) 3국을 관통하는 공통 흐름은 무엇이고, 어느 나라가 그 흐름을 주도/후행하는가",
+        "       (b) ★전주 대비 무엇이 새로 들어오고 무엇이 빠졌는가 — 그 교체가 무엇을 뜻하는가",
+        "          (테마 순환인가, 특정 섹터로의 쏠림 강화인가, 주도주 교체인가)",
+        "       (c) ★현재 국면에 대한 평가 — 모멘텀의 지속성·확산/집중 여부·눈여겨볼 리스크",
+        "     ★단순 나열·장면 묘사가 아니라 ★해석과 판단을 담으세요.",
         "",
         "JSON 만 응답. 다른 텍스트 X.",
     ])
     return "\n".join(lines)
 
 
-def call_gemini(week, market_rows, max_retries=5, existing_cats=None):
+def call_gemini(week, market_rows, max_retries=5, existing_cats=None,
+                diff=None, prev_week=None):
     from google import genai
     from google.genai import types
 
@@ -287,7 +348,8 @@ def call_gemini(week, market_rows, max_retries=5, existing_cats=None):
     if not api_key:
         raise SystemExit("⚠ GEMINI_API_KEY 환경변수 없음.")
     client = genai.Client(api_key=api_key)
-    prompt = build_global_prompt(week, market_rows, existing_cats=existing_cats)
+    prompt = build_global_prompt(week, market_rows, existing_cats=existing_cats,
+                                 diff=diff, prev_week=prev_week)
     cfg = types.GenerateContentConfig(
         response_mime_type="application/json",
         response_schema=RESPONSE_SCHEMA,
@@ -364,8 +426,21 @@ def classify_one(req, week):
         return False
     print(f"[{week}] KR={len(market_rows['KR'])} · US={len(market_rows['US'])} · "
           f"JP={len(market_rows['JP'])} = 총 {total}종목 → Gemini 호출", flush=True)
+
+    # ★★[2026-09-06 · CAND-2026-09-06-2] 전주 종목 정보를 함께 준다 — 통합 평가의견의 재료
+    prev_week = fetch_prev_week(req, week)
+    diff = None
+    if prev_week:
+        prev_rows = {mk: fetch_top96(req, mk, prev_week) for mk in MARKETS_ALL}
+        diff = build_week_diff(market_rows, prev_rows)
+        print("  ★전주 %s 대비 — %s" % (prev_week, " · ".join(
+            f"{mk} 유지{d['keep']}/신규{len(d['in'])}/이탈{len(d['out'])}"
+            for mk, d in diff.items() if market_rows.get(mk))), flush=True)
+    else:
+        print("  ⚠️전주 데이터 없음 — 변화 정보 없이 분류한다", flush=True)
+
     t0 = time.time()
-    data = call_gemini(week, market_rows)
+    data = call_gemini(week, market_rows, diff=diff, prev_week=prev_week)
     dt = time.time() - t0
 
     cats = data.get("categories", [])

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { supabase, getMeta } from "@/lib/supabase";
 import { Section, Empty } from "@/components/ui";
 import { pct, signClass } from "@/lib/format";
-import { EMA_BADGE, emaBreakBits, EmaBreakBadge } from "@/components/EmaBreak";
+import { EMA_BADGE, emaBreakBits, EmaBreakBadge, emaDimClass, emaDimTitle } from "@/components/EmaBreak";
 import type { RsMarket, RsTopWeekly } from "@/lib/types";
 import type { RsThemeWeekly } from "@/lib/types";
 
@@ -103,10 +103,13 @@ function ThemePanel({
                   }`}
                   title={isDim(r) ? "52주 고가 −30% 초과 하락(추세 훼손) — 낙폭과대 종목" : undefined}
                 >
-                  <div className="min-w-0 flex-1 truncate">
+                  <div
+                    className={`min-w-0 flex-1 truncate ${emaDimClass(emaBreakBits(r.close, r.ema_21, r.ema_50))}`}
+                    title={emaDimTitle(emaBreakBits(r.close, r.ema_21, r.ema_50))}
+                  >
                     <Link
                       href={`/rs96/${market}/${encodeURIComponent(r.ticker)}`}
-                      className="text-textc hover:text-accent"
+                      className="text-textc hover:text-accent hover:opacity-100"
                     >
                       {r.name_en || r.name || r.ticker}
                     </Link>
@@ -300,10 +303,13 @@ export default async function RsScreen({
                         }`}
                       >
                         <td className="py-1.5 pl-1 text-left text-muted">{i + 1}</td>
-                        <td className="text-left">
+                        <td
+                          className={`text-left ${emaDimClass(emaBreakBits(r.close, r.ema_21, r.ema_50))}`}
+                          title={emaDimTitle(emaBreakBits(r.close, r.ema_21, r.ema_50))}
+                        >
                           <Link
                             href={`/rs96/${market}/${encodeURIComponent(r.ticker)}`}
-                            className="font-medium text-textc hover:text-accent"
+                            className="font-medium text-textc hover:text-accent hover:opacity-100"
                           >
                             {r.name_en || r.name || r.ticker}
                           </Link>
