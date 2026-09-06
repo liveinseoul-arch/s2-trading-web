@@ -37,7 +37,30 @@ sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
 from config import Config                                    # noqa: E402
 
-MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
+# ★★[2026-09-06 신설 · 해달별님 지시] ★모델을 ★작업 종류로 가른다.
+#   ★**주별 스케줄**(최신 1주 · 스케줄러가 부르는 경로) = ★`gemini-2.5-pro`
+#   ★**백필**(`--refill` · `--weeks N>1`)             = ★`gemini-2.5-flash`(토큰 절약)
+#   ⚠️★왜 — 백필은 ★한 번에 12주를 돌려 ★월 지출 한도를 밀어낸다(2026-09-04 429 실측).
+#     ★주별 1회는 품질이 중요하고 ★백필은 양이 중요하다.
+#   ★★되돌리기 — ★`GEMINI_MODEL` 를 주면 ★그것이 ★언제나 이긴다(종전 동작).
+MODEL_PRO = "gemini-2.5-pro"
+MODEL_FLASH = "gemini-2.5-flash"
+MODEL_NAME = os.environ.get("GEMINI_MODEL", MODEL_PRO)
+
+
+def _is_backfill(args) -> bool:
+    """★백필인가 — `--refill` 이거나 ★한 번에 2주 이상 도는 판."""
+    return bool(getattr(args, "refill", False)) or int(getattr(args, "weeks", 1) or 1) > 1
+
+
+def _resolve_model(args) -> str:
+    """★작업 종류로 기본 모델을 정한다. ★`--model`·env 가 있으면 그것이 이긴다."""
+    if getattr(args, "model", None):
+        return args.model
+    if os.environ.get("GEMINI_MODEL"):
+        return os.environ["GEMINI_MODEL"]
+    return MODEL_FLASH if _is_backfill(args) else MODEL_PRO
+
 MARKETS_ALL = ("KR", "US", "JP")
 MARKET_LABEL = {"KR": "한국", "US": "미국", "JP": "일본"}
 
@@ -597,7 +620,12 @@ def main():
                     help="★전 주차 완전성 감사만 하고 끝낸다(Gemini 호출 0회 · 쓰기 0회)")
     ap.add_argument("--refill", action="store_true",
                     help="★감사에서 불합격한 주차만 재분류한다(--audit 의 보수판)")
+    ap.add_argument("--model", default=None,
+                    help="★모델 강제 지정. 없으면 ★백필=flash · ★주별 스케줄=pro")
     args = ap.parse_args()
+
+    global MODEL_NAME
+    MODEL_NAME = _resolve_model(args)
 
     Config()
     req = _sb_client()
@@ -630,7 +658,8 @@ def main():
         weeks = [w for w in weeks if w not in existing]
         print(f"대상 {before}주 중 {before - len(weeks)}주 기존 분류 존재 → 건너뜀.")
 
-    print(f"대상 주차 {len(weeks)}개 · 캐논 시드 {len(CANONICAL_THEMES)}개 · model={MODEL_NAME}\n")
+    _mode = "백필" if _is_backfill(args) else "주별 스케줄"
+    print(f"대상 주차 {len(weeks)}개 · 캐논 시드 {len(CANONICAL_THEMES)}개 · model={MODEL_NAME} (★{_mode} 기본값)\n")
 
     total_ok = 0
     for w in weeks:
