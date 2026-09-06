@@ -72,15 +72,34 @@ function MarketBadge({ m }: { m: RsMarket }) {
 function StockRow({ s }: { s: GlobalThemeStock }) {
   const display = s.name_en || s.name || s.ticker;
   const subTicker = s.market === "JP" ? s.ticker.replace(".T", "") : s.ticker;
+
+  // EMA 이탈 종목은 이름을 흐리게 — 매도 대상이거나 이미 매도했을 종목이라
+  // 매수 관점에서 주목을 끌지 않게 한다. 둘 다 이탈이면 한 단계 더 흐리게.
+  // (RS·모멘텀 수치는 판단 재료라 흐리지 않는다.)
+  const below21 = ((s.emaBreak ?? 0) & 1) !== 0;
+  const below50 = ((s.emaBreak ?? 0) & 2) !== 0;
+  const dimClass = below21 && below50
+    ? "opacity-40"
+    : below21 || below50
+      ? "opacity-60"
+      : "";
+  const dimTitle = below21 && below50
+    ? "21EMA·50EMA 모두 하향 — 추세 약화"
+    : below21
+      ? "21EMA 하향 — 추세 약화"
+      : below50
+        ? "50EMA 하향 — 추세 약화"
+        : undefined;
+
   return (
     <tr className="border-b border-[var(--color-borderc)] text-right last:border-0 hover:bg-bg/40">
       <td className="py-1 text-left">
         <MarketBadge m={s.market} />
       </td>
-      <td className="min-w-0 text-left">
+      <td className={`min-w-0 text-left ${dimClass}`} title={dimTitle}>
         <Link
           href={`/rs96/${s.market}/${encodeURIComponent(s.ticker)}`}
-          className="font-medium text-textc hover:text-accent"
+          className={`${dimClass ? "font-normal" : "font-medium"} text-textc hover:text-accent hover:opacity-100`}
         >
           {display}
         </Link>
@@ -219,7 +238,7 @@ export default async function GlobalThemes({
     sp.week && availWeeks.includes(sp.week) ? sp.week : (availWeeks[0] ?? null);
 
   const data = await loadGlobalThemes(selectedWeek);
-  const { groups, weeks, totals, unmatched, marketSummaries, unifiedModel, subdivisionModel, compareWeek } = data;
+  const { groups, weeks, totals, unmatched, marketSummaries, unifiedModel, unifiedSummary, subdivisionModel, compareWeek } = data;
 
   const noData = Object.values(weeks).every((w) => !w);
   const hasAnySummary = Object.values(marketSummaries).some((s) => s);
@@ -245,6 +264,8 @@ export default async function GlobalThemes({
         <b className="text-textc">MA↓</b> 칸:
         <span className={`${EMA_BADGE} bg-red-400`}>-</span> 종가가 21EMA 아래 ·
         <span className={`${EMA_BADGE} bg-red-700`}>-</span> 50EMA 아래 (둘 다면 나란히, RS96+ 여도 추세 약화 신호).
+        {" "}이탈 종목은 <span className="opacity-60">종목명을 흐리게</span>, 둘 다 이탈이면{" "}
+        <span className="opacity-40">더 흐리게</span> 표시합니다 — 매수 관점에서 주목을 끌지 않게.
       </p>
 
       {availWeeks.length > 0 && (
@@ -351,6 +372,19 @@ export default async function GlobalThemes({
             <> (서브 세분화 동일 모델)</>
           )}
         </p>
+      )}
+
+      {/* 3국을 한 호출로 본 Gemini 통합 한줄평 —
+          시장별 한줄평은 각국 페이지에서도 볼 수 있어 새롭지 않은 반면,
+          이것은 한미일을 묶어야만 나오는 관점이라 이 페이지의 고유 정보다. */}
+      {unifiedSummary && (
+        <div className="mb-3 rounded-lg border-l-2 border-accent bg-accent/5 p-3.5">
+          <div className="mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold text-muted">
+            <span className="rounded bg-accent/15 px-1.5 py-0.5 text-accent">한 · 미 · 일</span>
+            3국 통합 한줄평
+          </div>
+          <p className="text-[13px] leading-relaxed text-textc">{unifiedSummary}</p>
+        </div>
       )}
 
       {/* Gemini 의 시장별 한줄평 */}

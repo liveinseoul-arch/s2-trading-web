@@ -75,6 +75,12 @@ export interface GlobalThemeData {
   marketSummaries: Record<RsMarket, string | null>;
   /** 한미일 통합 단일 호출 Gemini 모델 (rs_global_theme_weekly.model) */
   unifiedModel: string | null;
+  /**
+   * 3국을 한 호출로 본 Gemini 의 통합 한줄평 (rs_global_theme_weekly.summary).
+   * 시장별 marketSummaries 는 각국 페이지에서도 볼 수 있어 새롭지 않은 반면,
+   * 이것은 한미일을 묶어야만 나오는 관점이라 이 페이지의 고유 정보다.
+   */
+  unifiedSummary: string | null;
   /** 50+ 테마 서브디비전 Gemini 모델 (있을 경우) */
   subdivisionModel: string | null;
   /** 델타 계산에 사용한 4주전 기준 주차 (없으면 null) */
@@ -482,12 +488,15 @@ export async function loadGlobalThemes(
   // 통합 단일 호출 분류가 있으면 그것을 우선 사용 (라벨 일관성 보장)
   const subWeek = selectedWeek ?? Object.values(weeks).find((v) => v) ?? null;
   let unifiedModel: string | null = null;
+  let unifiedSummary: string | null = null;
   let subdivisionModel: string | null = null;
   if (subWeek) {
     const unified = await loadUnifiedGroups(subWeek);
     if (unified && unified.groups.length > 0) {
       groups = unified.groups;
       unifiedModel = unified.model;
+      // 종전에는 여기서 unified.summary 를 버려 3국 통합 한줄평이 화면까지 오지 않았다.
+      unifiedSummary = unified.summary;
     }
   }
 
@@ -577,6 +586,7 @@ export async function loadGlobalThemes(
     unmatched,
     marketSummaries,
     unifiedModel,
+    unifiedSummary,
     subdivisionModel,
     compareWeek,
   };
