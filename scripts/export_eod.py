@@ -2380,6 +2380,61 @@ def dry_run_dump(data, base_cap):
               f"  ★[S2_COMBO_RS] cap {COMBO_RS_CAP} · RS 거래 0건")
 
 
+class SupabaseTransient(RuntimeError):
+    """★★[2026-09-06 신설 · CAND-2026-09-02-15] ★일시적 실패 — ★재시도하면 될 것.
+
+    ⚠️★★왜 생겼나 — ★09-01 · 09-02 · 09-04 ★세 번의 정규 EOD(15:45)가 ★실패했는데
+      ★수동 재실행은 ★전부 성공했다. ★09-04 에 ★stderr 보존(CAND-2026-09-02-16)이 붙어
+      ★원인 문자열이 처음 남았다:
+        `ssl.SSLEOFError: [SSL: UNEXPECTED_EOF_WHILE_READING]` ← export_eod.py `req()`
+        `URLError: [WinError 10054] 연결 강제 종료`          ← export_rs_weekly.py `req()`
+      ★★즉 ★코드 버그가 아니라 ★**장 마감 직후 Supabase 로 가는 연결이 이따금 끊긴다.**
+    ⚠️★★종전 `req()` 는 `except urllib.error.HTTPError` ★**만** 잡아서
+      ★네트워크 계열은 ★아예 안 잡히고 ★그대로 죽었다 — ★재시도도 없었다.
+
+    ★이 예외로 갈라내는 것 — ★네트워크 오류 · HTTP 5xx · 429.
+    ★**갈라내지 않는 것** — ★4xx(스키마·제약 위반). ★그건 재시도해도 같으므로
+      ★종전대로 `SystemExit` 이고, ★`_column_exists` 와 `cash_park` 의
+      ★`except SystemExit` degrade 로직이 ★그대로 작동한다.
+    """
+
+
+def _supabase_retry_cfg():
+    """★되돌리기 = `S2_SUPABASE_RETRY=0` ★한 줄(재시도 0회 = 종전 동작)."""
+    return (int(os.environ.get("S2_SUPABASE_RETRY", "3")),
+            float(os.environ.get("S2_SUPABASE_RETRY_BASE", "5.0")))
+
+
+def upsert_supabase_retrying(data):
+    """★`upsert_supabase` 를 ★통째로 재시도한다 — ★req 단위가 ★아니다.
+
+    ★★왜 통째인가 — ★`upsert_supabase` 는 ★각 테이블을 ★**전삭제 후 insert** 한다.
+      ★POST insert 는 ★멱등이 ★아니므로 ★req 단위로 재시도하면 ★중복 행 위험이 있다.
+      ★반면 ★**전삭제부터 다시 하면 ★멱등**이다.
+    ⚠️★★함정 — ★`upsert_supabase` 는 ★`data["daily_order_plan"]` 을 ★**변형한다**
+      (cash_park 행을 빼고 마지막에 복원). ★중간에 죽으면 ★파킹 행이 빠진 채 남아
+      ★재시도가 ★파킹 누락본을 적재한다. ★그래서 ★매 시도 전에 ★원본으로 되돌린다.
+    """
+    import time
+    tries, base = _supabase_retry_cfg()
+    plan0 = list(data.get("daily_order_plan") or [])
+    for attempt in range(tries + 1):
+        data["daily_order_plan"] = list(plan0)      # ★변형 복원(위 함정)
+        try:
+            upsert_supabase(data)
+            if attempt:
+                print(f"[supabase] ★재시도 {attempt}회 만에 적재 성공")
+            return
+        except SupabaseTransient as e:
+            if attempt >= tries:
+                raise SystemExit(
+                    f"[supabase] ★일시적 실패가 ★{tries}회 재시도 뒤에도 계속된다 — {e}")
+            delay = base * (2 ** attempt)
+            print(f"[supabase] ⚠️★일시적 실패 — {delay:.0f}초 뒤 재시도 "
+                  f"({attempt + 1}/{tries}): {e}", flush=True)
+            time.sleep(delay)
+
+
 def upsert_supabase(data):
     """전체 재계산본을 멱등 적재: 각 테이블 전삭제 후 insert. trade_legs 는 trade_id FK 매핑 후.
     외부 의존성 없이 stdlib(urllib)로 Supabase REST(PostgREST) 직접 호출."""
@@ -2397,7 +2452,16 @@ def upsert_supabase(data):
                 txt = resp.read().decode("utf-8")
                 return json.loads(txt) if txt.strip() else None
         except urllib.error.HTTPError as e:
-            raise SystemExit(f"[supabase] {method} {path} 실패 {e.code}: {e.read().decode('utf-8')[:500]}")
+            _body = e.read().decode("utf-8")[:500]
+            # ★5xx·429 는 서버측 일시 장애 — 재시도 대상(SupabaseTransient).
+            #   ★4xx 는 스키마·제약 위반이라 재시도해도 같다 → ★종전대로 SystemExit.
+            if e.code >= 500 or e.code == 429:
+                raise SupabaseTransient(f"{method} {path} HTTP {e.code}: {_body}")
+            raise SystemExit(f"[supabase] {method} {path} 실패 {e.code}: {_body}")
+        except (urllib.error.URLError, OSError) as e:
+            # ⚠️★여기가 ★09-01/02/04 EOD 를 죽인 자리다 — 종전에는 ★안 잡혔다.
+            #   ★`ssl.SSLError`·`socket.timeout`·`ConnectionResetError` 는 전부 OSError 하위다.
+            raise SupabaseTransient(f"{method} {path} 네트워크: {e!r}")
 
     def iso(rows):  # date 객체 → 'YYYY-MM-DD'
         return [{k: (str(v) if isinstance(v, date) else v) for k, v in r.items()} for r in rows]
@@ -2847,7 +2911,7 @@ def main():
     if args.dry_run:
         dry_run_dump(data, base_cap)
     else:
-        upsert_supabase(data)
+        upsert_supabase_retrying(data)      # ★CAND-2026-09-02-15 — 되돌리기 S2_SUPABASE_RETRY=0
         if not args.no_notify:
             notify_eod(data)
     print("DONE")

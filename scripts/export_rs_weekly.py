@@ -843,15 +843,47 @@ def _supabase_client():
          "Content-Type": "application/json"}
 
     def req(method, path, body=None, prefer="return=minimal"):
+        """★★[2026-09-06 · CAND-2026-09-02-15] ★req 단위 재시도.
+
+        ⚠️★★왜 — ★2026-09-04 17:27 에 ★JP 체인이 ★여기서 죽었다:
+          `URLError: [WinError 10054] 연결이 강제로 끊겼습니다` (★`:850` urlopen).
+          ★종전에는 `except urllib.error.HTTPError` ★**만** 잡아 ★안 잡혔다.
+        ★★`export_eod.py` 와 ★설계가 다르다 — ★거기는 ★전삭제-재적재라 ★통째 재시도가 멱등인데
+          ★여기는 ★그 구조가 아니라서 ★req 단위로 한다.
+        ⚠️★★그래서 ★POST 중복 위험이 ★남는다 — ★재시도는 ★연결 자체가 실패한 경우
+          (요청이 서버에 ★안 닿은 경우)를 ★겨냥한 것이다. ★`SSLEOFError`·`10054` 는
+          ★핸드셰이크·연결 단계라 ★그 개연성이 높지만 ★**보장은 아니다**.
+          ★★적재 후 ★행수 이상이 보이면 ★이 재시도를 먼저 의심할 것.
+        ★되돌리기 — `S2_SUPABASE_RETRY=0` ★한 줄(재시도 0회 = 종전 동작).
+        """
+        import time
+        tries = int(os.environ.get("S2_SUPABASE_RETRY", "3"))
+        wait = float(os.environ.get("S2_SUPABASE_RETRY_BASE", "5.0"))
         h = dict(H); h["Prefer"] = prefer
         payload = json.dumps(body).encode("utf-8") if body is not None else None
-        r = urllib.request.Request(base + path, data=payload, method=method, headers=h)
-        try:
-            with urllib.request.urlopen(r, timeout=120) as resp:
-                resp.read()
-        except urllib.error.HTTPError as e:
-            raise SystemExit(f"[supabase] {method} {path} 실패 {e.code}: "
-                             f"{e.read().decode('utf-8')[:500]}")
+        for attempt in range(tries + 1):
+            r = urllib.request.Request(base + path, data=payload, method=method, headers=h)
+            try:
+                with urllib.request.urlopen(r, timeout=120) as resp:
+                    resp.read()
+                if attempt:
+                    print(f"[supabase] ★재시도 {attempt}회 만에 성공 — {method} {path}", flush=True)
+                return
+            except urllib.error.HTTPError as e:
+                _body = e.read().decode("utf-8")[:500]
+                # ★4xx 는 재시도해도 같다 — 종전대로 즉시 중단(`_columns_exist` degrade 유지)
+                if not (e.code >= 500 or e.code == 429) or attempt >= tries:
+                    raise SystemExit(f"[supabase] {method} {path} 실패 {e.code}: {_body}")
+                _why = f"HTTP {e.code}: {_body}"
+            except (urllib.error.URLError, OSError) as e:
+                if attempt >= tries:
+                    raise SystemExit(f"[supabase] {method} {path} ★네트워크 실패"
+                                     f"(재시도 {tries}회 소진): {e!r}")
+                _why = repr(e)
+            _d = wait * (2 ** attempt)
+            print(f"[supabase] ⚠️★일시적 실패 — {_d:.0f}초 뒤 재시도 "
+                  f"({attempt + 1}/{tries}) {method} {path}: {_why}", flush=True)
+            time.sleep(_d)
     return req
 
 
