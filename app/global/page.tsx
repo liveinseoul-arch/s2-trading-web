@@ -76,7 +76,22 @@ function MarketBadge({ m }: { m: RsMarket }) {
  * 줄마다 표제를 세워 시선이 걸리게 했다.
  * 옛 데이터(표제 없는 한 문단)는 그대로 문단으로 떨어뜨린다.
  */
-function UnifiedSummary({ text }: { text: string }) {
+function UnifiedSummary({
+  text,
+  model,
+  subModel,
+}: {
+  text: string;
+  model?: string | null;
+  subModel?: string | null;
+}) {
+  // 분류 모델 표기 — 한 줄을 따로 차지하지 않도록 이 카드 헤더 오른쪽 끝에 둔다.
+  // 부가 정보라 좁은 화면(모바일)에서는 감춘다.
+  const modelLabel = (m?: string | null) => (m ? m.replace("gemini-", "Gemini ") : null);
+  const parts: string[] = [];
+  if (model) parts.push(`테마 분류 ${modelLabel(model)}`);
+  if (subModel && subModel !== model) parts.push(`서브 세분화 ${modelLabel(subModel)}`);
+
   const rows = text
     .split("\n")
     .map((l) => l.trim())
@@ -96,6 +111,11 @@ function UnifiedSummary({ text }: { text: string }) {
       <div className="mb-2.5 flex items-center gap-1.5 text-[10px] font-semibold text-muted">
         <span className="rounded bg-accent/15 px-1.5 py-0.5 text-accent">한 · 미 · 일</span>
         3국 통합 평가의견
+        {parts.length > 0 && (
+          <span className="ml-auto hidden font-normal text-muted sm:inline">
+            {parts.join(" · ")}
+          </span>
+        )}
       </div>
       {labeled ? (
         <dl className="flex flex-col gap-2">
@@ -387,30 +407,16 @@ export default async function GlobalThemes({
         ))}
       </div>
 
-      {/* 분류 모델 명시 */}
-      {(unifiedModel || subdivisionModel) && (
-        <p className="mb-3 text-[11px] text-muted">
-          {unifiedModel && (
-            <>
-              테마 분류 <b className="text-textc">{unifiedModel.replace("gemini-", "Gemini ")}</b>
-            </>
-          )}
-          {subdivisionModel && subdivisionModel !== unifiedModel && (
-            <>
-              {unifiedModel ? " · " : ""}서브 세분화{" "}
-              <b className="text-textc">{subdivisionModel.replace("gemini-", "Gemini ")}</b>
-            </>
-          )}
-          {subdivisionModel && subdivisionModel === unifiedModel && (
-            <> (서브 세분화 동일 모델)</>
-          )}
-        </p>
-      )}
-
       {/* 3국을 한 호출로 본 Gemini 통합 한줄평 —
           시장별 한줄평은 각국 페이지에서도 볼 수 있어 새롭지 않은 반면,
           이것은 한미일을 묶어야만 나오는 관점이라 이 페이지의 고유 정보다. */}
-      {unifiedSummary && <UnifiedSummary text={unifiedSummary} />}
+      {unifiedSummary && (
+        <UnifiedSummary
+          text={unifiedSummary}
+          model={unifiedModel}
+          subModel={subdivisionModel}
+        />
+      )}
 
       {noData ? (
         <Section title="데이터 없음">
