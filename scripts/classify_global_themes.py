@@ -101,19 +101,42 @@ def _sb_client():
          "Content-Type": "application/json"}
 
     def req(method, path, body=None, prefer="return=minimal", range_header=None):
+        """★★[2026-09-06 · CAND-2026-09-02-15 계열] ★네트워크 오류 재시도.
+
+        ⚠️★★실측 — ★이 결함이 ★같은 세션에서 ★그대로 재현됐다. `export_eod.py` 와
+          `export_rs_weekly.py` 의 같은 패턴을 고친 ★직후, ★이 `req` 가
+          `URLError`(SSL/연결 끊김)로 ★그대로 죽었다(`--audit` 실행 중).
+          ★종전에는 `except urllib.error.HTTPError` ★**만** 잡아 ★네트워크 계열이 안 잡혔다.
+        ★4xx 는 재시도하지 않는다 — 재시도해도 같다.
+        ★되돌리기 — `S2_SUPABASE_RETRY=0` ★한 줄(세 파일 공통 게이트).
+        """
+        tries = int(os.environ.get("S2_SUPABASE_RETRY", "3"))
+        wait = float(os.environ.get("S2_SUPABASE_RETRY_BASE", "5.0"))
         h = dict(H); h["Prefer"] = prefer
         if range_header:
             h["Range-Unit"] = "items"
             h["Range"] = range_header
         data = json.dumps(body).encode("utf-8") if body is not None else None
-        r = urllib.request.Request(base + path, data=data, method=method, headers=h)
-        try:
-            with urllib.request.urlopen(r, timeout=120) as resp:
-                txt = resp.read().decode("utf-8")
-                return json.loads(txt) if txt.strip() else None
-        except urllib.error.HTTPError as e:
-            raise SystemExit(f"[supabase] {method} {path} 실패 {e.code}: "
-                             f"{e.read().decode('utf-8')[:400]}")
+        for attempt in range(tries + 1):
+            r = urllib.request.Request(base + path, data=data, method=method, headers=h)
+            try:
+                with urllib.request.urlopen(r, timeout=120) as resp:
+                    txt = resp.read().decode("utf-8")
+                    return json.loads(txt) if txt.strip() else None
+            except urllib.error.HTTPError as e:
+                _body = e.read().decode("utf-8")[:400]
+                if not (e.code >= 500 or e.code == 429) or attempt >= tries:
+                    raise SystemExit(f"[supabase] {method} {path} 실패 {e.code}: {_body}")
+                _why = f"HTTP {e.code}: {_body}"
+            except (urllib.error.URLError, OSError) as e:
+                if attempt >= tries:
+                    raise SystemExit(f"[supabase] {method} {path} ★네트워크 실패"
+                                     f"(재시도 {tries}회 소진): {e!r}")
+                _why = repr(e)
+            _d = wait * (2 ** attempt)
+            print(f"[supabase] ⚠️★일시적 실패 — {_d:.0f}초 뒤 재시도 "
+                  f"({attempt + 1}/{tries}) {method} {path[:60]}: {_why}", flush=True)
+            time.sleep(_d)
     return req
 
 
