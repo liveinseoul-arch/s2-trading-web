@@ -191,6 +191,30 @@ MKTCAP_TOP_PCT    = {"KR": 40,                    "US": 20,    "JP": 20}
 # JP: 상위 20% 컷오프 ~1,174억보다 엄격한 1,500억엔 floor 추가 적용.
 MKTCAP_MIN_NATIVE = {"KR": 500_000_000_000.0,   "US": None,  "JP": 150_000_000_000.0}
 
+def _mktcap_top_pct(market):
+    """★★[2026-09-06 신설 · 규명용] 시총 상위 % 의 env 오버라이드.
+
+    ★★왜 — ★해달별님 물음: 「RS96+ 가 JP 70 > KR 49 > US 26 으로 불균형한 이유는」.
+      ★실측(2026-09-04) — ★문턱은 세 시장 다 RS>=96 으로 같은데
+        유니버스 KR 539 · US **1,123** · JP 728 이고
+        그중 RS96+ 비율이 KR 10.6% · JP 9.9% · ★**US 2.6%** 다.
+      ★★원인은 ★「상위 N%」가 ★시장 규모 때문에 ★전혀 다른 절대 문턱이 되는 것 —
+        ★실측 문턱이 ★KR 0.50조원 · JP 약 1.4조원 · ★**US 약 11조원**(한국의 22배).
+        ★그래서 미국만 초대형주 전용이 되고 ★모멘텀 상위(중소형 편중)와 덜 겹친다.
+      ★이 게이트는 ★그 가설을 ★`--dry-run` 으로 재보려고 연다.
+
+    ⚠️★**기본값을 주지 않으면 종전과 비트동일**이다(env 미설정 = MKTCAP_TOP_PCT 그대로).
+    ★사용 — `RS_MKTCAP_TOP_PCT_US=40` 처럼 ★시장별로 준다.
+    """
+    v = os.environ.get(f"RS_MKTCAP_TOP_PCT_{market}")
+    if v not in (None, ""):
+        try:
+            return float(v)
+        except ValueError:
+            print(f"⚠️[mktcap-top] RS_MKTCAP_TOP_PCT_{market}={v!r} 를 못 읽었다 — 기본값 사용")
+    return MKTCAP_TOP_PCT.get(market)
+
+
 US_SHARES_PKL = "_bt_shares_us.pkl"
 JP_SHARES_PKL = "_bt_shares_jp.pkl"
 JP_MKTCAP_YAHOO_PKL = "_jp_mktcap_yahoo.pkl"   # finance.yahoo.co.jp 직접 시총(엔). 우선순위 1.
@@ -708,7 +732,7 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
 
 
 def fetch_market(market, weeks_back):
-    mktcap_top = MKTCAP_TOP_PCT.get(market)
+    mktcap_top = _mktcap_top_pct(market)
     mktcap_min = MKTCAP_MIN_NATIVE.get(market)
     print(f"\n[{market}] 데이터 로드  (시총 상위 {mktcap_top}%"
           + (f" + 최소 {mktcap_min/1e8:,.0f}억" if mktcap_min and market == 'KR' else "")
