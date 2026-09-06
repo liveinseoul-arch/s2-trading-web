@@ -69,6 +69,54 @@ function MarketBadge({ m }: { m: RsMarket }) {
   );
 }
 
+/**
+ * 3국 통합 평가의견 — 「표제: 내용」 3줄을 표제/내용으로 갈라 읽기 쉽게 보여준다.
+ *
+ * 한 문단으로 길게 이어지면 무슨 얘기인지 섞여 읽히지 않는다는 지적이 있어
+ * 줄마다 표제를 세워 시선이 걸리게 했다.
+ * 옛 데이터(표제 없는 한 문단)는 그대로 문단으로 떨어뜨린다.
+ */
+function UnifiedSummary({ text }: { text: string }) {
+  const rows = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const i = line.indexOf(":");
+      // 표제가 지나치게 길면 본문 속 콜론이므로 표제로 보지 않는다
+      if (i > 0 && i <= 12) {
+        return { label: line.slice(0, i).trim(), text: line.slice(i + 1).trim() };
+      }
+      return { label: null, text: line };
+    });
+  const labeled = rows.some((r) => r.label);
+
+  return (
+    <div className="mb-5 rounded-lg border-l-2 border-accent bg-accent/5 p-4">
+      <div className="mb-2.5 flex items-center gap-1.5 text-[10px] font-semibold text-muted">
+        <span className="rounded bg-accent/15 px-1.5 py-0.5 text-accent">한 · 미 · 일</span>
+        3국 통합 평가의견
+      </div>
+      {labeled ? (
+        <dl className="flex flex-col gap-2">
+          {rows.map((r, i) => (
+            <div key={i} className="sm:flex sm:gap-3">
+              {r.label && (
+                <dt className="mb-0.5 shrink-0 text-[11px] font-semibold text-accent sm:mb-0 sm:w-[76px] sm:pt-[3px] sm:text-right">
+                  {r.label}
+                </dt>
+              )}
+              <dd className="min-w-0 text-[13px] leading-[1.7] text-textc">{r.text}</dd>
+            </div>
+          ))}
+        </dl>
+      ) : (
+        <p className="text-[13px] leading-[1.75] text-textc">{text}</p>
+      )}
+    </div>
+  );
+}
+
 function StockRow({ s }: { s: GlobalThemeStock }) {
   const display = s.name_en || s.name || s.ticker;
   const subTicker = s.market === "JP" ? s.ticker.replace(".T", "") : s.ticker;
@@ -362,15 +410,7 @@ export default async function GlobalThemes({
       {/* 3국을 한 호출로 본 Gemini 통합 한줄평 —
           시장별 한줄평은 각국 페이지에서도 볼 수 있어 새롭지 않은 반면,
           이것은 한미일을 묶어야만 나오는 관점이라 이 페이지의 고유 정보다. */}
-      {unifiedSummary && (
-        <div className="mb-5 rounded-lg border-l-2 border-accent bg-accent/5 p-4">
-          <div className="mb-2 flex items-center gap-1.5 text-[10px] font-semibold text-muted">
-            <span className="rounded bg-accent/15 px-1.5 py-0.5 text-accent">한 · 미 · 일</span>
-            3국 통합 평가의견
-          </div>
-          <p className="text-[13px] leading-[1.75] text-textc">{unifiedSummary}</p>
-        </div>
-      )}
+      {unifiedSummary && <UnifiedSummary text={unifiedSummary} />}
 
       {noData ? (
         <Section title="데이터 없음">
