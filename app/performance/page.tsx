@@ -40,14 +40,15 @@ export default function Performance() {
         포지션 크기가 다른 건을 투입액 비중대로 반영해 큰 포지션의 성과를 더 무겁게 본다.
       </p>
 
-      <Section title="연도별 성과" sub="연도를 누르면 그 해 월별·거래 상세. 전략 vs KOSPI·KOSDAQ 비교.">
+      <Section title="연도별 성과" sub="연도를 누르면 그 해 월별·거래 상세. ★전략=평가자산(NAV) 수익률 — 미실현 평가손익 포함. ★실현손익=그 해 청산된 거래만. 거래·승률·실현손익은 청산 기준이라 전략과 부호가 다를 수 있다.">
         {years.length === 0 ? <Empty>데이터 없음</Empty> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm tnum">
               <thead className="text-xs text-muted">
                 <tr className="border-b border-[var(--color-borderc)] text-right">
-                  <th className="py-1.5 text-left">연도</th><th>전략</th><th>MDD</th>
+                  <th className="py-1.5 text-left">연도</th><th title="평가자산(NAV) 수익률 — 미실현 포함">전략</th><th>MDD</th>
                   <th>KOSPI</th><th>KOSDAQ</th><th>거래</th><th>승률</th>
+                  <th title="그 해 청산된 거래의 실현손익 합">실현손익</th>
                 </tr>
               </thead>
               <tbody>
@@ -62,6 +63,7 @@ export default function Performance() {
                     <td className={signClass(y.kosdaq)}>{pct(y.kosdaq)}</td>
                     <td>{y.num}</td>
                     <td>{y.win.toFixed(0)}%</td>
+                    <td className={signClass(y.pnl)}>{eok(y.pnl)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -70,7 +72,7 @@ export default function Performance() {
         )}
       </Section>
 
-      <Section title="월별 수익률 (%)" sub="월을 누르면 그 달의 상세(청산 거래·보유 현황).">
+      <Section title="월별 수익률 (%)" sub="월을 누르면 그 달의 상세(청산 거래·보유 현황). ★평가자산(NAV) 기준이라 ★연수익률은 이 값들의 ★곱(복리)이지 합이 아니다.">
         <div className="overflow-x-auto">
           <table className="w-full text-sm tnum">
             <thead className="text-xs text-muted">
