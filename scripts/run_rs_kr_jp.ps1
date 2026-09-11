@@ -188,7 +188,7 @@ $jobJP = Start-Job -Name "JP chain" -ScriptBlock {
     J "3 15_RS_JP"   @($silent2, "$qb2\15_RS_JP_screen.py")
     J "5 export JP"  @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "JP", "--weeks", "56", "--full-universe")
     J "8 classify JP" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "JP", "--weeks", "1")
-} -ArgumentList $root, $silent, $qb, $logJP, "gemini-2.5-pro"
+} -ArgumentList $root, $silent, $qb, $logJP, "gemini-2.5-flash"
 Log "[JP chain] start (job) → $logJP  (KR 과 병렬)"
 
 # ── KR 체인 (메인 스레드) — append → rebuild → RS → export → ETF → 분류 ──────────
@@ -215,7 +215,7 @@ RunPyGate "2 14_RS_KR"   "C:\Python314\python.exe" @($silent, "$qb\14_RS_KR_pykr
 RunPyGate "4 export KR"  $rsExportPy @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "KR", "--weeks", "56", "--full-universe")
 # export 가 (해당 마켓의) universe 전체 삭제 후 재적재 → KR ETF 재적재 필요 (JP 는 ETF 화이트리스트 없음)
 RunPyGate "6 add KR ETFs" $rsExportPy @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")
-$env:GEMINI_MODEL = "gemini-2.5-pro"
+$env:GEMINI_MODEL = "gemini-2.5-flash"
 RunPyGate "7 classify KR" "C:\Python314\python.exe" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "KR", "--weeks", "1")
 # [2026-08-16 랙 수리] 끝
 

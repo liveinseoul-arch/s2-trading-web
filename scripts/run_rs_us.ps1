@@ -59,7 +59,7 @@ RunPy "1 13_RS_US"    @($silent, "$qb\13_RS_US_screen.py")
 RunPy "2 export US"   @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "US", "--weeks", "56", "--full-universe")
 RunPy "3 add US ETFs" @("s2-trading-web\scripts\add_etfs.py", "--market", "US", "--weeks", "56")
 
-$env:GEMINI_MODEL = "gemini-2.5-pro"
+$env:GEMINI_MODEL = "gemini-2.5-flash"
 RunPy "4 classify US" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "US", "--weeks", "1")
 RunPy "5 classify global" @("s2-trading-web\scripts\classify_global_themes.py", "--weeks", "1")
 RunPy "6 subdivide"   @("s2-trading-web\scripts\subdivide_global_themes.py", "--weeks", "1", "--min", "50")
