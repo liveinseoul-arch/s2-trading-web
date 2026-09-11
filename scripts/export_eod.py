@@ -2405,6 +2405,13 @@ def _supabase_retry_cfg():
             float(os.environ.get("S2_SUPABASE_RETRY_BASE", "5.0")))
 
 
+# ★CAND-2026-09-08-4 D안(마커 프로토콜 · 2026-09-11 · 해달별님 「권고대로」) — 전삭제-재적재 창을 독자에게 알린다.
+#   전삭제 직전에 meta.eod_state='loading', 재적재·last_eod_at 갱신 뒤 'ready'. 중간에 죽으면 'loading' 이 남아
+#   독자(kw_scale · update_nav_calendar)가 「공백」으로 물러난다. ★원자성이 아니라 가시화다(2단계 = 단일 트랜잭션 RPC).
+#   ★되돌리기 — S2_EOD_STATE_MARK=0 한 줄(마커를 안 쓴다 · 종전 동작). dry-run 은 이 함수를 타지 않아 무영향.
+EOD_STATE_MARK = os.environ.get("S2_EOD_STATE_MARK", "1").strip() != "0"
+
+
 def upsert_supabase_retrying(data):
     """★`upsert_supabase` 를 ★통째로 재시도한다 — ★req 단위가 ★아니다.
 
@@ -2463,6 +2470,17 @@ def upsert_supabase(data):
             #   ★`ssl.SSLError`·`socket.timeout`·`ConnectionResetError` 는 전부 OSError 하위다.
             raise SupabaseTransient(f"{method} {path} 네트워크: {e!r}")
 
+    def _mark(state):
+        # ★CAND-2026-09-08-4 D안 — best-effort 마커. 4xx(스키마·권한)면 EOD 를 죽이지 않고 지나간다.
+        #   5xx·네트워크는 req 가 SupabaseTransient 로 올려 통째 재시도 경로를 탄다(종전과 같다).
+        if not EOD_STATE_MARK:
+            return
+        try:
+            req("POST", "/meta", [{"key": "eod_state", "value": state}],
+                prefer="resolution=merge-duplicates,return=minimal")
+        except SystemExit as e:
+            print(f"  ⚠️[eod_state] 마커 '{state}' 기록 실패 — 무시하고 진행: {str(e)[:120]}")
+
     def iso(rows):  # date 객체 → 'YYYY-MM-DD'
         return [{k: (str(v) if isinstance(v, date) else v) for k, v in r.items()} for r in rows]
 
@@ -2478,6 +2496,7 @@ def upsert_supabase(data):
         for i in range(0, len(rows), n):
             yield rows[i:i + n]
 
+    _mark("loading")          # ★D안 — 전삭제 직전
     # FK 안전 순서로 전삭제 (각 테이블의 항상-참 필터)
     del_filter = {
         "trade_legs": ("id", "0"), "trades": ("id", "0"), "executions": ("id", "0"),
@@ -2537,6 +2556,7 @@ def upsert_supabase(data):
     # ★요약·텔레그램용 복원 — 적재 성패와 무관하게 파킹 지시는 해달별님께 보여야 한다
     data["daily_order_plan"] = _park_rows + data["daily_order_plan"]
     req("PATCH", "/meta?key=eq.last_eod_at", {"value": str(data["last_date"])})
+    _mark("ready")            # ★D안 — 재적재 완료
     print(f"[supabase] 적재 완료 (기준일 {data['last_date']}): "
           f"trades {len(data['trades'])} · legs {len(legs)} · executions {len(data['executions'])} · "
           f"nav {len(data['nav_daily'])} · positions {len(data['position_snapshots'])} · "

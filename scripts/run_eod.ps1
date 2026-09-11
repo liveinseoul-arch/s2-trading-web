@@ -566,4 +566,16 @@ $rcEod = $LASTEXITCODE
 try {
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] export_eod.py=$rcEod" | Out-File -Append -Encoding utf8 $log
 } catch { Write-Host "[RC] 로그 기록 실패(export_eod.py): $($_.Exception.Message)" }
+# ★CAND-2026-09-08-6 E안(2026-09-11 · 해달별님 「권고대로」) — nav 캘린더(autotrade 의 nav_daily.csv)를 ★16:00 고정 시각이 아니라
+#   ★export_eod 완료 직후 ★순차로 갱신한다. ★16:00 이 export_eod 의 전삭제-재적재 창(중앙 5.5분 · 최대 20분)과 겹쳐
+#   0행·부분 달력을 읽던 것을 ★정의상 없앤다. 스케줄러 S2_nav_calendar 는 Disabled(되돌리기 = Enable-ScheduledTask).
+#   ★되돌리기 — $env:S2_EOD_NAVCAL="0" 한 줄. ★실패해도 EOD rc 에는 영향 없다(아침 08:50 데몬이 다시 갱신한다).
+if ($env:S2_EOD_NAVCAL -ne "0") {
+    try {
+        & powershell -NoProfile -ExecutionPolicy Bypass -File "C:\AI파운더스\autotrade\run_nav_calendar.ps1"
+        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] run_nav_calendar.ps1=$LASTEXITCODE" | Out-File -Append -Encoding utf8 $log
+    } catch {
+        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] run_nav_calendar.ps1 실패: $($_.Exception.Message)" | Out-File -Append -Encoding utf8 $log
+    }
+}
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  ===== eod done =====" | Out-File -Append -Encoding utf8 $log
