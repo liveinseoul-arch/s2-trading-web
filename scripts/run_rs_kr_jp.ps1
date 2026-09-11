@@ -101,6 +101,18 @@ function RunPy($label, [string[]]$pyArgs) {
 #   승인: 해달별님 2026-08-16 「전체 패키지」
 #   되돌리기: 이 블록(변수 2개 · 함수 2개)을 삭제하고, KR 체인의 RunPyGate 호출을 구 RunPy 로 복원.
 $venvPy = "C:\quantBacktest\venv\Scripts\python.exe"
+
+# ★★★[2026-09-12 · CAND-2026-09-12-2 · 해달별님 승인] RS_EXPORT_PY — KR export 인터프리터 통일.
+#   ⚠★결함 — 시총 캐시 `_bt_mktcap_cache_kr.pkl` 이 2026-09-05 08:52 에 pandas 3.0.3 으로
+#     재저장돼 C:\Python314(pandas 2.3.3)가 NotImplementedError 로 못 읽는다.
+#     `load_mktcap_cache` 가 예외를 삼키고 빈 dict 를 돌려 ★시총 게이트가 전 종목을 탈락시킨다
+#     → top96 56주 전부 0건 → 「적재할 row 없음」 가드로 Supabase 생략 → ★exit=0 (★조용한 실패).
+#   ★실측(2026-09-12) — 시총 캐시 0개/top96 0건(2.3.3) 대 ★3,358개/top96 3,410건(3.0.3).
+#   ★쓰는 쪽(0·1단계 venv 3.0.3)과 읽는 쪽(4·6단계)의 pandas 가 달랐던 것이 뿌리다.
+#   ★되돌리기 — RS_EXPORT_PY=legacy 한 줄(종전 C:\Python314 사용).
+#   ⚠★2단계(14_RS_KR)·7단계(classify)는 그대로 둔다 — 그 둘은 이 캐시를 안 읽고
+#     7단계는 venv 에 google-genai 유무가 미검증이다.
+$rsExportPy = if ($env:RS_EXPORT_PY -eq "legacy") { "C:\Python314\python.exe" } else { $venvPy }
 $notifyPy = Join-Path $root "s2-trading-web\scripts\notify_rs_telegram.py"
 function Notify($msg) {
     try { & $venvPy $notifyPy $msg *>> $log } catch { Log "[notify] FAILED: $_" }
@@ -200,9 +212,9 @@ $env:BT_DAILY_CACHE_KR = "_bt_daily_cache_kr_live.pkl"   # Rebuild 일봉 입력
 RunPyGate "1 Rebuild"    $venvPy @("$qb\Rebuild_weekly_cache.py")
 Remove-Item Env:BT_DAILY_CACHE_KR -ErrorAction SilentlyContinue   # 국소 적용 — 후속 단계 오염 방지
 RunPyGate "2 14_RS_KR"   "C:\Python314\python.exe" @($silent, "$qb\14_RS_KR_pykrx.py")
-RunPyGate "4 export KR"  "C:\Python314\python.exe" @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "KR", "--weeks", "56", "--full-universe")
+RunPyGate "4 export KR"  $rsExportPy @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "KR", "--weeks", "56", "--full-universe")
 # export 가 (해당 마켓의) universe 전체 삭제 후 재적재 → KR ETF 재적재 필요 (JP 는 ETF 화이트리스트 없음)
-RunPyGate "6 add KR ETFs" "C:\Python314\python.exe" @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")
+RunPyGate "6 add KR ETFs" $rsExportPy @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")
 $env:GEMINI_MODEL = "gemini-2.5-pro"
 RunPyGate "7 classify KR" "C:\Python314\python.exe" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "KR", "--weeks", "1")
 # [2026-08-16 랙 수리] 끝
