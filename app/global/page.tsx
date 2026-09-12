@@ -92,7 +92,18 @@ function UnifiedSummary({
   if (model) parts.push(`테마 분류 ${modelLabel(model)}`);
   if (subModel && subModel !== model) parts.push(`서브 세분화 ${modelLabel(subModel)}`);
 
-  const rows = text
+  // ★모델이 개행을 빠뜨려도 3절로 나눈다 — 2026-09-12.
+  // classify_global_themes.py 의 프롬프트가 `주도 테마 / 이번 주 변화 / 국면 평가`
+  // 3줄을 요구하지만, gemini-2.5-flash 는 개행 없이 한 덩어리로 답하는 일이 있다
+  // (실측 — 2026-09-11 주차는 뭉쳤고 pro 가 쓴 09-04 는 개행을 지켰다).
+  // 개행이 이미 있으면 이 치환은 무해하고, 없으면 표제 앞에서 끊는다.
+  // ⚠️표제 목록은 그 프롬프트와 한 벌이다 — 프롬프트를 고치면 여기도 고친다.
+  const normalized = text.replace(
+    /\s*(주도 테마|이번 주 변화|국면 평가)\s*:/g,
+    "\n$1:",
+  );
+
+  const rows = normalized
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean)
