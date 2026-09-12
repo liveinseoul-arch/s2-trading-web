@@ -25,13 +25,44 @@ function Log($m) {
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  $m" | Out-File -Append -Encoding utf8 $log
 }
 
+# [CAND-2026-09-12-7] 단계 실패를 삼키던 것을 없앤다 - 2026-09-12.
+#   종전 RunPy 는 단계가 exit!=0 이어도 로그만 남기고 다음 단계로 넘어갔고,
+#   스크립트가 끝까지 가서 스케줄러는 S2_rs_us rc=0 으로 받았다.
+#   실측 - 2026-09-12 07:44-07:50 Gemini 429(월 지출 캡 초과)로 4단계(classify US)와
+#   5단계(classify global)가 둘 다 exit=1 인데 잡은 rc=0. 한미일 테마 09-11 주차가
+#   통째로 비었고(US 0종목 . 통합 요약 없음) 해달별님이 화면을 보고 발견하셨다.
+#   ★그리고 rc=0 이라 CAND-2026-09-12-6 의 재시도(3회/10분)가 원리적으로 발동하지 않는다.
+#   선행 - CAND-2026-08-24-306 이 단서 칸에 "run_rs_us.ps1:52 도 같은 부류"라 적었는데
+#   수리 범위에서 빠졌다(run_rs_signal.ps1 만 고쳤다 . 08-25 8baa578).
+#   ★처치는 run_rs_kr_jp.ps1:116-132 에 이미 있는 기계를 그대로 옮긴 것이다.
+#   ★되돌리기 - RS_US_STRICT=0 한 줄이면 종전 동작(계속 진행 . 알림 없음 . rc=0).
+#     기본 on 인 이유 - 기본 off 면 다음 주 토요일에 같은 실패가 또 조용히 지나간다.
+$strictUS = ($env:RS_US_STRICT -ne "0")
+$notifyPy = Join-Path $root "s2-trading-web\scripts
+otify_rs_telegram.py"
+function Notify($msg) {
+    try { & C:\Python314\python.exe $notifyPy $msg *>> $log } catch { Log "[notify] FAILED: $_" }
+}
+
 function RunPy($label, [string[]]$pyArgs) {
     Log "[$label] start  ($($pyArgs -join ' '))"
     try {
         & C:\Python314\python.exe @pyArgs *>> $log
-        Log "[$label] done (exit=$LASTEXITCODE)"
     } catch {
         Log "[$label] FAILED: $_"
+        if ($strictUS) {
+            Notify "[rs_us] $label 단계 예외 - 잡 중단. 로그: rs_us.log"
+            Log "===== rs_us aborted ====="
+            exit 1
+        }
+        return
+    }
+    Log "[$label] done (exit=$LASTEXITCODE)"
+    if ($LASTEXITCODE -ne 0 -and $strictUS) {
+        Log "[ABORT] $label exit=$LASTEXITCODE - 중단 + 텔레그램 알림"
+        Notify "[rs_us] $label 단계 실패(exit=$LASTEXITCODE) - 잡 중단. 로그: rs_us.log"
+        Log "===== rs_us aborted ====="
+        exit 1
     }
 }
 
@@ -65,3 +96,4 @@ RunPy "5 classify global" @("s2-trading-web\scripts\classify_global_themes.py", 
 RunPy "6 subdivide"   @("s2-trading-web\scripts\subdivide_global_themes.py", "--weeks", "1", "--min", "50")
 
 Log "===== rs_us done ====="
+exit 0
