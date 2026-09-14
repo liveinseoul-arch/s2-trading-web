@@ -117,7 +117,20 @@ $notifyPy = Join-Path $root "s2-trading-web\scripts\notify_rs_telegram.py"
 function Notify($msg) {
     try { & $venvPy $notifyPy $msg *>> $log } catch { Log "[notify] FAILED: $_" }
 }
-function RunPyGate($label, $exe, [string[]]$pyArgs) {
+# ★★★[2026-09-14 신설 · CAND-2026-09-14-4] 단계별 치명도 분리 — RS_STAGE_NONFATAL
+#   ⚠️★실측 사고(2026-09-12 01:06) — 7단계 테마 분류가 Gemini 429(monthly spending cap)로
+#     exit=1 을 내자 ★잡 전체가 [ABORT] 로 중단됐다. ★그런데 앞 단계는 전부 성공했다 —
+#     ETF 행 ★2,632건 적재 완료 · 분포 캐시 56개. ★즉 RS 값·순위는 들어왔고
+#     ★테마 라벨만 빠졌는데 ★잡이 죽었다. ⚠️주간 잡이라 다음 실행이 09-18 = ★6일 공백.
+#   ★★설계 — 단계마다 치명도가 다르다:
+#     ★수집·계산(0·1·2·4·6) = ★치명. 데이터가 안 들어오면 뒤가 전부 틀린다.
+#     ★표시용 부가(7 classify) = ★비치명. 라벨이 없어도 RS 값은 쓸 수 있다.
+#   ⚠️★★2026-08-16 「전체 패키지」(전 단계 관문화 · 침묵 실패 차단)를 ★뒤집는 것이 아니다 —
+#     ★그 규칙의 표적은 ★「데이터가 안 들어왔는데 조용히 끝나는 것」이고,
+#     ★7단계는 ★데이터가 들어온 뒤의 ★라벨링이다. ★알림은 ★그대로 나간다(침묵하지 않는다).
+#   ★★기본 off("0"이 아닐 때만 작동) → ★안 켜면 ★종전과 비트 동일이다.
+#   ★되돌리기 — RS_STAGE_NONFATAL 을 지우거나 0 으로.
+function RunPyGate($label, $exe, [string[]]$pyArgs, [switch]$NonFatal) {
     Log "[$label] start  ($exe $($pyArgs -join ' '))"
     try {
         & $exe @pyArgs *>> $log
@@ -128,6 +141,12 @@ function RunPyGate($label, $exe, [string[]]$pyArgs) {
     }
     Log "[$label] done (exit=$LASTEXITCODE)"
     if ($LASTEXITCODE -ne 0) {
+        if ($NonFatal -and $env:RS_STAGE_NONFATAL -eq "1") {
+            # ★비치명 단계 — 실패를 ★알리되 ★잡은 계속한다(앞 단계 산출을 살린다)
+            Log "[WARN-NONFATAL] $label exit=$LASTEXITCODE — ★비치명 단계라 계속 진행(RS_STAGE_NONFATAL=1)"
+            Notify "[rs_kr_jp] $label 단계 실패(exit=$LASTEXITCODE) — ★비치명이라 잡은 계속했다. 로그: rs_kr_jp.log"
+            return
+        }
         Log "[ABORT] $label exit=$LASTEXITCODE — 중단 + 텔레그램 알림"
         Notify "[rs_kr_jp] $label 단계 실패(exit=$LASTEXITCODE) — 잡 중단. 로그: rs_kr_jp.log"
         exit 1
@@ -216,7 +235,7 @@ RunPyGate "4 export KR"  $rsExportPy @("s2-trading-web\scripts\export_rs_weekly.
 # export 가 (해당 마켓의) universe 전체 삭제 후 재적재 → KR ETF 재적재 필요 (JP 는 ETF 화이트리스트 없음)
 RunPyGate "6 add KR ETFs" $rsExportPy @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")
 $env:GEMINI_MODEL = "gemini-2.5-flash"
-RunPyGate "7 classify KR" "C:\Python314\python.exe" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "KR", "--weeks", "1")
+RunPyGate "7 classify KR" "C:\Python314\python.exe" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "KR", "--weeks", "1") -NonFatal
 # [2026-08-16 랙 수리] 끝
 
 # ── JP 잡 합류 (KR 이 먼저 끝나면 여기서 대기) ─────────────────────────
