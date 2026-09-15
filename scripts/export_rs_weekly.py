@@ -847,14 +847,36 @@ def fetch_market(market, weeks_back):
                     patched += 1
         print(f"  일봉 EMA 폴백: 결측 {len(missing)}개 → {len(fb_lookup)}개 수집 · {patched}행 보강")
 
+    # ★★★[2026-09-16 신설 · 해달별님 요청] RS_UNIV_STICKY — ★조회하면 ★추이가 보이게
+    #   ⚠️★문제 — ★`rs_history_weekly` 는 ★**RS96 을 한 번이라도 넘은 종목**만 담는다.
+    #     ★그래서 ★RS 88 짜리(예: `DBX`)를 조회하면 ★`rs_universe_weekly` 의
+    #     ★**최신 주차 한 줄**만 나오고 ★주차별 추이가 ★통째로 비어 보인다.
+    #     ★★**데이터가 없어서가 아니다** — ★`hist_by_ticker` 에 ★이미 전 종목·전 주차가 있고
+    #     ★`_us_weekly_cache.pkl` 의 `DBX` 는 ★**462주**(2018-03 – 2026-09)가 멀쩡하다.
+    #     ★★**적재 직전에 ★버리고 있었다.**
+    #   ★처치 — ★`universe`(시총 필터 통과)에 ★**한 번이라도** 든 종목도 ★history 에 담는다.
+    #     ★`hist_by_ticker` 의 행은 ★`all_rs` 형식이라 ★필드가 ★이미 맞다(변환 불필요).
+    #   ⚠️★★**RS 선정 로직은 ★한 줄도 안 바뀐다** — ★`top96`·`rs96_tickers` 는 ★그대로다.
+    #     ★바뀌는 것은 ★**조회 화면에 보이는 과거 범위**뿐이다.
+    #   ★되돌리기 — ★`RS_UNIV_STICKY` 를 지우거나 `0`. ★기본 off = ★종전 ★비트동일.
+    _sticky = str(os.environ.get("RS_UNIV_STICKY", "0")).strip().lower() \
+        in ("1", "true", "on", "yes")
+    _keep = set(rs96_tickers)
+    if _sticky:
+        _univ_tks = {r["ticker"] for r in universe_all}
+        _added = _univ_tks - _keep
+        _keep |= _univ_tks
+        print(f"  [STICKY] on — history 대상 {len(rs96_tickers):,} → {len(_keep):,}종목 "
+              f"(+{len(_added):,} · universe 에 한 번이라도 든 종목)")
+
     hist_rows = []
-    for tk in rs96_tickers:
+    for tk in _keep:
         hist_rows.extend(hist_by_ticker.get(tk, []))
     hist_rows.sort(key=lambda r: (r["ticker"], r["week_date"]))
     universe_all.sort(key=lambda r: (r["ticker"], r["week_date"]))
 
     print(f"  [{market}] top96 {len(top96_all):,}건 · "
-          f"history {len(hist_rows):,}건 ({len(rs96_tickers):,}종목) · "
+          f"history {len(hist_rows):,}건 ({len(_keep):,}종목) · "
           f"universe {len(universe_all):,}건")
     return top96_all, hist_rows, sorted(rs96_tickers), universe_all
 
