@@ -29,7 +29,10 @@ RunPy "1 Rebuild"     @("$qb\Rebuild_weekly_cache.py")
 RunPy "2 14_RS_KR"    @($silent, "$qb\14_RS_KR_pykrx.py")
 RunPy "4 export KR"   @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "KR", "--weeks", "56", "--full-universe")
 RunPy "6 add KR ETFs" @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")
-$env:GEMINI_MODEL = "gemini-2.5-pro"
+# ★★[2026-09-18 · 해달별님 지시] ★이 런처는 ★스케줄러 미등록 = ★수동용이다.
+#   ★그래서 ★flash 를 쓴다 — ★pro 는 ★스케줄 3잡(S2_rs_kr_jp · S2_rs_us)에만.
+#   ★급하면 — $env:GEMINI_MODEL="gemini-2.5-pro" 한 줄로 덮는다.
+$env:GEMINI_MODEL = "gemini-2.5-flash"
 RunPy "7 classify KR" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "KR", "--weeks", "1")
 
 Log "===== rs_kr_only done ====="

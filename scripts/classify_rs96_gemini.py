@@ -35,7 +35,12 @@ sys.path.insert(0, str(ROOT))
 os.chdir(ROOT)
 from config import Config                                    # noqa: E402
 
-MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
+# ★★[2026-09-18 · 해달별님 지시] ★★스케줄 작업이 아니면 ★flash 다.
+#   ★기제 — ★스케줄러가 부르는 런처 3개(run_rs_kr_jp x2 · run_rs_us)만
+#     ★$env:GEMINI_MODEL = "gemini-2.5-pro" 를 ★명시한다. ★env 가 ★언제나 이긴다.
+#   ★그 밖 경로(수동 실행 · 수동 런처 · 백필 · 시험)는 ★이 기본값을 받아 ★flash 로 도는다.
+#   ★되돌리기 — GEMINI_MODEL=gemini-2.5-pro 한 줄(또는 --model).
+MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 # ★★[2026-09-18 신설 · 해달별님 지시] ★크레딧(월 지출 캡) 여유가 있으면 pro, 없으면 flash.
 #   ⚠️★종전에는 런처가 ★flash 로 ★고정 override 했다(2026-09-12 · 캡이 ₩4,000 이던 시절).
 #     ★그 뒤 캡을 ★₩24,000 으로 6배 올렸는데 ★모델은 그대로였다 — ★여유가 있는데도 flash 를 썼다.

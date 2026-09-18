@@ -45,7 +45,12 @@ from config import Config                                    # noqa: E402
 #   ★★되돌리기 — ★`GEMINI_MODEL` 를 주면 ★그것이 ★언제나 이긴다(종전 동작).
 MODEL_PRO = "gemini-2.5-pro"
 MODEL_FLASH = "gemini-2.5-flash"
-MODEL_NAME = os.environ.get("GEMINI_MODEL", MODEL_PRO)
+# ★★[2026-09-18 · 해달별님 지시] ★★스케줄 작업이 아니면 ★flash 다.
+#   ★기제 — ★스케줄러가 부르는 런처 3개(run_rs_kr_jp x2 · run_rs_us)만
+#     ★$env:GEMINI_MODEL = "gemini-2.5-pro" 를 ★명시한다. ★env 가 ★언제나 이긴다.
+#   ★그 밖 경로(수동 실행 · 수동 런처 · 백필 · 시험)는 ★이 기본값을 받아 ★flash 로 도는다.
+#   ★되돌리기 — GEMINI_MODEL=gemini-2.5-pro 한 줄(또는 --model).
+MODEL_NAME = os.environ.get("GEMINI_MODEL", MODEL_FLASH)
 # ★★[2026-09-18 신설 · 해달별님 지시] ★크레딧(월 지출 캐프) 여유가 있으면 pro, 없으면 flash.
 #   ★429 RESOURCE_EXHAUSTED 가 나면 ★대기 없이 ★그 자리에서 flash 로 내려간다.
 #   ⚠️★캐프 소진은 ★60초 뒤에 안 풀린다 — ★백오프 150초를 낭비하지 않는다.
@@ -66,7 +71,8 @@ def _resolve_model(args) -> str:
         return args.model
     if os.environ.get("GEMINI_MODEL"):
         return os.environ["GEMINI_MODEL"]
-    return MODEL_FLASH if _is_backfill(args) else MODEL_PRO
+    # ★[2026-09-18] ★스케줄은 런처가 env 로 pro 를 명시하므로 ★여기 도달 = ★비스케줄이다.
+    return MODEL_FLASH
 
 MARKETS_ALL = ("KR", "US", "JP")
 MARKET_LABEL = {"KR": "한국", "US": "미국", "JP": "일본"}
