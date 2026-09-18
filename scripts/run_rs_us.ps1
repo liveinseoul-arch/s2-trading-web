@@ -91,10 +91,15 @@ RunPy "2 export US"   @("s2-trading-web\scripts\export_rs_weekly.py", "--market"
 RunPy "3 add US ETFs" @("s2-trading-web\scripts\add_etfs.py", "--market", "US", "--weeks", "56")
 
 # ★★[2026-09-18 · 해달별님 지시] ★flash 고정 → ★pro 로 되돌렸다.
-#   ★근거 — ★월 지출 캐프가 ₩4,000 → ★₩24,000 으로 6배 올라갔고(2026-09-12 19:15),
-#     ★실측 2026-09-18 — ★₩6,132 / ₩24,000 사용 · ★여유 ₩17,868.
+#   ★근거 — ★월 지출 캡이 ₩4,000 → ★₩24,000 으로 6배 올랐다(2026-09-12 19:15),
+#     ★실측 2026-09-18 — ★₩6,132 사용 · ★pro 프로브 HTTP 200.
+#   ★★[2026-09-18 해달별님 결정 「B」] ★캡을 ★₩20,000 으로 ★낮춰 둔다 —
+#     ★「월 소진이 ₩20,000 을 넘으면 flash」를 ★코드가 아니라 ★캡으로 구현한다.
+#     ★기제 — ₩20,000 도달 → 429 → ★아래 폴백이 flash 로 내린다. ★추정 오차 0.
+#     ⚠️★Gemini API 에는 ★「이번 달 얼마 썼나」를 ★읽는 경로가 없다 — ★그래서 캡이 유일한 정확한 자다.
+#   ⚠️★즉 ★₩20,000 은 ★하드 캡이다 — ★그 위 구간은 ★의도적으로 안 쓴다.
 #   ★★안전망 — `classify_rs96_gemini.py` 가 ★429 RESOURCE_EXHAUSTED 에서
-#     ★대기 없이 ★flash 로 내려간다(`FALLBACK_MODEL`). ★즉 캐프를 때려도 ★죽지 않는다.
+#     ★대기 없이 ★flash 로 내려간다(`FALLBACK_MODEL`). ★즉 캡을 때려도 ★죽지 않는다.
 #   ★되돌리기 — 이 리터럴을 "gemini-2.5-flash" 로. ★또는 $env:GEMINI_MODEL 한 줄.
 $env:GEMINI_MODEL = "gemini-2.5-pro"
 RunPy "4 classify US" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "US", "--weeks", "1")
