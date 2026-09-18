@@ -202,6 +202,22 @@ if (Test-Path $log) {
 
 # JP 스크리닝 (15_RS_JP) 은 KR 과 독립 — 1 단계와 병렬 시작.
 $logJP = Join-Path $PSScriptRoot "rs_kr_jp_jp.log"
+# -- [2026-09-18 오탐 수리 · CAND-2026-09-18-3] 런 시작 시 직전 JP 잡 로그를 비운다 ------
+#   ★기제 - 이 파일의 삭제(Remove-Item $logJP)가 ★마지막 병합 단계에만 있어서,
+#   ★런이 완주 전에 죽으면 잡 로그가 살아남고 ★다음 런이 그 옛 done(exit!=0) 줄을
+#   ★그대로 스캔해 ($jpFail) ★영구히 JP FAIL 로 찍혔다.
+#   ★실측 - 09-12 05:50 런이 Gemini spend cap 으로 죽으며 남긴 [8 classify JP] done (exit=1)
+#          한 줄이 ★6일 뒤 09-18 17:11 런을 rc=1 로 만들었다. ★그날 JP 3단계는 전부 exit=0.
+#   ★잔해는 지우지 않고 메인 로그에 보존한 뒤 비운다(증거 손실 0).
+#   ★되돌리기 = $env:RS_JP_LOG_RESET="0"  (구 동작 = 시작 시 안 지움)
+if ($env:RS_JP_LOG_RESET -ne "0") {
+    if (Test-Path $logJP) {
+        Log "[JP chain] ★직전 런의 JP 로그가 남아 있다(완주 전 종료) - 아래에 보존하고 새로 시작"
+        "--- $logJP (★직전 런 잔해 · RS_JP_LOG_RESET) ---" | Out-File -Append -Encoding utf8 $log
+        Get-Content $logJP -Encoding utf8 | Out-File -Append -Encoding utf8 $log
+        Remove-Item $logJP -Force -ErrorAction SilentlyContinue
+    }
+}
 # ── JP 체인 전체를 하나의 잡으로 (스크리닝 → export → 분류) ────────────
 # JP 는 KR 과 데이터·스크리닝·적재가 완전히 독립이다. Supabase 삭제도 market 단위로
 # 격리되어(`?market=eq.KR` / `?market=eq.JP`) KR export 와 행이 겹치지 않으므로
