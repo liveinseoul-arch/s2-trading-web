@@ -90,7 +90,13 @@ RunPy "1 13_RS_US"    @($silent, "$qb\13_RS_US_screen.py")
 RunPy "2 export US"   @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "US", "--weeks", "56", "--full-universe")
 RunPy "3 add US ETFs" @("s2-trading-web\scripts\add_etfs.py", "--market", "US", "--weeks", "56")
 
-$env:GEMINI_MODEL = "gemini-2.5-flash"
+# ★★[2026-09-18 · 해달별님 지시] ★flash 고정 → ★pro 로 되돌렸다.
+#   ★근거 — ★월 지출 캐프가 ₩4,000 → ★₩24,000 으로 6배 올라갔고(2026-09-12 19:15),
+#     ★실측 2026-09-18 — ★₩6,132 / ₩24,000 사용 · ★여유 ₩17,868.
+#   ★★안전망 — `classify_rs96_gemini.py` 가 ★429 RESOURCE_EXHAUSTED 에서
+#     ★대기 없이 ★flash 로 내려간다(`FALLBACK_MODEL`). ★즉 캐프를 때려도 ★죽지 않는다.
+#   ★되돌리기 — 이 리터럴을 "gemini-2.5-flash" 로. ★또는 $env:GEMINI_MODEL 한 줄.
+$env:GEMINI_MODEL = "gemini-2.5-pro"
 RunPy "4 classify US" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "US", "--weeks", "1")
 RunPy "5 classify global" @("s2-trading-web\scripts\classify_global_themes.py", "--weeks", "1")
 RunPy "6 subdivide"   @("s2-trading-web\scripts\subdivide_global_themes.py", "--weeks", "1", "--min", "50")

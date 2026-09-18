@@ -36,6 +36,17 @@ os.chdir(ROOT)
 from config import Config                                    # noqa: E402
 
 MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
+# ★★[2026-09-18 신설 · 해달별님 지시] ★크레딧(월 지출 캡) 여유가 있으면 pro, 없으면 flash.
+#   ⚠️★종전에는 런처가 ★flash 로 ★고정 override 했다(2026-09-12 · 캡이 ₩4,000 이던 시절).
+#     ★그 뒤 캡을 ★₩24,000 으로 6배 올렸는데 ★모델은 그대로였다 — ★여유가 있는데도 flash 를 썼다.
+#     (★실측 2026-09-18 — ₩6,132 / ₩24,000 사용 · ★여유 ₩17,868)
+#   ★★이제는 ★pro 로 시작하고 ★429 RESOURCE_EXHAUSTED 가 나면 ★그 자리에서 flash 로 내려간다.
+#   ⚠️★캡 소진은 ★60초 뒤에 안 풀린다 — ★그래서 ★대기 없이 ★즉시 바꾼다(백오프 150초 낭비 0).
+#   ★한 번 내려가면 ★그 런 내내 flash 를 쓴다 — ★캡은 다음 호출에서도 그대로다.
+#   ★되돌리기 — GEMINI_FALLBACK_MODEL="" 이면 ★폴백 없음(종전 동작 = 그 모델로만).
+FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
+# ★실제로 응답을 준 모델 — ★기록·표시는 ★이것을 쓴다(웹앱이 거짓말을 하면 안 된다).
+MODEL_USED = MODEL_NAME
 MARKETS_ALL = ("KR", "US", "JP")
 MARKET_LABEL = {"KR": "한국", "US": "미국", "JP": "일본"}
 
@@ -159,16 +170,29 @@ def call_gemini(market, week, rows, max_retries=5):
         temperature=0.3,
     )
 
+    global MODEL_USED
+    model = MODEL_USED          # ★한 번 내려가면 ★그 뒤도 그대로
     last_err = None
     for attempt in range(1, max_retries + 1):
         try:
             resp = client.models.generate_content(
-                model=MODEL_NAME, contents=prompt, config=cfg)
+                model=model, contents=prompt, config=cfg)
+            MODEL_USED = model
             text = resp.text or "{}"
             return json.loads(text)
         except Exception as e:
             last_err = e
             msg = str(e)
+            # ★★[2026-09-18] ★캡 소진(429)이면 ★대기 없이 ★flash 로 내려간다.
+            #   ⚠️★429 는 ★분당 한도일 수도 있다 — ★그럴 때도 바꾸는 것이 손해가 없다
+            #     (★한도는 모델별이라 다른 모델은 살아 있고, ★flash 도 막히면 ★아래 백오프로 간다).
+            if (("RESOURCE_EXHAUSTED" in msg or "429" in msg)
+                    and FALLBACK_MODEL and model != FALLBACK_MODEL):
+                print(f"  ⚠★크레딧 소진(429) — {model} → {FALLBACK_MODEL} 로 내려간다"
+                      f"  (대기 없음 · 폴백 끄기 GEMINI_FALLBACK_MODEL='')", flush=True)
+                model = FALLBACK_MODEL
+                MODEL_USED = FALLBACK_MODEL
+                continue
             # 일시적 서버 오류만 재시도 (503·429·500·504·empty body 등)
             transient = any(k in msg for k in (
                 "503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED",
@@ -211,7 +235,7 @@ def classify_one(req, market, week):
         "week_date": week,
         "summary": data.get("summary", ""),
         "categories": cats,
-        "model": MODEL_NAME,
+        "model": MODEL_USED,        # ★실제로 쓴 모델(폴백되었으면 flash)
         "generated_at": datetime.now().isoformat(),
     }
     req("POST", "/rs_theme_weekly", [row])
@@ -238,7 +262,8 @@ def main():
         for w in weeks:
             if classify_one(req, mk, w):
                 total += 1
-    print(f"\n총 {total}회 분류 완료 (model={MODEL_NAME})")
+    _tag = MODEL_USED if MODEL_USED == MODEL_NAME else (MODEL_USED + " ← 폴백(" + MODEL_NAME + " 캡 소진)")
+    print(chr(10) + f"총 {total}회 분류 완료 (model={_tag})")
 
 
 if __name__ == "__main__":

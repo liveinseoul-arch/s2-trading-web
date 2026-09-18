@@ -40,6 +40,13 @@ os.chdir(ROOT)
 from config import Config                                    # noqa: E402
 
 MODEL_NAME = os.environ.get("GEMINI_MODEL", "gemini-2.5-pro")
+# ★★[2026-09-18 신설 · 해달별님 지시] ★크레딧(월 지출 캐프) 여유가 있으면 pro, 없으면 flash.
+#   ★429 RESOURCE_EXHAUSTED 가 나면 ★대기 없이 ★그 자리에서 flash 로 내려간다.
+#   ⚠️★캐프 소진은 ★60초 뒤에 안 풀린다 — ★백오프 150초를 낭비하지 않는다.
+#   ★기록·표시는 ★MODEL_USED(실제로 쓴 모델) — ★웹앱이 거짓말을 하면 안 된다.
+#   ★되돌리기 — GEMINI_FALLBACK_MODEL="" 이면 ★폴백 없음(종전 동작).
+FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
+MODEL_USED = MODEL_NAME
 MARKETS_ALL = ("KR", "US", "JP")
 MARKET_LABEL = {"KR": "한국", "US": "미국", "JP": "일본"}
 DEFAULT_MIN = 50
@@ -319,14 +326,25 @@ def call_gemini_subdivide(theme_label, stocks, max_retries=5):
         temperature=0.3,
     )
 
+    global MODEL_USED
+    model = MODEL_USED          # ★한 번 내려가면 ★그 뒤도 그대로
     last_err = None
     for attempt in range(1, max_retries + 1):
         try:
-            resp = client.models.generate_content(model=MODEL_NAME, contents=prompt, config=cfg)
+            resp = client.models.generate_content(model=model, contents=prompt, config=cfg)
+            MODEL_USED = model
             return json.loads(resp.text or "{}")
         except Exception as e:
             last_err = e
             msg = str(e)
+            # ★★[2026-09-18] ★캐프 소진(429)이면 ★대기 없이 ★flash 로 내려간다.
+            if (("RESOURCE_EXHAUSTED" in msg or "429" in msg)
+                    and FALLBACK_MODEL and model != FALLBACK_MODEL):
+                print(f"  ⚠★크레딧 소진(429) — {model} → {FALLBACK_MODEL} 로 내려간다"
+                      f"  (대기 없음 · 폴백 끄기 GEMINI_FALLBACK_MODEL='')", flush=True)
+                model = FALLBACK_MODEL
+                MODEL_USED = FALLBACK_MODEL
+                continue
             transient = any(k in msg for k in (
                 "503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED",
                 "500", "INTERNAL", "504", "DEADLINE_EXCEEDED"))
@@ -373,7 +391,7 @@ def subdivide_one(req, week, min_for_subdivide):
             "theme_label": g["label"],
             "total_stocks": g["total"],
             "subcategories": subs,
-            "model": MODEL_NAME,
+            "model": MODEL_USED,
             "generated_at": datetime.now().isoformat(),
         }])
         n_ok += 1

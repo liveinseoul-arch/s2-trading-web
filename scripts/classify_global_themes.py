@@ -46,6 +46,13 @@ from config import Config                                    # noqa: E402
 MODEL_PRO = "gemini-2.5-pro"
 MODEL_FLASH = "gemini-2.5-flash"
 MODEL_NAME = os.environ.get("GEMINI_MODEL", MODEL_PRO)
+# ★★[2026-09-18 신설 · 해달별님 지시] ★크레딧(월 지출 캐프) 여유가 있으면 pro, 없으면 flash.
+#   ★429 RESOURCE_EXHAUSTED 가 나면 ★대기 없이 ★그 자리에서 flash 로 내려간다.
+#   ⚠️★캐프 소진은 ★60초 뒤에 안 풀린다 — ★백오프 150초를 낭비하지 않는다.
+#   ★기록·표시는 ★MODEL_USED(실제로 쓴 모델) — ★웹앱이 거짓말을 하면 안 된다.
+#   ★되돌리기 — GEMINI_FALLBACK_MODEL="" 이면 ★폴백 없음(종전 동작).
+FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-2.5-flash")
+MODEL_USED = MODEL_NAME
 
 
 def _is_backfill(args) -> bool:
@@ -398,16 +405,27 @@ def call_gemini(week, market_rows, max_retries=5, existing_cats=None,
         max_output_tokens=int(os.environ.get("RS_THEME_MAX_TOKENS", "32768")),
     )
 
+    global MODEL_USED
+    model = MODEL_USED          # ★한 번 내려가면 ★그 뒤도 그대로
     last_err = None
     for attempt in range(1, max_retries + 1):
         try:
             resp = client.models.generate_content(
-                model=MODEL_NAME, contents=prompt, config=cfg)
+                model=model, contents=prompt, config=cfg)
+            MODEL_USED = model
             text = resp.text or "{}"
             return json.loads(text)
         except Exception as e:
             last_err = e
             msg = str(e)
+            # ★★[2026-09-18] ★캐프 소진(429)이면 ★대기 없이 ★flash 로 내려간다.
+            if (("RESOURCE_EXHAUSTED" in msg or "429" in msg)
+                    and FALLBACK_MODEL and model != FALLBACK_MODEL):
+                print(f"  ⚠★크레딧 소진(429) — {model} → {FALLBACK_MODEL} 로 내려간다"
+                      f"  (대기 없음 · 폴백 끄기 GEMINI_FALLBACK_MODEL='')", flush=True)
+                model = FALLBACK_MODEL
+                MODEL_USED = FALLBACK_MODEL
+                continue
             transient = any(k in msg for k in (
                 "503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED",
                 "500", "INTERNAL", "504", "DEADLINE_EXCEEDED"))
@@ -543,7 +561,7 @@ def classify_one(req, week):
         "week_date": week,
         "summary": data.get("summary", ""),
         "categories": cats,
-        "model": MODEL_NAME,
+        "model": MODEL_USED,
         "generated_at": datetime.now().isoformat(),
     }])
     return True
@@ -624,8 +642,11 @@ def main():
                     help="★모델 강제 지정. 없으면 ★백필=flash · ★주별 스케줄=pro")
     args = ap.parse_args()
 
-    global MODEL_NAME
+    global MODEL_NAME, MODEL_USED
     MODEL_NAME = _resolve_model(args)
+    # ★★[2026-09-18] ★main 이 MODEL_NAME 을 ★런타임에 재대입하므로
+    #   ★MODEL_USED 도 ★같이 맞춘다 — ★안 하면 모듈 로드 시점 값이 남아 ★폴백 판정이 틀린다.
+    MODEL_USED = MODEL_NAME
 
     Config()
     req = _sb_client()

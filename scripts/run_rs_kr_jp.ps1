@@ -237,7 +237,13 @@ $jobJP = Start-Job -Name "JP chain" -ScriptBlock {
     J "3 15_RS_JP"   @($silent2, "$qb2\15_RS_JP_screen.py")
     J "5 export JP"  @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "JP", "--weeks", "56", "--full-universe")
     J "8 classify JP" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "JP", "--weeks", "1")
-} -ArgumentList $root, $silent, $qb, $logJP, "gemini-2.5-flash"
+# ★★[2026-09-18 · 해달별님 지시] ★flash 고정 → ★pro 로 되돌렸다.
+#   ★근거 — ★월 지출 캐프가 ₩4,000 → ★₩24,000 으로 6배 올라갔고(2026-09-12 19:15),
+#     ★실측 2026-09-18 — ★₩6,132 / ₩24,000 사용 · ★여유 ₩17,868.
+#   ★★안전망 — `classify_rs96_gemini.py` 가 ★429 RESOURCE_EXHAUSTED 에서
+#     ★대기 없이 ★flash 로 내려간다(`FALLBACK_MODEL`). ★즉 캐프를 때려도 ★죽지 않는다.
+#   ★되돌리기 — 이 리터럴을 "gemini-2.5-flash" 로. ★또는 $env:GEMINI_MODEL 한 줄.
+} -ArgumentList $root, $silent, $qb, $logJP, "gemini-2.5-pro"
 Log "[JP chain] start (job) → $logJP  (KR 과 병렬)"
 
 # ── KR 체인 (메인 스레드) — append → rebuild → RS → export → ETF → 분류 ──────────
@@ -264,7 +270,7 @@ RunPyGate "2 14_RS_KR"   "C:\Python314\python.exe" @($silent, "$qb\14_RS_KR_pykr
 RunPyGate "4 export KR"  $rsExportPy @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "KR", "--weeks", "56", "--full-universe")
 # export 가 (해당 마켓의) universe 전체 삭제 후 재적재 → KR ETF 재적재 필요 (JP 는 ETF 화이트리스트 없음)
 RunPyGate "6 add KR ETFs" $rsExportPy @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")
-$env:GEMINI_MODEL = "gemini-2.5-flash"
+$env:GEMINI_MODEL = "gemini-2.5-pro"
 RunPyGate "7 classify KR" "C:\Python314\python.exe" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "KR", "--weeks", "1") -NonFatal
 # [2026-08-16 랙 수리] 끝
 
