@@ -144,6 +144,29 @@ function Notify($msg) {
 #     ★7단계는 ★데이터가 들어온 뒤의 ★라벨링이다. ★알림은 ★그대로 나간다(침묵하지 않는다).
 #   ★★기본 off("0"이 아닐 때만 작동) → ★안 켜면 ★종전과 비트 동일이다.
 #   ★되돌리기 — RS_STAGE_NONFATAL 을 지우거나 0 으로.
+# -- [2026-09-26 신설 · CAND-2026-09-26-1] ★KR 이 중단돼도 ★JP 는 끝까지 살린다 ------
+#   ⚠️★★실측 사고(2026-09-25 17:11) — ★KR 1단계가 28초 만에 ABORT 하면서
+#     ★`exit 1` 로 부모가 죽었고, ★병렬로 띄운 JP 잡이 ★함께 죽었다(done 줄 0개).
+#     ★JP 는 그 주 목·금이 거래일이라 ★데이터가 멀쩡했는데 ★한 주를 통째로 잃었다.
+#   ★★이것은 이 파일의 설계 의도와 정면으로 어긋난다 — ★:219 주석이
+#     「JP 가 KR 완료를 기다려 ★KR 이 실패하면 JP 까지 막혔다 → 2026-07-17 수정」이라 적혀 있다.
+#     ★병렬로 만든 이유가 ★바로 이 사고를 막으려던 것인데 ★ABORT 경로가 그것을 무효화했다.
+#   ★되돌리기 — $env:RS_JP_SURVIVE_KR_ABORT='0' (구 동작 = KR 중단 시 JP 도 함께 죽는다)
+function FinishJP {
+    if ($env:RS_JP_SURVIVE_KR_ABORT -eq "0") { return }
+    if (-not $script:jobJP) { return }
+    Log "[JP chain] ★KR 중단 — ★JP 잡은 기다렸다 마무리한다(JP 는 KR 과 독립이다)"
+    Wait-Job -Job $script:jobJP -Timeout 3600 | Out-Null
+    Log "[JP chain] done (job state=$($script:jobJP.State))"
+    Remove-Job -Job $script:jobJP -Force -ErrorAction SilentlyContinue
+    if ($script:logJP -and (Test-Path $script:logJP)) {
+        "--- $script:logJP (★KR 중단 후 JP 마무리) ---" | Out-File -Append -Encoding utf8 $log
+        Get-Content $script:logJP -Encoding utf8 | Out-File -Append -Encoding utf8 $log
+        Remove-Item $script:logJP -Force -ErrorAction SilentlyContinue
+    }
+    $script:jobJP = $null
+}
+
 function RunPyGate($label, $exe, [string[]]$pyArgs, [switch]$NonFatal) {
     Log "[$label] start  ($exe $($pyArgs -join ' '))"
     try {
@@ -151,6 +174,7 @@ function RunPyGate($label, $exe, [string[]]$pyArgs, [switch]$NonFatal) {
     } catch {
         Log "[$label] FAILED: $_"
         Notify "[rs_kr_jp] $label 단계 예외 — 잡 중단. 로그: rs_kr_jp.log"
+        FinishJP        # ★[2026-09-26] KR 중단이어도 JP 는 살린다
         exit 1
     }
     Log "[$label] done (exit=$LASTEXITCODE)"
@@ -163,6 +187,7 @@ function RunPyGate($label, $exe, [string[]]$pyArgs, [switch]$NonFatal) {
         }
         Log "[ABORT] $label exit=$LASTEXITCODE — 중단 + 텔레그램 알림"
         Notify "[rs_kr_jp] $label 단계 실패(exit=$LASTEXITCODE) — 잡 중단. 로그: rs_kr_jp.log"
+        FinishJP        # ★[2026-09-26] KR 중단이어도 JP 는 살린다
         exit 1
     }
 }
@@ -289,6 +314,7 @@ Log "[wait] JP 체인 대기..."
 Wait-Job -Job $jobJP | Out-Null
 Log "[JP chain] done (job state=$($jobJP.State))"
 Remove-Job -Job $jobJP
+$script:jobJP = $null   # ★[2026-09-26] 이미 병합했다 — 아래 FinishJP 가 ★무해하게 지나가도록
 # [2026-08-16 랙 수리] JP 체인 침묵 실패 스캔 — 병렬 잡이라 메인 관문(RunPyGate)이 못 본다.
 #   JP 로그에서 done(exit≠0) 또는 FAILED 를 찾으면 텔레그램 알림 + exit 1.
 #   되돌리기: $jpFail 관련 4줄과 마지막 if 블록을 삭제(구 동작 = 로그 병합만).
@@ -305,6 +331,7 @@ if ($jpFail) {
     Log "[JP chain] 단계 실패 감지 — 텔레그램 알림 + exit 1 (KR 체인은 이미 완주)"
     Notify "[rs_kr_jp] JP 체인 단계 실패 감지 — 로그: rs_kr_jp.log"
     Log "===== rs_kr_jp done (JP FAIL) ====="
+    FinishJP        # ★[2026-09-26] KR 중단이어도 JP 는 살린다
     exit 1
 }
 # [2026-08-16 랙 수리] 끝
