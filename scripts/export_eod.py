@@ -2412,6 +2412,117 @@ def _supabase_retry_cfg():
 EOD_STATE_MARK = os.environ.get("S2_EOD_STATE_MARK", "1").strip() != "0"
 
 
+# ★★CAND-2026-09-08-4 ★2단계 C(해달별님 착수 결정 2026-09-27) — ★단일 트랜잭션 RPC 적재.
+#   ★설계 → quant_infra/2026-09/AUTOTRADE_EOD_ATOMIC_DESIGN_2026-09-11.md §2-2 C
+#   ★마이그레이션 → s2-trading-web/supabase/migrations/2026-09-27_eod_replace.sql
+#
+#   ★★왜 — ★전삭제-재적재 사고가 ★3번 났다(★둘은 다른 부류다):
+#     2026-08-21 ★CHECK 위반(4xx)      — ⚠️★재시도 래퍼가 ★원리적으로 못 막는다
+#     2026-09-02 ★SystemExit
+#     2026-09-25 ★네트워크 단절(35초 초과) — ★nav_daily 500행(1청크)만 남았다
+#   ★★트랜잭션은 ★둘 다 덮는다 — ★실패하면 ROLLBACK 이라 ★종전 데이터가 ★그대로 남는다.
+#
+#   ★★부수 이득 — ★`upsert_supabase_retrying` 의 재시도가 ★이제 ★진짜 멱등이다.
+#     ★종전 주석이 「전삭제부터 다시 하면 멱등」이라 했는데 ★그건 ★재시도가 ★끝까지
+#     갔을 때만 참이다. ★RPC 는 ★한 요청이라 ★부분 상태가 ★원리적으로 없다.
+#
+#   ⚠️★★성격이 바뀌는 것 1 — ★`cash_park` degrade 가 ★사라진다.
+#     ★종전에는 `daily_order_plan` 의 CHECK 위반 시 ★파킹 행만 빼고 ★나머지를 살렸다.
+#     ★RPC 는 ★전부 아니면 전무다. ★★대신 ★실패해도 ★종전 데이터가 ★남는다(공백 없음).
+#     ★전제 — `migrations/2026-08-12_cash_park.sql` 이 ★적용돼 있어야 한다(★2026-09-27 적재 성공 확인).
+#   ⚠️★★성격이 바뀌는 것 2 — ★`_column_exists('trade_legs','hhmm')` degrade 도 ★사라진다.
+#     ★RPC 함수가 ★`trade_legs.hhmm` 을 ★직접 참조하므로 ★그 컬럼이 ★있어야 한다(schema.sql:145 에 있다).
+#
+#   ★되돌리기 — `S2_EOD_RPC=0`(★기본값) ★한 줄이면 ★종전 경로 그대로다.
+EOD_RPC = os.environ.get("S2_EOD_RPC", "0").strip() == "1"
+EOD_RPC_GZIP = os.environ.get("S2_EOD_RPC_GZIP", "0").strip() == "1"
+
+
+def upsert_supabase_rpc(data):
+    """★9표를 ★요청 1회 · ★단일 트랜잭션으로 적재한다(`public.eod_replace`).
+
+    ★★검산은 ★rc 가 아니라 ★함수가 돌려준 ★행수로 한다 —
+      ★2026-09-25 의 교훈이 ★정확히 그것이다(「rc 가 내용을 보증하지 않는다」).
+    ★예외 규약은 ★종전과 같다 — ★5xx·429·네트워크는 `SupabaseTransient`(통째 재시도),
+      ★4xx 는 `SystemExit`. ★그래야 `upsert_supabase_retrying` 이 ★그대로 감싼다.
+    """
+    import gzip as _gzip
+    import urllib.request, urllib.error
+
+    base = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1"
+    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+
+    def _iso(rows):
+        return [{k: (str(v) if isinstance(v, date) else v) for k, v in r.items()}
+                for r in (rows or [])]
+
+    # ⚠️★`_tid` 를 ★지우지 않는다 — ★SQL 이 그것으로 `trade_legs.trade_id` 를 매핑한다.
+    body = {
+        "trades":             _iso(data["trades"]),
+        "legs":               _iso(data["legs"]),
+        "executions":         _iso(data["executions"]),
+        "daily_order_plan":   _iso(data["daily_order_plan"]),
+        "daily_candidates":   _iso(data["daily_candidates"]),
+        "position_snapshots": _iso(data["position_snapshots"]),
+        "nav_daily":          _iso(data["nav_daily"]),
+        "monthly_stats":      _iso(data["monthly_stats"]),
+        "daily_counts":       _iso(data["daily_counts"]),
+        "last_date":          str(data["last_date"]),
+    }
+    sent = {k: len(v) for k, v in body.items() if isinstance(v, list)}
+    raw = json.dumps({"payload": body}).encode("utf-8")
+
+    h = {"apikey": key, "Authorization": f"Bearer {key}",
+         "Content-Type": "application/json", "Prefer": "return=representation"}
+    payload = raw
+    if EOD_RPC_GZIP:
+        payload = _gzip.compress(raw)
+        h["Content-Encoding"] = "gzip"
+    print("[supabase-rpc] 페이로드 %.2f MB%s · %d행 (요청 ★1회 · 단일 트랜잭션)"
+          % (len(payload) / 1048576,
+             " (gzip · 원본 %.2f MB)" % (len(raw) / 1048576) if EOD_RPC_GZIP else "",
+             sum(sent.values())), flush=True)
+
+    r = urllib.request.Request(base + "/rpc/eod_replace", data=payload,
+                               method="POST", headers=h)
+    try:
+        # ⚠️★타임아웃을 ★넉넉히 — ★단일 요청이라 ★이 한 번이 ★전부다(종전 60초는 청크 단위였다).
+        with urllib.request.urlopen(r, timeout=300) as resp:
+            txt = resp.read().decode("utf-8")
+        got = json.loads(txt) if txt.strip() else {}
+    except urllib.error.HTTPError as e:
+        _b = e.read().decode("utf-8")[:500]
+        if e.code >= 500 or e.code == 429:
+            raise SupabaseTransient(f"POST /rpc/eod_replace HTTP {e.code}: {_b}")
+        # ⚠️★4xx 여도 ★표는 ★안전하다 — ★트랜잭션이 ROLLBACK 됐다.
+        raise SystemExit(
+            f"[supabase] POST /rpc/eod_replace 실패 {e.code}: {_b}\n"
+            f"   ★표는 ★종전 상태 그대로다(트랜잭션 ROLLBACK) — ★공백이 아니다.\n"
+            f"   ★함수가 없으면: supabase/migrations/2026-09-27_eod_replace.sql 을 적용할 것.\n"
+            f"   ★되돌리기: S2_EOD_RPC=0")
+    except (urllib.error.URLError, OSError) as e:
+        raise SupabaseTransient(f"POST /rpc/eod_replace 네트워크: {e!r}")
+
+    if isinstance(got, list):          # PostgREST 가 배열로 싸는 경우
+        got = got[0] if got else {}
+    # ★★검산 — ★보낸 행수와 ★DB 가 센 행수가 ★같은가.
+    #   ⚠️★키 이름이 ★한 곳만 다르다 — ★파이썬 `legs` 대 ★DB 표 `trade_legs`.
+    _KEY = {"legs": "trade_legs"}
+    bad = [(k, sent[k], got.get(_KEY.get(k, k)))
+           for k in sent if got.get(_KEY.get(k, k)) != sent[k]]
+    if bad:
+        raise SystemExit(
+            "[supabase] ★RPC 적재 행수 불일치 — %s\n"
+            "   ★보낸 수 대 ★DB 실측이 다르다. ★함수 정의를 확인할 것."
+            % " · ".join("%s 보냄%d/DB%s" % b for b in bad))
+    print("[supabase-rpc] ★적재 완료 · ★행수 검산 통과 (기준일 %s): %s"
+          % (got.get("last_date"),
+             " · ".join("%s %d" % (k, sent[k]) for k in
+                        ("trades", "legs", "executions", "nav_daily",
+                         "position_snapshots", "monthly_stats",
+                         "daily_order_plan", "daily_candidates", "daily_counts"))))
+
+
 def upsert_supabase_retrying(data):
     """★`upsert_supabase` 를 ★통째로 재시도한다 — ★req 단위가 ★아니다.
 
@@ -2428,7 +2539,8 @@ def upsert_supabase_retrying(data):
     for attempt in range(tries + 1):
         data["daily_order_plan"] = list(plan0)      # ★변형 복원(위 함정)
         try:
-            upsert_supabase(data)
+            # ★CAND-2026-09-08-4 2단계 C — ★기본 off(종전 경로). S2_EOD_RPC=1 이면 단일 트랜잭션.
+            (upsert_supabase_rpc if EOD_RPC else upsert_supabase)(data)
             if attempt:
                 print(f"[supabase] ★재시도 {attempt}회 만에 적재 성공")
             return
