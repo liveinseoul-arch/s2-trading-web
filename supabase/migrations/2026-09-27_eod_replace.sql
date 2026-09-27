@@ -60,15 +60,21 @@ begin
   --   ⚠️★이 DELETE 들은 ★같은 트랜잭션 안이다. ★독자는 ★중간 상태를 ★볼 수 없다.
   --   ★TRUNCATE 가 아니라 DELETE 인 이유 — TRUNCATE 는 ★ACCESS EXCLUSIVE 락이라
   --   ★읽기까지 막는다. ★DELETE 는 ★읽기를 막지 않고 ★MVCC 로 종전 스냅샷을 보여준다.
-  delete from trade_legs;
-  delete from trades;
-  delete from executions;
-  delete from daily_order_plan;
-  delete from daily_candidates;
-  delete from position_snapshots;
-  delete from nav_daily;
-  delete from monthly_stats;
-  delete from daily_counts;
+  --   ⚠️★★[2026-09-27 실패 뒤 수정] ★`where true` 가 ★필수다 — ★장식이 아니다.
+  --   ★Supabase 는 ★`pg_safeupdate` 가 켜져 있어 ★**WHERE 없는 DELETE 를 거부**한다:
+  --     `{"code":"21000","message":"DELETE requires a WHERE clause"}`
+  --   ★맨 `delete from t;` 9줄이 ★전부 여기 걸렸다(★첫 실적재 시도 2026-09-27 21:30).
+  --   ⚠️★★**지우지 말 것** — ★지우면 ★같은 400 이 ★그대로 재발한다.
+  --   ★`where true` 는 ★행을 ★하나도 안 거른다 — ★의미는 맨 DELETE 와 ★동일하다.
+  delete from trade_legs where true;
+  delete from trades where true;
+  delete from executions where true;
+  delete from daily_order_plan where true;
+  delete from daily_candidates where true;
+  delete from position_snapshots where true;
+  delete from nav_daily where true;
+  delete from monthly_stats where true;
+  delete from daily_counts where true;
 
   -- ── ② trades + trade_legs — ★_tid 매핑을 ★SQL 안에서 한다 ──────────
   --   ★종전에는 파이썬이 `return=representation` 으로 id 를 회수해 매핑했다.
