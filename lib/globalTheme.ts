@@ -3,6 +3,7 @@
 // 각 시장의 최신 주차 테마를 fetch → big 이름 정규화 → 같은 테마로 묶는다.
 
 import { supabase } from "@/lib/supabase";
+import { fetchPromotion50, promoKey, type PromotionMap } from "@/lib/promotion50";
 import type { RsMarket, RsThemeWeekly, RsTopWeekly } from "@/lib/types";
 
 const MARKETS: RsMarket[] = ["KR", "US", "JP"];
@@ -32,6 +33,12 @@ export interface GlobalThemeStock {
   small?: string | null;
   /** 종가의 일봉 EMA 이탈 비트마스크: bit0=EMA21 하향, bit1=EMA50 하향 (0~3, null=데이터없음) */
   emaBreak?: 0 | 1 | 2 | 3 | null;
+  /**
+   * ★peak gain +50% 승격 여부 — true 면 21EMA 이탈이 ★매도 신호가 아니다.
+   * 진입가는 「RS96 연속 등재 구간의 첫 주차 종가」로 ★근사한다(lib/promotion50).
+   * null = 판정 불가(데이터 없음) → 화면은 종전대로 그린다.
+   */
+  promoted50?: boolean | null;
 }
 
 export interface GlobalSubcategory {
@@ -147,6 +154,8 @@ async function loadUnifiedGroups(
     return { market: m, rows: (r.data as RsTopWeekly[]) ?? [] };
   });
   const marketRows = await Promise.all(marketRowsPromises);
+  // ★+50% 승격 여부 — 21EMA 이탈이 매도 신호인지 가른다(3시장이 같은 주차다)
+  const promo: PromotionMap = await fetchPromotion50(week);
   const tkLookup = new Map<string, { row: RsTopWeekly; market: RsMarket }>();
   for (const { market, rows } of marketRows) {
     for (const r of rows) tkLookup.set(r.ticker, { row: r, market });
@@ -191,6 +200,7 @@ async function loadUnifiedGroups(
         rank_in_week: hit.row.rank_in_week,
         small: cat.small ?? undefined,
         emaBreak: emaBreak(hit.row.close, hit.row.ema_21, hit.row.ema_50),
+        promoted50: promo.get(promoKey(hit.market, tk)) ?? null,
       });
     }
   }
@@ -383,6 +393,17 @@ export async function loadGlobalThemes(
   const marketRows = await Promise.all(rowPromises);
   const rowMap = new Map(marketRows.map((mr) => [mr.market, mr.rows]));
 
+  // ★+50% 승격 여부 — ⚠️이 경로는 ★시장마다 주차가 다를 수 있어 시장별로 따로 받는다
+  const promoPerMarket = await Promise.all(
+    themes.map(({ market, theme }) =>
+      theme
+        ? fetchPromotion50(theme.week_date, [market])
+        : Promise.resolve(new Map() as PromotionMap),
+    ),
+  );
+  const promo: PromotionMap = new Map();
+  for (const m of promoPerMarket) for (const [k, v] of m) promo.set(k, v);
+
   const weeks: Record<RsMarket, string | null> = { KR: null, US: null, JP: null };
   const totals: Record<RsMarket, number> = { KR: 0, US: 0, JP: 0 };
   const unmatched: Record<RsMarket, number> = { KR: 0, US: 0, JP: 0 };
@@ -436,6 +457,7 @@ export async function loadGlobalThemes(
           rank_in_week: r.rank_in_week,
           small: cat.small ?? undefined,
           emaBreak: emaBreak(r.close, r.ema_21, r.ema_50),
+          promoted50: promo.get(promoKey(market, tk)) ?? null,
         });
         g.total += 1;
       }

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Section, Empty } from "@/components/ui";
 import { loadGlobalThemes, fetchGlobalWeeks } from "@/lib/globalTheme";
-import { EMA_BADGE, EmaBreakBadge, emaDimClass, emaDimTitle } from "@/components/EmaBreak";
+import { EMA_BADGE, EMA_BADGE_INV, EmaBreakBadge, emaDimClass, emaDimTitle } from "@/components/EmaBreak";
 import type { GlobalThemeStock, GlobalSubcategory } from "@/lib/globalTheme";
 import type { RsMarket } from "@/lib/types";
 
@@ -175,7 +175,7 @@ function StockRow({ s }: { s: GlobalThemeStock }) {
       </td>
       <td className="font-semibold text-accent">{s.rs}</td>
       <td className="pl-3 text-left tnum">
-        <EmaBreakBadge bits={s.emaBreak} />
+        <EmaBreakBadge bits={s.emaBreak} promoted={s.promoted50} />
       </td>
       <td className={signClass(s.comp_return == null ? null : s.comp_return * 100)}>
         {fmtCompReturn(s.comp_return)}
@@ -197,7 +197,12 @@ function StockTable({ stocks, limit = DEFAULT_LIMIT }: { stocks: GlobalThemeStoc
             <th className="py-1 text-left">국</th>
             <th className="text-left">종목</th>
             <th>RS</th>
-            <th className="pl-3 text-left" title="종가의 EMA21·EMA50 이탈 (왼=21 하향, 오른=50 하향)">MA↓</th>
+            <th
+              className="pl-3 text-left"
+              title="종가의 EMA21·EMA50 이탈 (왼=21 하향, 오른=50 하향). 왼쪽이 테두리만 있으면 +50% 승격 종목이라 21EMA 이탈로는 팔지 않는다"
+            >
+              MA↓
+            </th>
             <th>모멘텀</th>
           </tr>
         </thead>
@@ -326,10 +331,13 @@ export default async function GlobalThemes({
 
       <p className="mb-4 -mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[11px] text-muted">
         <b className="text-textc">MA↓</b> 칸:
-        <span className={`${EMA_BADGE} bg-red-400`}>-</span> 종가가 21EMA 아래 ·
-        <span className={`${EMA_BADGE} bg-red-700`}>-</span> 50EMA 아래 (둘 다면 나란히, RS96+ 여도 추세 약화 신호).
+        <span className={`${EMA_BADGE} bg-red-400`}>-</span> 종가가 21EMA 아래 — <b className="text-textc">매도 대상</b> ·
+        <span className={EMA_BADGE_INV}>-</span> 21EMA 아래지만 <b className="text-textc">+50% 승격</b> 종목이라 매도 대상이 아님(50EMA 가 기준) ·
+        <span className={`${EMA_BADGE} bg-red-700`}>-</span> 50EMA 아래 (둘 다면 나란히).
         {" "}이탈 종목은 <span className="opacity-60">종목명을 흐리게</span>, 둘 다 이탈이면{" "}
         <span className="opacity-40">더 흐리게</span> 표시합니다 — 매수 관점에서 주목을 끌지 않게.
+        {" "}승격 판정의 진입가는 <b className="text-textc">RS96 연속 등재 구간의 첫 주차 종가</b>로 근사한 값이라
+        실제 보유 단가와 다를 수 있습니다.
       </p>
 
       {availWeeks.length > 0 && (
