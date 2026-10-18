@@ -2,7 +2,8 @@ import Link from "next/link";
 import { supabase, getMeta } from "@/lib/supabase";
 import { Section, Empty } from "@/components/ui";
 import { pct, signClass } from "@/lib/format";
-import { EMA_BADGE, emaBreakBits, EmaBreakBadge, emaDimClass, emaDimTitle } from "@/components/EmaBreak";
+import { EMA_BADGE, EMA_BADGE_INV, emaBreakBits, EmaBreakBadge, emaDimClass, emaDimTitle } from "@/components/EmaBreak";
+import { fetchPromotion50, promoKey, type PromotionMap } from "@/lib/promotion50";
 import type { RsMarket, RsTopWeekly } from "@/lib/types";
 import type { RsThemeWeekly } from "@/lib/types";
 
@@ -159,6 +160,8 @@ export default async function RsScreen({
   // 선택 주차의 종목들 + 그 주차 Gemini 테마 분류
   let rows: RsTopWeekly[] = [];
   let theme: RsThemeWeekly | null = null;
+  // ★+50% 승격 여부 — 21EMA 이탈이 매도 신호인지 가른다(/global 과 같은 기계)
+  let promo: PromotionMap = new Map();
   if (selectedWeek) {
     const r = await supabase
       .from("rs_top_weekly")
@@ -176,6 +179,8 @@ export default async function RsScreen({
       .eq("week_date", selectedWeek)
       .maybeSingle();
     theme = (th.data as RsThemeWeekly | null) ?? null;
+
+    promo = await fetchPromotion50(selectedWeek, [market]);
   }
 
   const meta = await getMeta();
@@ -286,7 +291,12 @@ export default async function RsScreen({
                       <th className="py-1.5 pl-1 text-left">#</th>
                       <th className="text-left">종목</th>
                       <th>RS</th>
-                      <th className="pl-3 text-left" title="종가의 EMA21·EMA50 이탈 (왼=21 하향, 오른=50 하향)">MA↓</th>
+                      <th
+                        className="pl-3 text-left"
+                        title="종가의 EMA21·EMA50 이탈 (왼=21 하향, 오른=50 하향). 왼쪽이 테두리만 있으면 +50% 승격 종목이라 21EMA 이탈로는 팔지 않는다"
+                      >
+                        MA↓
+                      </th>
                       <th title="52주 가중 모멘텀(백분위 계산용 composite return)">모멘텀</th>
                       <th title="주봉 정배열(4>13>26>52주) 연속 유지 주수(트렌드 나이). 적색 = 정배열이 N주 전 깨짐">정배열</th>
                       <th>종가</th>
@@ -328,7 +338,10 @@ export default async function RsScreen({
                         </td>
                         <td className="font-bold text-accent">{r.rs}</td>
                         <td className="pl-3 text-left tnum">
-                          <EmaBreakBadge bits={emaBreakBits(r.close, r.ema_21, r.ema_50)} />
+                          <EmaBreakBadge
+                            bits={emaBreakBits(r.close, r.ema_21, r.ema_50)}
+                            promoted={promo.get(promoKey(market, r.ticker))}
+                          />
                         </td>
                         <td className={signClass(r.comp_return ? r.comp_return * 100 : null)}>
                           {r.comp_return != null ? Math.round(r.comp_return * 100) : "-"}
@@ -369,8 +382,10 @@ export default async function RsScreen({
           <div className="space-y-1.5 text-xs text-muted">
             <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1">
               <b className="text-textc">MA↓</b> 는 종가의 일봉 EMA 이탈:
-              <span className={`${EMA_BADGE} bg-red-400`}>-</span> 21EMA 아래 ·
-              <span className={`${EMA_BADGE} bg-red-700`}>-</span> 50EMA 아래 (둘 다면 나란히). RS96+ 여도 추세 약화 신호이며, 데이터 없으면 공백.
+              <span className={`${EMA_BADGE} bg-red-400`}>-</span> 21EMA 아래 — <b className="text-textc">매도 대상</b> ·
+              <span className={EMA_BADGE_INV}>-</span> 21EMA 아래지만 <b className="text-textc">+50% 승격</b> 종목이라 매도 대상이 아님(50EMA 가 기준) ·
+              <span className={`${EMA_BADGE} bg-red-700`}>-</span> 50EMA 아래 (둘 다면 나란히). 데이터 없으면 공백.
+              {" "}승격 판정의 진입가는 <b className="text-textc">RS96 연속 등재 구간의 첫 주차 종가</b>로 근사한 값이라 실제 보유 단가와 다를 수 있습니다.
             </p>
             <p>
               <b>RS</b>는 IBD/Minervini 정의의 상대강도 백분위(0~99). RS 96 = 상위 4%.
