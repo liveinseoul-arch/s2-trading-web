@@ -953,6 +953,115 @@ def _chunk(rows, n=500):
         yield rows[i:i + n]
 
 
+# ★★CAND-2026-10-19-45 — ★RS 주간 3표 적재를 ★단일 트랜잭션 RPC 로.
+#   ★마이그레이션 → s2-trading-web/supabase/migrations/2026-10-20_rs_weekly_replace.sql
+#   ★선례 → `S2_EOD_RPC`(CAND-2026-09-08-4 · export_eod.py:2469)
+#
+#   ★★왜 — ★`upsert_supabase` 는 ★3표를 ★시장별로 DELETE 한 뒤 ★청크로 POST 한다.
+#     ★그 사이에 죽으면 ★그 시장 행이 ★「빈」 상태로 남는다.
+#     ★`S2_SUPABASE_RETRY` 재시도는 ★네트워크 부류만 덮고 ★4xx 는 ★원리적으로 못 덮는다
+#     (★EOD 쪽 사고 3건 중 ★2026-08-21 이 ★정확히 그 경우였다).
+#   ⚠️★더 나쁜 것 — ★여기 재시도는 ★`req` 단위라 ★POST 중복 위험이 ★남는다(:891 주석).
+#     ★RPC 는 ★요청 1회라 ★그 위험이 ★원리적으로 사라진다.
+#
+#   ★되돌리기 — `S2_RS_RPC=0`(★기본값) ★한 줄이면 ★종전 경로 그대로다.
+RS_RPC = os.environ.get("S2_RS_RPC", "0").strip() == "1"
+RS_RPC_GZIP = os.environ.get("S2_RS_RPC_GZIP", "0").strip() == "1"
+
+
+def _rs_rpc_payload(top_rows, hist_rows, universe_rows, markets,
+                    universe_scope, last_at):
+    """★RPC 페이로드를 ★만든다 — ★네트워크를 ★타지 않는 ★순수 함수.
+
+    ★★분리한 이유 — ★off 재현 검증(페이로드 해시 대조)을 ★네트워크 없이 하려면
+      ★페이로드 생성이 ★POST 와 ★분리돼 있어야 한다.
+    ⚠️★`markets` 를 ★sorted 로 고정한다 — ★set 순회는 ★프로세스마다 다르다
+      (PYTHONHASHSEED). ★종전 경로의 DELETE 순서도 같은 이유로 불안정했다.
+    ⚠️★`universe_scope` 는 ★행 유무와 ★별개다 — ★종전 동작이
+      ★`universe_rows is not None` 이면 ★DELETE 하고 ★`if universe_rows:` 일 때만
+      ★POST 했으므로, ★`--full-universe` 인데 0행이면 ★비우는 동작을 보존한다.
+    """
+    def _plain(rows):
+        out = []
+        for r in (rows or []):
+            out.append({k: (v.isoformat() if hasattr(v, "isoformat") else v)
+                        for k, v in r.items()})
+        return out
+
+    return {
+        "markets":            sorted(markets),
+        "universe_scope":     bool(universe_scope),
+        "rs_top_weekly":      _plain(top_rows),
+        "rs_history_weekly":  _plain(hist_rows),
+        "rs_universe_weekly": _plain(universe_rows) if universe_scope else [],
+        "last_rs_weekly_at":  last_at,
+    }
+
+
+def _rs_rpc_post(body):
+    """★`public.rs_weekly_replace` 를 ★1회 호출하고 ★행수로 검산한다.
+
+    ★★검산은 ★rc 가 아니라 ★함수가 돌려준 ★행수로 한다(2026-09-25 의 교훈).
+    ⚠️★삭제가 ★시장별이라 ★`count(*) from 표` 로는 검산할 수 ★없다 —
+      ★함수가 ★이번에 ★넣은 행수를 ★`get diagnostics` 로 돌려준다.
+    """
+    import gzip as _gzip
+
+    base = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1"
+    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    sent = {k: len(v) for k, v in body.items() if isinstance(v, list)
+            and k != "markets"}
+
+    raw = json.dumps({"payload": body}).encode("utf-8")
+    h = {"apikey": key, "Authorization": f"Bearer {key}",
+         "Content-Type": "application/json", "Prefer": "return=representation"}
+    data = raw
+    if RS_RPC_GZIP:
+        data = _gzip.compress(raw)
+        h["Content-Encoding"] = "gzip"
+    print("[supabase-rpc] 페이로드 %.2f MB%s · %d행 · 시장 %s (요청 ★1회 · 단일 트랜잭션)"
+          % (len(data) / 1048576,
+             " (gzip · 원본 %.2f MB)" % (len(raw) / 1048576) if RS_RPC_GZIP else "",
+             sum(sent.values()), ",".join(body["markets"])), flush=True)
+
+    r = urllib.request.Request(base + "/rpc/rs_weekly_replace", data=data,
+                               method="POST", headers=h)
+    try:
+        # ⚠️★타임아웃을 ★넉넉히 — ★단일 요청이라 ★이 한 번이 ★전부다.
+        with urllib.request.urlopen(r, timeout=600) as resp:
+            txt = resp.read().decode("utf-8")
+        got = json.loads(txt) if txt.strip() else {}
+    except urllib.error.HTTPError as e:
+        _b = e.read().decode("utf-8")[:500]
+        raise SystemExit(
+            f"[supabase] POST /rpc/rs_weekly_replace 실패 {e.code}: {_b}\n"
+            f"   ★3표는 ★종전 상태 그대로다(트랜잭션 ROLLBACK) — ★공백이 아니다.\n"
+            f"   ★함수가 없으면: supabase/migrations/2026-10-20_rs_weekly_replace.sql"
+            f" 을 적용할 것.\n"
+            f"   ★되돌리기: S2_RS_RPC=0")
+    except (urllib.error.URLError, OSError) as e:
+        raise SystemExit(
+            f"[supabase] POST /rpc/rs_weekly_replace ★네트워크 실패: {e!r}\n"
+            f"   ★3표는 ★종전 상태 그대로다(트랜잭션 미완 = ROLLBACK).\n"
+            f"   ★되돌리기: S2_RS_RPC=0")
+
+    if isinstance(got, list):          # PostgREST 가 배열로 싸는 경우
+        got = got[0] if got else {}
+    ins = got.get("inserted") or {}
+    bad = [(k, sent[k], ins.get(k)) for k in sent if ins.get(k) != sent[k]]
+    if bad:
+        raise SystemExit(
+            "[supabase] ★RPC 적재 행수 불일치 — %s\n"
+            "   ★보낸 수 대 ★DB 실측이 다르다. ★함수 정의를 확인할 것."
+            % " · ".join("%s 보냄%d/DB%s" % b for b in bad))
+    _del = got.get("deleted") or {}
+    print("[supabase-rpc] ★적재 완료 · ★행수 검산 통과 (기준시각 %s)\n"
+          "   삭제 %s · 적재 %s"
+          % (got.get("last_rs_weekly_at"),
+             " · ".join("%s %s" % (k, _del.get(k)) for k in sorted(_del)),
+             " · ".join("%s %d" % (k, sent[k]) for k in sorted(sent))))
+
+
 def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market, universe_rows=None):
     req = _supabase_client()
 
@@ -1035,6 +1144,17 @@ def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market, universe_rows=N
 
     # 시장 전체 삭제 후 재적재 — 옛 stale 주차(예: 월요일 timestamp) row 동시 정리.
     markets = set(rs96_tickers_by_market.keys()) | {r["market"] for r in top_rows}
+
+    # ★★CAND-2026-10-19-45 — ★기본 off(종전 경로). `S2_RS_RPC=1` 이면 단일 트랜잭션.
+    #   ⚠️★분기 위치가 ★중요하다 — ★위의 `_columns_exist` strip 을 ★전부 지난 뒤다.
+    #     ★그래서 ★두 경로의 ★행 내용이 ★같다(★off 재현 해시 대조의 전제).
+    if RS_RPC:
+        _rs_rpc_post(_rs_rpc_payload(
+            top_rows, hist_rows, universe_rows, markets,
+            universe_scope=universe_rows is not None,
+            last_at=datetime.now().isoformat()))
+        return
+
     for mk in markets:
         req("DELETE", f"/rs_top_weekly?market=eq.{urllib.parse.quote(mk)}")
         req("DELETE", f"/rs_history_weekly?market=eq.{urllib.parse.quote(mk)}")
