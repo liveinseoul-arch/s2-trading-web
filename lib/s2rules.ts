@@ -25,6 +25,8 @@
 //    2026-09-01  S2_MAX_LEV / _SIZE_ABOVE / _BELOW — ★무차입 단계 1(셋이 한 벌)
 //    2026-09-01  S2_ADDBLOCK_*             — 갭하락일 물타기 처리
 //    2026-09-03  S2_REENTRY_WINDOW_DAYS    — 재진입 판정 기간 창 548일
+//    2026-10-19  S2_REENTRY_SIZE_BY_CT     — ★재진입 차수별 사이징(2회차 0.80 / 3회차 1.00)
+//      ⚠️같은 날 두 번 갱신됐다 — 0.70/0.90 채택 뒤 운영 재검정으로 0.80/1.00 재채택(비율 1.071)
 //    ★2026-09-03 감사에서 ★09-01 채택 2건이 통째로 빠져 있던 것을 발견해 반영했다
 //      (sizeAbove 18 → 15 · sizeBelow 6.5 → 5.4167 · maxLev 1.2 → 1.0)
 //    ★2026-09-01 이 파일이 2026-08-21 에서 멈춰 있던 것을 여기까지 따라잡았다
@@ -82,6 +84,13 @@ export const S2_PARAMS = {
   liqPartMaxPct: 3.0,
   /** ★S2_REENTRY_* — 재진입 제한 + 손실비례 쿨다운(2026-08-26 채택). */
   reentryMaxCount: 2,
+  /** ★★S2_REENTRY_SIZE_BY_CT — ★2026-10-19 채택(★같은 날 두 번 갱신: 0.70/0.90 → 0.80/1.00).
+   *  ★차수별 매수액 배수. 종전 일괄 `S2_REENTRY_SIZE_FRAC=0.75` 를 ★대체한다(곱하지 않는다).
+   *  ★ct2 = 1차 재진입(「2회차」) · ★ct3 = 2차 재진입(「3회차」) · 상한이 2라 4회차는 없다.
+   *  ★왜 V 자인가 — 차수별 자본가중 수익률이 신규 2.876% · ★2회차 1.583%(55%) · 3회차 2.650%(92%). */
+  reentrySizeCt2: 0.80,
+  reentrySizeCt3: 1.00,
+  /** ⚠️★사문 — `SIZE_BY_CT` 가 켜져 있으면 이 값은 쓰이지 않는다(런처에는 남아 있다). */
   reentrySizeFrac: 0.75,
   reentryResetMonths: 39,
   reentryCooldownDays: 60,
@@ -138,7 +147,7 @@ export const S2_CONFIG_LINE: string = [
     ? []
     : [`낙주필터(ret5<${S2_PARAMS.entryMinRet5})`]),
   `${S2_PARAMS.timeStopDays}영업일 기간 손절`,
-  `재진입 ${S2_PARAMS.reentryMaxCount}회 제한(×${S2_PARAMS.reentrySizeFrac})+쿨다운 ${S2_PARAMS.reentryCooldownDays}일+창 ${S2_PARAMS.reentryWindowDays}일`,
+  `재진입 ${S2_PARAMS.reentryMaxCount}회 제한(2회차 ×${S2_PARAMS.reentrySizeCt2}/3회차 ×${S2_PARAMS.reentrySizeCt3})+쿨다운 ${S2_PARAMS.reentryCooldownDays}일+창 ${S2_PARAMS.reentryWindowDays}일`,
   `갭하락 ${S2_PARAMS.addBlockGapPct}% 물타기 처리`,
   `유동성 참여 상한 ${S2_PARAMS.liqPartMaxPct}%`,
   "시초 매도",
@@ -175,7 +184,7 @@ export const S2_RULES: { t: string; d: string }[] = [
 ⚠️**'성과를 개선한다'고 읽으면 안 된다** — 착수 전 계량한 잠재 효과가 문턱에도 못 미쳤고(ΔCalmar 상한 0.0242) 수익률은 오히려 소폭 내려간다. 채택 근거는 성과가 아니라 **무결성**이다. 옳은 문장은 **'무상증자 권리락으로 생긴 가짜 진입신호를 차단한다'**이다.` },
   { t: "재진입 판정 기간 창 — ★2026-09-03 채택", d: `직전 청산일로부터 **${S2_PARAMS.reentryWindowDays}일(약 1.5년) 안**에 다시 사는 것만 「재진입」으로 본다. 그보다 오래 지난 재매수는 **신규로 취급**해 위 0.75배 할인을 면제하고 재진입 카운터도 올리지 않는다.\n\n**왜 필요했나** — 종전에는 판정이 **무기한**이었다. 청산 기록이 지워지지 않아 10년 전에 판 종목을 오늘 다시 사도 재진입으로 분류돼 할인과 카운터를 먹었다.\n\n⚠️**「성과를 개선한다」고 쓰면 안 된다** — 블록 부트스트랩 **0/12**로 크기를 가르지 못했다. 채택 근거는 성과가 아니라 **설계 정의**다.\n\n⚠️**프로덕션창 개선폭(+0.40%p)을 기제의 크기로 인용하면 안 된다** — 그 절반 이상(59.7%)이 한 종목의 진입일이 하루 앞당겨진 **경로 의존**이다.` },
   { t: "갭하락일 물타기 처리 — ★2026-09-01 채택", d: `**${S2_PARAMS.addBlockGapPct}% 이하로 시작한 날**에는 추가매수를 그대로 내지 않는다. 2차는 **종가매수로 돌리고**, 3차 이상은 **차단**한다.\n\n⚠️**「수익률을 개선한다」고 쓰면 안 된다** — 수익률은 일관되게 조금 내려간다. **수익률을 조금 잃고 최대낙폭을 크게 얻는** 교환이다(결정창 기준 1 대 6.1).\n\n**기제는 「안 사기」가 아니라 「조기 손절」이다** — 그날 추가매수가 막히면 그 자리에서 정리된다.` },
-  { t: "재진입 제한 + 손실비례 쿨다운 — ★2026-08-26 채택", d: `한 종목에 **재진입은 ${S2_PARAMS.reentryMaxCount}회까지**만 허용한다(초과하면 그 종목은 차단). 재진입 매수액은 **×${S2_PARAMS.reentrySizeFrac}로 줄이고**, 마지막 진입에서 ${S2_PARAMS.reentryResetMonths}개월이 지나면 카운터를 리셋한다. 여기에 더해 직전 청산이 **1차 매수금액 대비 ${S2_PARAMS.reentryCooldownThresholdPct}% 넘는 손실**이었으면 그 종목은 **${S2_PARAMS.reentryCooldownDays}일간 재진입 금지**다.
+  { t: "재진입 제한 + 손실비례 쿨다운 — ★2026-08-26 채택", d: `한 종목에 **재진입은 ${S2_PARAMS.reentryMaxCount}회까지**만 허용한다(초과하면 그 종목은 차단). 재진입 매수액은 **차수별로 갈라** 쓴다 — **2회차는 ×${S2_PARAMS.reentrySizeCt2}, 3회차는 ×${S2_PARAMS.reentrySizeCt3}**(★2026-10-19 채택 · 종전은 일괄 ×0.75였다). 차수별 실측 자본가중 수익률이 **신규 2.876% · 2회차 1.583%(신규의 55%) · 3회차 2.650%(92%)로 V자**라, 가장 나쁜 2회차만 깎고 3회차는 되돌린 것이다. 마지막 진입에서 ${S2_PARAMS.reentryResetMonths}개월이 지나면 카운터를 리셋한다. 여기에 더해 직전 청산이 **1차 매수금액 대비 ${S2_PARAMS.reentryCooldownThresholdPct}% 넘는 손실**이었으면 그 종목은 **${S2_PARAMS.reentryCooldownDays}일간 재진입 금지**다.
 
 **두 장치가 한 쌍이다** — 재진입 자격을 푸는 쪽(A)과 손실 뒤 쉬게 하는 쪽(B). A만 켜면 낙폭이 커지고, B가 그 대부분을 되돌린다.
 
