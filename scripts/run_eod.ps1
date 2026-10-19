@@ -74,6 +74,54 @@ function Invoke-Py {
     }
     return $rc
 }
+
+# ── ★★★[2026-10-20 신설 · CAND-2026-09-29-3 / 인게 0-Y · ★★해달별님 결정 「넣는다 · 기본 on」] ──
+#   ★★**어떤 사고를 막나** — ★실제로 난 일이다(2026-09-28 EOD).
+#     ★`export_density` 가 `SSL: UNEXPECTED_EOF_WHILE_READING` 로 ★70초 만에 실패하고
+#     ★`run_nav_calendar` 가 rc=1 이 나왔다 ⇒ ★`autotrade/nav_daily.csv` 가
+#     ★**2026-09-23 에 멈추었다.** ★그러면 ★`kw_watchloop.py --run` 이
+#     ★거래일 캘린더 ★신선도 게이트에 걸려 ★rc=4 로 거부된다(CLAUDE.md §7-4).
+#     ⚠️★지금은 W4 잡이 전부 Disabled 라 ★무해하나 ★★여는 순간 ★즈시 막는다.
+#   ⚠️★★**판정 기준이 ★단계마다 다르다** — ★이것이 이 수리의 핵심이다:
+#     ★`run_nav_calendar` 는 ★**rc** 로 가른다.
+#     ★★`export_density` 는 ★**rc 가 ★항상 0 이다**(아래 「★항상 0 계약」 주석)
+#       ⇒ ★★**rc 로는 ★원리적으로 못 가른다.** ★그래서 ★사이드카
+#       ★`results/.density_export_last.json` 의 ★**`ok`** 와 ★**`ts` 변화**로 판정한다.
+#       ★`ts` 를 함지 보는 이유 — ★`ok:true` 가 ★**어제 것**이면 ★이번 런은 실패다.
+#   ★★**왜 재시도가 ★안전한가** — ★`export_density.py:195` 의 ★DELETE gte.1900-01-01
+#     후 ★전량 재재장이라 ★**멥등**하고 ★적재 후 ★행수 재검증이 ★이미 있다.
+#     ★`run_nav_calendar` 는 ★Supabase 읽기 + ★로걸 CSV 쓰기다.
+#   ⚠️★**재시도는 ★복구이고 ★원자성이 아니다** — ★DELETE 뒤 크래시하면 ★부분 적재가
+#     ★남는다(그것은 ★재검증이 ★잡아 실패로 보고한다). ★RPC 원자화는 ★별 축이다.
+#   ★**되돌리기** — ★`$env:S2_EOD_RETRY="0"` ★한 줄(= ★종전 동작 = 1회 시도 · ★로그도 안 나온다).
+$retryOn   = ($env:S2_EOD_RETRY -ne "0")
+$retryMax  = 1
+$retryWait = 20
+if ($retryOn) {
+    $retryMax = 3
+    if ($env:S2_EOD_RETRY_N) { $retryMax = [int]$env:S2_EOD_RETRY_N }
+    if ($env:S2_EOD_RETRY_WAIT_SEC) { $retryWait = [int]$env:S2_EOD_RETRY_WAIT_SEC }
+}
+
+function Write-RetryLog {
+    param([string]$Msg)
+    # ★★`$ErrorActionPreference = "Stop"` 환경이라 ★맨몸 Out-File 은 ★새 중단 지점이다
+    #   (디스크 가듭 · 파일 잠김 · 경로 소실 · 권한) — ★CAND-2026-08-24-520 과 같은 이유로 개워 쓴다.
+    try {
+        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RETRY] $Msg" | Out-File -Append -Encoding utf8 $log
+    } catch { Write-Host "[RETRY] 로그 기록 실패: $($_.Exception.Message)" }
+}
+
+function Get-DensitySidecar {
+    param([string]$Path)
+    # ★★사이드카가 ★없거나 ★못 읽으면 ★`$null` 을 돌려 ★「모른다」와 ★「실패」를 가른다
+    #   (★`refresh_balance` 의 「모른다」 원상과 ★같은 결이다).
+    if (-not (Test-Path $Path)) { return $null }
+    try {
+        $j = Get-Content $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+        return [pscustomobject]@{ ok = [bool]$j.ok; ts = [string]$j.ts }
+    } catch { return $null }
+}
 "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') eod =====" | Out-File -Append -Encoding utf8 $log
 $rcMain = Invoke-Py -PyArgs @("main.py","--no-gsheets") -Tag "main.py" -Fatal               # 당일 EOD 캐시 갱신
 # ★★[2026-08-24 · CAND-2026-08-23-630] 아래 [RC] 줄들은 ★로그만 더한 것이다.
@@ -335,7 +383,30 @@ try {
 #   ★rc 는 ★항상 0 이다(체인을 안 끊는다) — 실패는 사이드카
 #     results/.density_export_last.json 과 로그의 「⚠️★★[DENSITY] 실패」 마커로 남는다.
 #   ★되돌리기 — 아래 두 줄 삭제(페이지는 빈 격자가 되고 EOD 는 그대로 돈다).
-$rcDensity = Invoke-Py -PyArgs @("s2-trading-web\scripts\export_density.py") -Tag "export_density.py"
+# ★★[2026-10-20 · 0-Y] ★사이드카 `ok`+`ts` 판정 재시도 — ★rc 는 항상 0 이라 못 쓴다.
+$densSidecar = Join-Path $PSScriptRoot "..\..\results\.density_export_last.json"
+$rcDensity = 0
+for ($densTry = 1; $densTry -le $retryMax; $densTry++) {
+    $densBefore = Get-DensitySidecar -Path $densSidecar
+    $rcDensity = Invoke-Py -PyArgs @("s2-trading-web\scripts\export_density.py") -Tag "export_density.py"
+    $densAfter = Get-DensitySidecar -Path $densSidecar
+    # ★성공 = ★사이드카가 ★이번 런으로 갱신됐고(ts 변화) ★`ok` 가 true 다.
+    # ★백핑 줄 연속을 안 쓴다 — ★백핑 뒤에 공백이 하나 들어가면 ★파서가 깨진다.
+    $densFresh = ($null -eq $densBefore) -or ($densBefore.ts -ne $densAfter.ts)
+    $densOk = ($null -ne $densAfter) -and $densAfter.ok -and $densFresh
+    if ($densOk) {
+        if ($retryOn -and $densTry -gt 1) {
+            Write-RetryLog "export_density.py ★시도 $densTry/$retryMax 에서 성공"
+        }
+        break
+    }
+    if ($retryOn -and $densTry -lt $retryMax) {
+        Write-RetryLog "export_density.py ★사이드카 ok 아님($($densAfter.ok)) — $retryWait 초 뒤 재시도 ($densTry/$retryMax)"
+        Start-Sleep -Seconds $retryWait
+    } elseif ($retryOn) {
+        Write-RetryLog "export_density.py ★$retryMax 회 전부 실패 — ★사이드카와 [DENSITY] 마커를 볼 일"
+    }
+}
 Write-Host "[density] rc=$LASTEXITCODE (★항상 0 계약)"
 # ⚠️★Write-Host 는 ★무인 실행에서 사라진다 — ★같은 값을 로그에도 남긴다.
 # ★[2026-08-24 · CAND-2026-08-24-520] ★try/catch — ★위 서문 참조(로그만 · rc 불변).
@@ -612,11 +683,28 @@ try {
 #   0행·부분 달력을 읽던 것을 ★정의상 없앤다. 스케줄러 S2_nav_calendar 는 Disabled(되돌리기 = Enable-ScheduledTask).
 #   ★되돌리기 — $env:S2_EOD_NAVCAL="0" 한 줄. ★실패해도 EOD rc 에는 영향 없다(아침 08:50 데몬이 다시 갱신한다).
 if ($env:S2_EOD_NAVCAL -ne "0") {
-    try {
-        & powershell -NoProfile -ExecutionPolicy Bypass -File "C:\AI파운더스\autotrade\run_nav_calendar.ps1"
-        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] run_nav_calendar.ps1=$LASTEXITCODE" | Out-File -Append -Encoding utf8 $log
-    } catch {
-        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] run_nav_calendar.ps1 실패: $($_.Exception.Message)" | Out-File -Append -Encoding utf8 $log
+    # ★★[2026-10-20 · 0-Y] ★rc 판정 재시도 — ★이것은 rc 가 실제로 온다(실상 rc=1 전례).
+    for ($navTry = 1; $navTry -le $retryMax; $navTry++) {
+        $navRc = 1
+        try {
+            & powershell -NoProfile -ExecutionPolicy Bypass -File "C:\AI파운더스\autotrade\run_nav_calendar.ps1"
+            $navRc = $LASTEXITCODE
+            "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] run_nav_calendar.ps1=$navRc" | Out-File -Append -Encoding utf8 $log
+        } catch {
+            "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] run_nav_calendar.ps1 실패: $($_.Exception.Message)" | Out-File -Append -Encoding utf8 $log
+        }
+        if ($navRc -eq 0) {
+            if ($retryOn -and $navTry -gt 1) {
+                Write-RetryLog "run_nav_calendar.ps1 ★시도 $navTry/$retryMax 에서 성공"
+            }
+            break
+        }
+        if ($retryOn -and $navTry -lt $retryMax) {
+            Write-RetryLog "run_nav_calendar.ps1 rc=$navRc — $retryWait 초 뒤 재시도 ($navTry/$retryMax)"
+            Start-Sleep -Seconds $retryWait
+        } elseif ($retryOn) {
+            Write-RetryLog "run_nav_calendar.ps1 ★$retryMax 회 전부 실패 (에 rc=$navRc) — ⚠️★nav_daily.csv 가 낡았다"
+        }
     }
 }
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  ===== eod done =====" | Out-File -Append -Encoding utf8 $log
