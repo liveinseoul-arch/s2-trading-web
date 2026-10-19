@@ -575,6 +575,26 @@ NAME_CAP = float(_ncap_s) if _ncap_s else None
 _rrx_s = os.environ.get("S2_REENTRY_RELAX", "").strip().lower()
 REENTRY_RELAX = _rrx_s in ("1", "true", "yes")
 REENTRY_SIZE_FRAC = float(os.environ.get("S2_REENTRY_SIZE_FRAC", "1.0"))
+# ★★★[2026-10-19 채택 · CAND-2026-10-19-22 · ★★해달별님 발안·결정] 재진입 ★차수별 사이징.
+#   ⚠️★`REENTRY_SIZE_FRAC`(일괄)을 ★대체한다 — ★곱하지 않는다.
+#   ★형식 "ct2:0.70,ct3:0.90" — ★`ct2` = 엔진 카운터 0 = ★1차 재진입(「2회차」) ·
+#     ★`ct3` = 카운터 1 이상 = ★2차 재진입(「3회차」). ★상한 2 라 4회차는 없다.
+#   ⚠️★★**카운터는 ★진입 ★직전 값이다** — ★그래서 ★신규도 0 이지만, ★이 분기는
+#     ★`_reentry_in_window()` 안쪽이라 ★신규는 애초에 들어오지 않는다.
+#   ★근거 — 차수별 ★자본가중이 ★V 자다(신규 2.876% · ★2회차 1.583% = 55% · 3회차 2.650% = 92%).
+#   ⚠️★★**성과 근거가 아니라 ★구조 근거로 채택**했다 — ΔCAGR +0.1779%p 는 ★부트 0/3 구별 불가다.
+#   ★되돌리기 — ★env 를 비우면 ★종전 일괄 `_SIZE_FRAC` 로 복귀(비트동일).
+#   → quant_infra/2026-10/S2_REENTRY_SIZE_BY_CT_2026-10-19.md
+_rsb_raw = (os.environ.get("S2_REENTRY_SIZE_BY_CT", "") or "").strip()
+REENTRY_SIZE_BY_CT = {}
+if _rsb_raw:
+    for _tok in _rsb_raw.split(","):
+        if ":" in _tok:
+            _k, _v = _tok.split(":", 1)
+            _k = _k.strip().lower()
+            if _k in ("ct2", "ct3"):
+                REENTRY_SIZE_BY_CT[_k] = float(_v)
+REENTRY_SZCT_N = {"ct2": 0, "ct3": 0, "fallback": 0}
 _rmc_s = os.environ.get("S2_REENTRY_MAX_COUNT", "").strip()
 REENTRY_MAX_COUNT = int(_rmc_s) if _rmc_s else None
 _rrd_s = os.environ.get("S2_REENTRY_RESET_DAYS", "").strip()
@@ -1965,9 +1985,21 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             #   면 위 게이트가 이미 재진입을 거의 다 걸러 이 분기는 사실상 무의미(canonical 항등).
             #   ★★[2026-09-02 · CAND-2026-09-02-45] 기간 창 — `tk in last_exit` 대신
             #   `_reentry_in_window()`. 창 off(기본)면 두 식이 ★완전히 같다.
-            if REENTRY_RELAX and REENTRY_SIZE_FRAC != 1.0 and tk in last_exit:
+            if REENTRY_RELAX and (REENTRY_SIZE_FRAC != 1.0 or REENTRY_SIZE_BY_CT)                     and tk in last_exit:
                 if _reentry_in_window(tk, d, last_exit):
-                    amt *= REENTRY_SIZE_FRAC
+                    # ★★[2026-10-19 · CAND-2026-10-19-22] 차수별 맵이 켜져 있으면 ★그것이 이긴다.
+                    #   ⚠️★맵이 비어 있으면(기본) ★아래 일괄 경로로 가 ★종전과 비트동일하다.
+                    if REENTRY_SIZE_BY_CT:
+                        _szk = "ct2" if s2_reentry_ct.get(tk, 0) <= 0 else "ct3"
+                        _szf = REENTRY_SIZE_BY_CT.get(_szk)
+                        if _szf is None:
+                            REENTRY_SZCT_N["fallback"] += 1
+                            amt *= REENTRY_SIZE_FRAC
+                        else:
+                            REENTRY_SZCT_N[_szk] += 1
+                            amt *= _szf
+                    else:
+                        amt *= REENTRY_SIZE_FRAC
                 else:
                     REENTRY_WIN_N["size_demoted"] += 1   # ★창 밖 = 신규 취급(할인 면제)
             # ★★[CAND-2026-08-24-240] 참여율 상한 — ★비례 축소(차단 아님). off 면 cap=None.
@@ -2844,6 +2876,14 @@ def main():
               f"일 · 신규강등 사이징 {REENTRY_WIN_N['size_demoted']}건 / 카운터 "
               f"{REENTRY_WIN_N['ct_demoted']}건 · MAX_COUNT 차단 {REENTRY_MC_N['blocked']}건"
               + ("  (off = 종전 동작)" if REENTRY_WINDOW_DAYS is None else ""))
+
+    # ★★[2026-10-19 채택 · CAND-2026-10-19-22] 차수별 사이징 발동 카운터(§4-2d 관문2)
+    #   ⚠️★★「0건이라 효과 없음」과 ★「코드가 안 돌아 0건」을 가른다.
+    if REENTRY_SIZE_BY_CT:
+        print(f"[REENTRY_SZCT] 맵={REENTRY_SIZE_BY_CT}"
+              f" · ★ct2(2회차) {REENTRY_SZCT_N['ct2']}건"
+              f" · ★ct3(3회차) {REENTRY_SZCT_N['ct3']}건"
+              f" · 폴백(일괄) {REENTRY_SZCT_N['fallback']}건", flush=True)
 
     # ★★[CAND-2026-09-02-25] 배급 순서 발동 카운터(§4-2d 관문2)
     if BUY_PRIORITY != "none":
