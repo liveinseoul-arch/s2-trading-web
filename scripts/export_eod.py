@@ -599,7 +599,66 @@ _rmc_s = os.environ.get("S2_REENTRY_MAX_COUNT", "").strip()
 REENTRY_MAX_COUNT = int(_rmc_s) if _rmc_s else None
 _rrd_s = os.environ.get("S2_REENTRY_RESET_DAYS", "").strip()
 REENTRY_RESET_DAYS = int(_rrd_s) if _rrd_s else None
-REENTRY_MC_N = {"blocked": 0}   # ★MAX_COUNT 발동 카운터(2026-09-02 신설 — 종전엔 아예 없었다)
+REENTRY_MC_N = {"blocked": 0}
+# ★★[CAND-2026-10-20-31 · 해달별님 발안] 신호 갱신 리셋 — ★동결 스냅샷 전용 패치(운영 파일에는 없다)
+#   [왜] 현행 리셋은 `_RESET_DAYS=1186` 하나뿐이라 ★거래대금이 터져도 카운터가 안 풀린다.
+#        `:1891` 의 canonical 규칙(새 신호가 떠야 재진입)을 ★하드 게이트가 아니라 ★리셋으로 되살린다.
+#   [게이트] `S2_REENTRY_SIGNAL_RESET` 기본 off = ★종전 비트동일.
+_sr_s = os.environ.get("S2_REENTRY_SIGNAL_RESET", "").strip().lower()
+REENTRY_SIGNAL_RESET = _sr_s in ("1", "true", "yes")
+REENTRY_SIGNAL_MODE = (os.environ.get("S2_REENTRY_SIGNAL_MODE", "A") or "A").strip().upper()
+REENTRY_SIGNAL_STEP = (os.environ.get("S2_REENTRY_SIGNAL_STEP", "zero") or "zero").strip().lower()
+REENTRY_SIGNAL_TV = float(os.environ.get("S2_REENTRY_SIGNAL_TV", "300e9"))
+REENTRY_SIGNAL_MCAP = float(os.environ.get("S2_REENTRY_SIGNAL_MCAP", "10e12"))
+REENTRY_SR_N = {"reset": 0, "A": 0, "B": 0}
+_SR_BDATES = {}
+
+
+def _sr_load_b():
+    """★B 트리거 사전 로드 — (일봉 거래대금 >= TV AND 시총 >= MCAP) 인 종목-일. ★읽기 전용."""
+    import sqlite3 as _sq
+    import datetime as _dtm
+    if _SR_BDATES:
+        return
+    _base = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    _px = os.environ.get("S2_SR_PRICE_DB", "") or os.path.join(_base, "stock_cache.db")
+    _ca = os.environ.get("S2_SR_MCAP_DB", "") or os.path.join(_base, "corporate_actions.db")
+    if not (_px and _ca and os.path.exists(_px) and os.path.exists(_ca)):
+        print("\u26a0\u2605[SIGNAL_RESET] B \ud2b8\ub9ac\uac70 DB \ubbf8\ubc1c\uacac", flush=True)
+        return
+    _c = _sq.connect("file:%s?mode=ro" % _px.replace("\\", "/"), uri=True)
+    _c.execute("attach 'file:%s?mode=ro' as ca" % _ca.replace("\\", "/"))
+    _q = ("select p.ticker, p.date from prices p join ca.mcap_daily m "
+          "on m.date = p.date and m.ticker = p.ticker "
+          "where p.trading_value >= ? and m.mcap >= ?")
+    _n = 0
+    for _tk, _d in _c.execute(_q, (REENTRY_SIGNAL_TV, REENTRY_SIGNAL_MCAP)):
+        _k = str(_tk).zfill(6)
+        _SR_BDATES.setdefault(_k, []).append(
+            _dtm.date(int(_d[:4]), int(_d[5:7]), int(_d[8:10])))
+        _n += 1
+    for _k in _SR_BDATES:
+        _SR_BDATES[_k].sort()
+    _c.close()
+    print("[SIGNAL_RESET] B pre-load: tickers=%d events=%d (tv>=%.0f mcap>=%.0f)"
+          % (len(_SR_BDATES), _n, REENTRY_SIGNAL_TV, REENTRY_SIGNAL_MCAP), flush=True)
+
+
+def _sr_bhit(tk, lo, hi):
+    """★lo 초과 hi 이하 구간에 B 트리거가 있나. ★티커 표기 3종을 전부 시도한다(F4_EXCLUDE 와 같은 이유)."""
+    import bisect as _bi
+    _l = _SR_BDATES.get(tk)
+    if _l is None:
+        _l = _SR_BDATES.get(str(tk).zfill(6))
+    if _l is None:
+        try:
+            _l = _SR_BDATES.get(str(int(tk)).zfill(6))
+        except Exception:
+            _l = None
+    if not _l:
+        return False
+    _i = _bi.bisect_right(_l, lo)
+    return _i < len(_l) and _l[_i] <= hi   # ★MAX_COUNT 발동 카운터(2026-09-02 신설 — 종전엔 아예 없었다)
 
 # ★★★[2026-09-02 신설 · CAND-2026-09-02-45 · ★해달별님 발안] `is_reentry` ★기간 창
 #   [배경] 해달별님 지적 — *"재진입은 몇 일 이내를 재진입으로 보는가?"*
@@ -1370,6 +1429,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
         by_date[rec["date"]][rec["ticker"]] = rec
 
     positions, last_exit = {}, {}
+    if REENTRY_SIGNAL_RESET and REENTRY_SIGNAL_MODE in ("B", "AB"):
+        _sr_load_b()
     # ★반복재진입 카운터(2026-08-26 · CAND-2026-08-26-2) — REENTRY_RELAX=False 면 영원히 빈 채로
     #   남아 아래 분기가 전부 죽는다(canonical 항등).
     s2_reentry_ct = {}
@@ -1895,6 +1956,24 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 # ★재진입 시간경과 리셋 — 직전 청산일로부터 REENTRY_RESET_DAYS 일 이상
                 #   지났으면 카운터를 0으로 되돌린다(고갈 방지 · kr_s2_engine 과 동일 로직).
                 s2_reentry_ct[tk] = 0
+            # ★★[CAND-2026-10-20-31] 신호 갱신 리셋 — ★1186일 리셋과 ★같은 자리 · ★둘은 OR
+            #   ⚠️★쿨다운(:1904)은 ★건드리지 않는다 — ★두 게이트는 「대체재가 아니라 병행 장치」다.
+            if (REENTRY_SIGNAL_RESET and REENTRY_RELAX and tk in last_exit
+                    and s2_reentry_ct.get(tk, 0) > 0):
+                _hitA = (REENTRY_SIGNAL_MODE in ("A", "AB")
+                         and rs is not None and rs > last_exit[tk])
+                _hitB = (REENTRY_SIGNAL_MODE in ("B", "AB")
+                         and _sr_bhit(tk, last_exit[tk], d))
+                if _hitA or _hitB:
+                    if REENTRY_SIGNAL_STEP == "one":
+                        s2_reentry_ct[tk] = max(0, s2_reentry_ct.get(tk, 0) - 1)
+                    else:
+                        s2_reentry_ct[tk] = 0
+                    REENTRY_SR_N["reset"] += 1
+                    if _hitA:
+                        REENTRY_SR_N["A"] += 1
+                    if _hitB:
+                        REENTRY_SR_N["B"] += 1
             if REENTRY_RELAX and REENTRY_MAX_COUNT is not None and s2_reentry_ct.get(tk, 0) >= REENTRY_MAX_COUNT:
                 REENTRY_MC_N["blocked"] += 1   # ★2026-09-02 신설 카운터(§4-2d 관문2) — 판정 무변경
                 continue
@@ -2871,6 +2950,8 @@ def main():
     #   ★§4-2d 관문 2 — 「0건이라 효과 없음」과 「코드가 안 돌아 0건」을 가른다.
     #   ⚠️★`size_demoted` 는 ★도달(reached) 기준이라 ★현금 제약으로 못 산 건도 센다.
     #     ★`ct_demoted` 가 ★실제 매수 기준이다(두 값이 다른 것이 정상).
+    if REENTRY_SIGNAL_RESET:
+        print(f"[REENTRY_SIGNAL_RESET] mode={REENTRY_SIGNAL_MODE} step={REENTRY_SIGNAL_STEP} · 리셋 {REENTRY_SR_N['reset']}건 (A {REENTRY_SR_N['A']} · B {REENTRY_SR_N['B']})")
     if REENTRY_RELAX:
         print(f"[REENTRY_WINDOW] 창={REENTRY_WINDOW_DAYS if REENTRY_WINDOW_DAYS else 'off(무기한)'}"
               f"일 · 신규강등 사이징 {REENTRY_WIN_N['size_demoted']}건 / 카운터 "
