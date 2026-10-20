@@ -87,6 +87,12 @@ if (Test-Path $log) {
 }
 
 RunPy "1 13_RS_US"    @($silent, "$qb\13_RS_US_screen.py")
+# ★★★[2026-10-20 채택 · CAND-2026-10-20-29] ★RS 주간 3표 적재를 ★스테이징 swap 으로.
+#   ⚠️★US 가 ★가장 크다 — ★단일 RPC 본문 어림 ★28.73 MB 로 ★모체(`S2_RS_RPC`)가
+#     ★타임아웃하는 구간이다(실측 20.51MB 가 ★이미 실패). ★이 경로는 ★본문이 ★84 bytes 다.
+#   ★선결 — ★마이그레이션 `supabase/migrations/2026-10-20_rs_weekly_swap.sql` ★적용 완료.
+#   ★되돌리기 — ★이 줄을 ★지우면 ★종전 경로다(기본값 0).
+$env:S2_RS_SWAP = "1"
 RunPy "2 export US"   @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "US", "--weeks", "56", "--full-universe")
 RunPy "3 add US ETFs" @("s2-trading-web\scripts\add_etfs.py", "--market", "US", "--weeks", "56")
 

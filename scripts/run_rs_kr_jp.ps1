@@ -254,6 +254,9 @@ $jobJP = Start-Job -Name "JP chain" -ScriptBlock {
     $env:BT_OUTPUT_DIR = "$qb2\screen"
     $env:RS_MCAP_ROLL  = "1"   # ★CAND-2026-09-05-1 — KR 경로 전용이나 잡에도 명시(§0-5b)
     $env:GEMINI_MODEL  = $gmodel
+    # ★★CAND-2026-10-20-29 — 스테이징 swap. ⚠️★JP 는 ★별 Job(별 프로세스)이라 ★여기 ★따로 박는다
+    #   (★메인에 넣고 ★상속을 믿으면 ★JP 만 ★종전 경로로 돌 수 있다 — §0-5b 와 같은 계열).
+    $env:S2_RS_SWAP    = "1"
     function J($label, [string[]]$a) {
         "$(Get-Date -Format 'HH:mm:ss')  [$label] start" | Out-File -Append -Encoding utf8 $jobLog2
         try { & C:\Python314\python.exe @a *>> $jobLog2 } catch { "[$label] FAILED: $_" | Out-File -Append -Encoding utf8 $jobLog2 }
@@ -302,6 +305,16 @@ $env:BT_DAILY_CACHE_KR = "_bt_daily_cache_kr_live.pkl"   # Rebuild 일봉 입력
 RunPyGate "1 Rebuild"    $venvPy @("$qb\Rebuild_weekly_cache.py")
 Remove-Item Env:BT_DAILY_CACHE_KR -ErrorAction SilentlyContinue   # 국소 적용 — 후속 단계 오염 방지
 RunPyGate "2 14_RS_KR"   "C:\Python314\python.exe" @($silent, "$qb\14_RS_KR_pykrx.py")
+# ★★★[2026-10-20 채택 · CAND-2026-10-20-29] ★RS 주간 3표 적재를 ★스테이징 swap 으로.
+#   ★왜 — ★종전은 ★시장별 DELETE x2–3 ★뒤에 ★청크 POST 라 ★그 사이에 죽으면
+#     ★그 시장 3표가 ★**「낡은」이 아니라 ★「빈」** 상태로 남는다(웹앱·add_etfs 가 그 공백을 읽는다).
+#   ⚠️★모체(`S2_RS_RPC`)는 ★이 인스턴스에서 ★못 쓴다 — ★본문 20.51MB 가
+#     ★`canceling statement due to statement timeout`(실측 2026-10-20 · 쓰기 0 프로브 4점).
+#   ★★이 설계는 ★데이터를 ★작은 청크로 ★`*_staging` 에 올리고 ★교체만 ★RPC 1회(본문 ★96 bytes)로 한다.
+#   ★선결 — ★마이그레이션 `supabase/migrations/2026-10-20_rs_weekly_swap.sql` ★적용 완료(2026-10-20).
+#   ★검증 — ★off 재현 요청 열 sha256 ★6/6 · ★컬럼 대조 ★3표 통과 · ★쓰기 0 가드 통과.
+#   ★되돌리기 — ★이 줄(과 JP Job 안의 같은 줄)을 ★지우면 ★종전 경로다(기본값 0).
+$env:S2_RS_SWAP = "1"
 RunPyGate "4 export KR"  $rsExportPy @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "KR", "--weeks", "56", "--full-universe")
 # export 가 (해당 마켓의) universe 전체 삭제 후 재적재 → KR ETF 재적재 필요 (JP 는 ETF 화이트리스트 없음)
 RunPyGate "6 add KR ETFs" $rsExportPy @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")

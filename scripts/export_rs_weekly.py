@@ -968,6 +968,31 @@ def _chunk(rows, n=500):
 RS_RPC = os.environ.get("S2_RS_RPC", "0").strip() == "1"
 RS_RPC_GZIP = os.environ.get("S2_RS_RPC_GZIP", "0").strip() == "1"
 
+# ★★★CAND-2026-10-20-29 — ★스테이징 swap. ★`S2_RS_RPC` 의 ★대체 설계다.
+#   ★사양서 → quant_infra/2026-10/SPEC_RS_STAGING_SWAP_2026-10-20.md
+#   ★마이그레이션 → supabase/migrations/2026-10-20_rs_weekly_swap.sql
+#
+#   ★★왜 모체(`S2_RS_RPC`)를 ★대체하나 — ★그 경로가 ★이 인스턴스에서 ★못 돈다.
+#     ★실측(쓰기 0 프로브 4점 · 2026-10-20):
+#        1.02 MB →  2.6초 ★통과     10.24 MB →  8.4초 ★통과
+#       20.51 MB → 26.0초 ★**500 `canceling statement due to statement timeout`**
+#       30.81 MB → 69.2초 ★**520**
+#     ★표적 KR 17.87 · JP 21.31 · US 28.73 MB 가 ★전부 ★실패 구간이거나 경계다.
+#     ⚠️★막는 것은 ★게이트웨이 본문 상한이 ★아니라 ★`statement_timeout` 이고,
+#       ★★그래서 ★gzip 으로 ★못 고친다(서버가 풀면 ★같은 크기를 파싱한다).
+#
+#   ★★착상 — ★원자성은 ★「한 요청」이 아니라 ★「한 트랜잭션」에서 나온다.
+#     ①데이터는 ★종전과 ★같은 청크 POST 로 ★`*_staging` 에 올린다(요청마다 0.1 – 0.3 MB)
+#     ②본표 교체만 ★`rs_weekly_swap()` ★1회(본문 ★1 KB 미만)
+#
+#   ★★종전 기계를 ★그대로 재사용한다 — `req()` · `_chunk()` · 재시도 · `_columns_exist` strip.
+#     ★바뀌는 것은 ★**경로 문자열에 `_staging` 이 붙는 것**뿐이다.
+#
+#   ⚠️★두 게이트는 ★배타다 — ★둘 다 1 이면 ★`S2_RS_SWAP` 이 이긴다(아래 분기 순서).
+#   ★되돌리기 — `S2_RS_SWAP=0`(★기본값) ★한 줄.
+RS_SWAP = os.environ.get("S2_RS_SWAP", "0").strip() == "1"
+RS_STAGING_SUFFIX = "_staging"
+
 
 def _rs_rpc_payload(top_rows, hist_rows, universe_rows, markets,
                     universe_scope, last_at):
@@ -1062,6 +1087,118 @@ def _rs_rpc_post(body):
              " · ".join("%s %d" % (k, sent[k]) for k in sorted(sent))))
 
 
+def _rs_swap_body(markets, universe_scope, last_at):
+    """★swap RPC 본문 — ★네트워크를 ★타지 않는 ★순수 함수.
+
+    ★★분리한 이유는 ★`_rs_rpc_payload` 와 ★같다 — ★off 재현 검증을 ★네트워크 없이 하려면
+      ★본문 생성이 ★POST 와 ★분리돼 있어야 한다.
+    ★★그리고 ★이 본문이 ★이 설계의 전부다 — ★**행이 한 건도 안 실린다.**
+      ★시장 이름 몇 개 + 플래그 + 타임스탬프 = ★1 KB 미만.
+    ⚠️★`markets` 를 ★sorted 로 고정한다 — ★set 순회는 ★프로세스마다 다르다(PYTHONHASHSEED).
+    """
+    return {"markets": sorted(markets),
+            "universe_scope": bool(universe_scope),
+            "last_at": last_at}
+
+
+def _rs_swap_load(req, top_rows, hist_rows, universe_rows, markets,
+                  universe_scope, last_at):
+    r"""★★CAND-2026-10-20-29 — ★스테이징 적재 + ★swap 1회.
+
+    ★★요청 모양이 ★종전과 ★같다 — ★표 이름에 `_staging` 이 붙을 뿐이다.
+      ★그래서 ★`req()`(재시도 포함) · `_chunk()` 를 ★그대로 쓴다.
+
+    ★★단계
+      ①★그 시장의 ★스테이징 잔해를 ★먼저 지운다 — ★★**시작 때 비운다**(사양서 §7 규칙 1).
+         ★swap 뒤에 비우지 ★않는 이유 — ★swap 성공 후 정리에서 죽으면 ★다음 런이 혼란스럽다.
+         ★시작 때 비우면 ★이전 실패 잔해가 ★자동으로 사라진다(멱등).
+      ②★청크 POST — ★본표를 ★한 행도 ★건드리지 않는다.
+         ★★여기서 죽어도 ★본표는 ★종전 데이터 그대로다(★종전 경로는 ★빈 표가 된다).
+      ③★`rs_weekly_swap()` ★1회 — ★본문이 ★1 KB 미만이라 ★파싱 비용이 ★사실상 0.
+
+    ⚠️★POST 중복 위험은 ★남는다(`req` 단위 재시도 · `:891` 주석) — ★단 ★스테이징이라
+      ★본표에 ★영향이 없고, ★swap 의 ★행수 검산이 ★그것을 ★드러낸다.
+    """
+    import urllib.parse as _up
+
+    S = RS_STAGING_SUFFIX
+    sent = {}
+    for mk in sorted(markets):
+        q = _up.quote(mk)
+        req("DELETE", f"/rs_top_weekly{S}?market=eq.{q}")
+        req("DELETE", f"/rs_history_weekly{S}?market=eq.{q}")
+        if universe_scope:
+            req("DELETE", f"/rs_universe_weekly{S}?market=eq.{q}")
+    print(f"[supabase-swap] 스테이징 비움 — 시장 {','.join(sorted(markets))}"
+          f"{' (+universe)' if universe_scope else ''}", flush=True)
+
+    for c in _chunk(top_rows):
+        req("POST", f"/rs_top_weekly{S}", c)
+    sent["rs_top_weekly"] = len(top_rows)
+
+    for c in _chunk(hist_rows):
+        req("POST", f"/rs_history_weekly{S}", c)
+    sent["rs_history_weekly"] = len(hist_rows)
+
+    if universe_scope:
+        for c in _chunk(universe_rows or [], n=1000):
+            req("POST", f"/rs_universe_weekly{S}", c)
+        sent["rs_universe_weekly"] = len(universe_rows or [])
+    print("[supabase-swap] 스테이징 적재 완료 — %s (★본표 무접촉)"
+          % " · ".join("%s %s" % (k, format(v, ","))
+                       for k, v in sorted(sent.items())), flush=True)
+
+    _rs_swap_post(_rs_swap_body(markets, universe_scope, last_at), sent)
+
+
+def _rs_swap_post(body, sent):
+    r"""★`public.rs_weekly_swap` 를 ★1회 호출하고 ★행수로 검산한다.
+
+    ★★분리한 이유 — ★`_rs_rpc_post` 와 ★같다. ★off 재현 하니스가 ★네트워크도 ★env 도
+      ★안 타게 하려면 ★이 경계가 ★있어야 한다(★하니스가 ★이 함수를 통째로 교체한다).
+    ⚠️★검산은 ★rc 가 아니라 ★함수가 돌려준 ★행수로 한다(2026-09-25 교훈 승계).
+    """
+    raw = json.dumps(body).encode("utf-8")
+    base = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1"
+    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    h = {"apikey": key, "Authorization": f"Bearer {key}",
+         "Content-Type": "application/json"}
+    print("[supabase-swap] swap 호출 — 본문 %d bytes (요청 ★1회 · 단일 트랜잭션)"
+          % len(raw), flush=True)
+    r = urllib.request.Request(base + "/rpc/rs_weekly_swap", data=raw,
+                               method="POST", headers=h)
+    try:
+        with urllib.request.urlopen(r, timeout=600) as resp:
+            got = json.loads(resp.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        _b = e.read().decode("utf-8")[:600]
+        raise SystemExit(
+            f"[supabase] POST /rpc/rs_weekly_swap 실패 {e.code}: {_b}\n"
+            f"   ★함수·스테이징 표가 없으면: "
+            f"supabase/migrations/2026-10-20_rs_weekly_swap.sql\n"
+            f"   ★되돌리기: S2_RS_SWAP=0")
+    except (urllib.error.URLError, OSError) as e:
+        raise SystemExit(
+            f"[supabase] POST /rpc/rs_weekly_swap ★네트워크 실패: {e!r}\n"
+            f"   ⚠️★본표는 ★안 바뀌었다(교체 전이거나 롤백) — ★그냥 다시 돌리면 된다\n"
+            f"   ★되돌리기: S2_RS_SWAP=0")
+
+    # ★★검산은 ★rc 가 아니라 ★행수로 한다(2026-09-25 교훈 승계).
+    ins = got.get("inserted") or {}
+    bad = [(k, sent[k], ins.get(k)) for k in sent if ins.get(k) != sent[k]]
+    if bad:
+        raise SystemExit(
+            "[supabase] ★swap 행수 불일치 — %s\n"
+            "   ★보낸 수 대 ★DB 실측이 다르다. ★스테이징 잔해나 ★POST 중복을 의심할 것."
+            % " · ".join("%s 보냄%d/DB%s" % b for b in bad))
+    _del = got.get("deleted") or {}
+    print("[supabase-swap] ★교체 완료 · ★행수 검산 통과 (기준시각 %s)\n"
+          "   삭제 %s · 적재 %s"
+          % (got.get("last_rs_weekly_at"),
+             " · ".join("%s %s" % (k, _del.get(k)) for k in sorted(_del)),
+             " · ".join("%s %s" % (k, format(sent[k], ",")) for k in sorted(sent))))
+
+
 def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market, universe_rows=None):
     req = _supabase_client()
 
@@ -1148,6 +1285,15 @@ def upsert_supabase(top_rows, hist_rows, rs96_tickers_by_market, universe_rows=N
     # ★★CAND-2026-10-19-45 — ★기본 off(종전 경로). `S2_RS_RPC=1` 이면 단일 트랜잭션.
     #   ⚠️★분기 위치가 ★중요하다 — ★위의 `_columns_exist` strip 을 ★전부 지난 뒤다.
     #     ★그래서 ★두 경로의 ★행 내용이 ★같다(★off 재현 해시 대조의 전제).
+    # ★★CAND-2026-10-20-29 — ★스테이징 swap. ⚠️★`RS_RPC` 보다 ★먼저 본다(두 게이트는 배타).
+    #   ★분기 위치가 ★모체와 ★같아야 한다 — ★위 `_columns_exist` strip 을 ★전부 지난 뒤다.
+    #     ★그래야 ★세 경로의 ★행 내용이 ★같다(off 재현 해시 대조의 전제).
+    if RS_SWAP:
+        _rs_swap_load(req, top_rows, hist_rows, universe_rows, markets,
+                      universe_scope=universe_rows is not None,
+                      last_at=datetime.now().isoformat())
+        return
+
     if RS_RPC:
         _rs_rpc_post(_rs_rpc_payload(
             top_rows, hist_rows, universe_rows, markets,
