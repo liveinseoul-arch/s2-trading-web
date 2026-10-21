@@ -37,7 +37,15 @@ def notify_preclose(target, rows):
         for r in reached[:10]:
             lines.append(f"  · {r['name'][:6]} {r['order_price']:,}원 (포트 {r['port_pct']}%)")
     if near:
-        lines.append("근접(더 내리면 체결): " + ", ".join(f"{r['name'][:6]}({r['drop_to_pct']:.1f}%)" for r in near[:12]))
+        # ★★[2026-10-21 · 해달별님 지시] ①종목당 ★한 줄 + ★주문가·비중 병기(도달 줄과 같은 꼴)
+        #   ②★가까운 것(덜 내려도 되는 것)부터 — `drop_to_pct` 는 ★음수라 ★내림차순이 가까운 순이다.
+        #   ⚠️★정렬은 ★이 메시지 안에서만 한다 — `s2_candidates.py:298` 의 전역 정렬은 ★건드리지 않는다
+        #     (웹앱 `daily_candidates` 적재 순서·`export_eod.py`·CLI 출력이 ★그것을 공유한다).
+        #   ★`[:12]` 는 ★정렬 ★뒤에 자른다 ⇒ ★「가까운 12개」가 남는다(종전에는 ★먼 12개였다).
+        lines.append("○ 근접(더 내리면 체결):")
+        for r in sorted(near, key=lambda x: x["drop_to_pct"], reverse=True)[:12]:
+            lines.append(f"  · {r['name'][:6]} {r['order_price']:,}원 "
+                         f"({r['drop_to_pct']:.1f}% · 포트 {r['port_pct']}%)")
     if not rows:
         lines.append("오늘 신규 진입 후보 없음.")
     telegram_send("\n".join(lines))
