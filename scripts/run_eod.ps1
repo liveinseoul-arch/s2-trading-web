@@ -123,6 +123,11 @@ function Get-DensitySidecar {
     } catch { return $null }
 }
 "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') eod =====" | Out-File -Append -Encoding utf8 $log
+# ★★[2026-10-22 · CAND-2026-10-21-14] 매수 후 감시주문 안내를 ★운영 채택값으로 찍는다.
+#   ★왜 여기인가 - main.py(아래 줄)는 ★env 묶음(:149-)보다 ★먼저 돈다. ★이 한 줄만 앞에 둔다.
+#   ★reporting.py 는 ★값을 ★이 파일에서 ★직접 파싱한다(export_eod.py:68 _canon_s2_env 와 같은 규약).
+#   ★되돌리기 - ★이 줄을 지우거나 "0" 으로. ⇒ ★종전 출력 비트동일(해시 검증 완료 2026-10-22).
+$env:S2_REPORT_ORDER_SETUP = "1"
 $rcMain = Invoke-Py -PyArgs @("main.py","--no-gsheets") -Tag "main.py" -Fatal               # 당일 EOD 캐시 갱신
 # ★★[2026-08-24 · CAND-2026-08-23-630] 아래 [RC] 줄들은 ★로그만 더한 것이다.
 #   ★★ps1 의 자기 rc 는 안 바뀐다 — 실측(2026-08-24) `powershell -File` 은 `exit` 가 없으면
