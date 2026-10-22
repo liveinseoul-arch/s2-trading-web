@@ -4,6 +4,15 @@ $root = (Get-Item $PSScriptRoot).Parent.Parent.FullName   # scripts → s2-tradi
 Set-Location $root
 $log = Join-Path $PSScriptRoot "preclose.log"
 "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') preclose =====" | Out-File -Append -Encoding utf8 $log
+
+# ★★★[2026-10-22 채택 · CAND-2026-10-22-21] 15:10 알람도 ★같은 지지선을 쓰게 한다.
+#   ⚠️★★이 런처는 ★종전까지 env 를 ★하나도 설정하지 않았다 — ★그래서 ★이 한 줄을 ★빠뜨리면
+#     ★15:10 에 안내한 지정가와 ★20:30 export_eod 의 주문계획이 ★서로 다른 값이 된다
+#     (★CAND-2026-10-20-35 와 ★같은 계열의 사고. ★HANDOFF 2026-10-22 v2 §0-0 2번이 경고한 바로 그것).
+#   ★경로 — export_preclose.py:76-77 → s2_candidates.reconstruct / .extract (둘 다 이식 완료).
+#   ★되돌리기 — ★이 한 줄 삭제(기본 0 = off = 종전 동일 · 출력 전문 대조로 확인).
+#   → quant_infra/2026-10/S2_NEWLIST_STAGE_ENTRY_GRID_2026-10-22.md §10
+$env:S2_NEWLIST_ENTRY_DROP = "0.05"                                    # ★신규상장 첫날 자격 건 진입 지연(상장 후 1회)
 & C:\Python314\python.exe "s2-trading-web\scripts\export_preclose.py" *>> $log
 # ★★[2026-08-24 · CAND-2026-08-23-630] rc 를 로그에 남긴다(로그만 더한다 · ps1 rc 불변).
 # ★★★[2026-08-24 신설 · CAND-2026-08-24-520] 아래 [RC] 줄을 ★try/catch 로 감싼다.

@@ -397,6 +397,20 @@ ORD_TGT_PCT = {}
 #    0.07 에서는 조건부 매도가 Calmar 를 깎는다(두 축이 회전율을 공유해 상충).
 #   ⚠️`add_drop` 자체는 **튜닝 대상이 아니다** — 0.100 → 0.105 한 스텝에 MDD −11.42 → −20.75.
 ADD_DROP = float(os.environ.get("S2_ADD_DROP", "0.07"))
+
+# ★★[CAND-2026-10-22-21 · 해달별님 발안·결정 2026-10-22] 신규상장 ★첫날 자격 건 — ★진입 한 칸 지연.
+#   ★적용 대상 = ★그 진입에 자격을 준 5,000억 봉이 ★상장 첫날인 건만.
+#   ★★범위 = ★★「상장 후 1회만」(해달별님 지시) — ★재진입은 ★정상 지지선에서 받는다.
+#   ★근거 — 결정창 격자 13점에서 ★0.05 가 ★내부 최대(0.04 17.3686 < ★17.5464 > 0.06 17.4408) ·
+#     기준선 17.3955 대비 ★+0.1509%p · ★peak·trough 13셀 동일 · ★노출은 ★줄었다(3.8898 → 3.7975%) ·
+#     ★효과/rMADd 1.415. ⚠️★「양 창」·「유의하다」·「최적」은 ★쓰지 말 것(부트 0 · F3·F4 미실시).
+#   ★되돌리기 — ★run_eod.ps1 의 S2_NEWLIST_ENTRY_DROP 한 줄 삭제(기본 0 = off = 종전 비트동일).
+#   → quant_infra/2026-10/S2_NEWLIST_STAGE_ENTRY_GRID_2026-10-22.md §10
+NEWLIST_ENTRY_DROP = float(os.environ.get("S2_NEWLIST_ENTRY_DROP", "0") or 0)
+NEWLIST_N2 = {"qual": 0, "entry_lowered": 0}   # ★발동 카운터(§4-2d 관문2)
+_NL_QUAL = set()        # (ticker, "YYYY-MM-DD") — 신규상장 첫날 자격으로 후보가 된 종목-일
+_FIRST_D = {}           # ticker -> DB 첫 등장일(= 상장일 추정)
+_NL_DELAY_USED = set()  # ★지연을 이미 쓴 ticker — ★첫 진입이 ★체결된 시점에 들어간다
 MAX_BUY = int(os.environ.get("S2_MAX_BUY", "3"))   # 1차 포함 총 매수 횟수(기본3=추가매수 2회)
 # ★★★[2026-09-02 신설 · CAND-2026-09-02-8] 재진입 포지션의 ★물타기 차수 제한.
 #   ⚠️★★왜 — ★결정창 573건 분해에서 ★재진입 2차이상 70건이 ★-47,544,876 이고,
@@ -1346,6 +1360,20 @@ def load(cfg: Config, end: date, start: date | None = None):
             within = (k - last) < WINDOW
             sm[(tk, ds[k])] = ds[last] if within else None
             smy[(tk, ds[k])] = ly if within else None
+    # ★[CAND-2026-10-22-21] 종목별 DB 첫 등장일 — ★신규상장 자격 판정용.
+    #   ⚠️★`px` 는 창으로 잘려 있어 ★「창의 첫날」을 쓰면 안 된다 ⇒ ★DB 전체 MIN(date).
+    #   ★off(0)면 ★조회 자체를 안 한다 ⇒ ★off 재현 자동 보장.
+    if NEWLIST_ENTRY_DROP > 0 and not _FIRST_D:
+        import sqlite3 as _sq3nl
+        _cnl = _sq3nl.connect(f"file:{cfg.db_path}?mode=ro", uri=True)   # ★읽기 전용(§0-3)
+        try:
+            for _tkx, _d0x in _cnl.execute(
+                    "SELECT ticker, MIN(date) FROM prices GROUP BY ticker"):
+                _FIRST_D[str(_tkx)] = str(_d0x)[:10]
+        finally:
+            _cnl.close()
+        print(f"  [NEWLIST21] 첫 등장일 맵 {len(_FIRST_D):,}종목 · "
+              f"entry_drop={NEWLIST_ENTRY_DROP}", flush=True)
     # ★시작일 절단 — 지표를 전부 계산한 **뒤에** 한다(위 주석 참조)
     if start is not None:
         _n0 = len(px)
@@ -1940,6 +1968,19 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             if not (pd.notna(r["ma20"]) and r["date"] >= period_start):
                 continue
             support = float(r["support"]); price = float(r["close"]); _is_knife = False
+            # ★★[CAND-2026-10-22-21] 신규상장 첫날 자격 판정 + ★진입 한 칸 지연.
+            #   ★`sm[(tk,d)]` 는 ★자격을 준 5,000억 봉의 날짜다 ⇒ 그것이 ★첫 등장일이면 신규상장 자격.
+            #   ⚠️★지지선은 ★신호일 값에 고정된다 — ★매일 갱신하면 자기추격(OBS-2026-10-21-3).
+            if NEWLIST_ENTRY_DROP > 0:
+                _rs0 = sm.get((tk, d))
+                if (_FIRST_D and _rs0 is not None
+                        and _FIRST_D.get(tk) == str(_rs0)[:10]):
+                    NEWLIST_N2["qual"] += 1
+                    _NL_QUAL.add((tk, str(d)[:10]))
+                    # ★★[해달별님 지시] ★상장 후 ★1회만 — ★재진입은 ★정상 지지선.
+                    if tk not in _NL_DELAY_USED:
+                        support = support * (1 - NEWLIST_ENTRY_DROP)
+                        NEWLIST_N2["entry_lowered"] += 1
             # 낙주(최근5일 급락) 처리 — skip: 진입 제외 / deep·deep_blend: 진입가를 3차매수 등가로 낮춰 단발 저가진입
             if KNIFE_ON and ENTRY_MIN_RET5 is not None and _RET5.get((tk, str(d)[:10]), 0.0) < ENTRY_MIN_RET5:
                 if KNIFE_MODE in ("deep", "deep_blend"):
@@ -2148,6 +2189,11 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     _tgts = KNIFE_TARGETS
                 elif KNIFE_MODE == "deep_blend":
                     _tmult = KNIFE_TGT_MULT
+            # ★★[해달별님 지시 2026-10-22] 진입 지연은 ★상장 후 1회만 —
+            #   ★지지선을 낮췄는데 ★그날 체결이 안 되면 ★아직 「쓴 것」이 아니다 ⇒
+            #   ★★포지션 생성 ★직전(= 체결 확정 시점)에만 ★소진시킨다.
+            if NEWLIST_ENTRY_DROP > 0 and (tk, str(d)[:10]) in _NL_QUAL:
+                _NL_DELAY_USED.add(tk)
             p = dict(tk=tk, name=stub["name"], market=stub["market"], entry_date=d,
                 last_buy_idx=didx[d], targets=_tgts,
                 knife=_kn, tgt_mult=_tmult,
@@ -3170,6 +3216,10 @@ def main():
         upsert_supabase_retrying(data)      # ★CAND-2026-09-02-15 — 되돌리기 S2_SUPABASE_RETRY=0
         if not args.no_notify:
             notify_eod(data)
+    # ★[CAND-2026-10-22-21] 발동 카운터 — ★off 면 한 줄도 안 찍는다.
+    if NEWLIST_ENTRY_DROP > 0:
+        print("  [NEWLIST21] 자격 종목-일 {:,} · 진입 지연 {:,} · ★지연1회적용종목 {:,}".format(
+            NEWLIST_N2["qual"], NEWLIST_N2["entry_lowered"], len(_NL_DELAY_USED)), flush=True)
     print("DONE")
 
 
