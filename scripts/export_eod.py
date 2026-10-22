@@ -1335,7 +1335,10 @@ def load(cfg: Config, end: date, start: date | None = None):
     thr = cfg.min_trading_value_krw
     sm, smy = {}, {}
     for tk, g in px.groupby("ticker"):
-        ds = g["date"].tolist(); tv = g["trading_value"].tolist()
+        # ★[CAND-2026-10-22-18] 자격 판정은 `tv_elig`(신규상장 첫날 제외분)를 쓴다.
+        #   ★`backtest._prepare` 가 ★게이트 on 일 때만 그 컬럼을 만든다 ⇒ ★off 면 종전과 동일.
+        ds = g["date"].tolist()
+        tv = (g["tv_elig"] if "tv_elig" in g.columns else g["trading_value"]).tolist()
         op = g["open"].tolist(); cl = g["close"].tolist(); last = -10**9; ly = None
         for k in range(len(ds)):
             if pd.notna(tv[k]) and tv[k] >= thr:
