@@ -910,6 +910,17 @@ def _stage_qty(stg, total_qty, remaining_qty):
 TIME_STOP_DAYS = int(os.environ.get("S2_TIME_STOP_DAYS", "15"))
 # 기간 손절 기준 시점: "entry" = 1차 매수일 (기본·엄격) / "last_buy" = 마지막 매수일 (매수마다 reset·관대)
 TIME_STOP_REF = os.environ.get("S2_TIME_STOP_REF", "entry").lower()
+
+# ── ★★[CAND-2026-10-23-4] 조기 손절 — ★D일차부터 평단 대비 X% (기본 off) ─────────
+#   ★해달별님 발안 2026-10-23 「2차 매수가 없다고 보고 2일까지는 기다리되 ★3일부터 -5% 손절」.
+#   ★0런 격자(45셀)가 ★원안보다 나은 좌표를 지목 — ★`2차+ · D=4 · X=-3`(Δ손익 +14,922,353원).
+#   ★사전등록 — quant_infra/prereg/2026-10-23_S2_조기손절_반사실.md
+#   ★게이트 — `S2_EARLY_STOP_D`(대기 영업일 · 0 = off) · `_X`(문턱 % · 음수) · `_MINBC`(최소 차수)
+#   ⚠️★`newlow_stop` → `time_stop` → ★이것 순서다 ⇒ ★앞 둘이 먼저 걸리면 ★안 돈다(순수 추가분만 잰다).
+EARLY_STOP_D = int(os.environ.get("S2_EARLY_STOP_D", "0") or 0)
+EARLY_STOP_X = float(os.environ.get("S2_EARLY_STOP_X", "0") or 0)
+EARLY_STOP_MINBC = int(os.environ.get("S2_EARLY_STOP_MINBC", "1") or 1)
+EARLY_N = {"fired": 0, "D": EARLY_STOP_D, "X": EARLY_STOP_X, "minbc": EARLY_STOP_MINBC}
 # 신저가 손절 트리거 기준: "intraday" = 그날 lo (장중) / "close" = 그날 cl (종가만)
 NEWLOW_TRIGGER = os.environ.get("S2_NEWLOW_TRIGGER", "intraday").lower()
 # ★★★[2026-09-02 신설 · CAND-2026-09-01-19] `not bought` 유예 — ★규명 게이트 · 기본 off.
@@ -1919,6 +1930,23 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 _net = p["qty"] * _tspx * SELL_MULT
                 cash += _net; p["proc"] += _net; p["qty"] = 0
                 close_trade(p, d, f"time_stop({TIME_STOP_DAYS}d)")
+                del positions[tk]; closed.add(tk); last_exit[tk] = d
+                continue
+
+            # ── ★★[CAND-2026-10-23-4] 조기 손절 — ★D일차부터 평단 대비 X% (기본 off) ──
+            #   ★`EARLY_STOP_D` 영업일 경과(진입일 = 1일차) + ★차수 >= MINBC + ★종가가 평단 대비 X% 이하
+            #   ⚠️★`sell_count` 조건은 ★두지 않는다(분할매도 1단계를 찍었어도 발동) — ★사전등록 재량 7
+            if (EARLY_STOP_D > 0 and p["buy_count"] >= EARLY_STOP_MINBC
+                    and (didx[d] - didx[p["entry_date"]]) >= (EARLY_STOP_D - 1)
+                    and p.get("avg_buy", 0) > 0
+                    and (cl / p["avg_buy"] - 1.0) * 100.0 <= EARLY_STOP_X):
+                _espx = _slip_fill(p, r, d, cl, p["qty"], 0.0, "early_stop")   # ★slip
+                ex(d, p, "stop", None, _espx, p["qty"], nav_today)
+                leg(p, d, "stop", None, _espx, p["qty"], nav_today)
+                _net = p["qty"] * _espx * SELL_MULT
+                cash += _net; p["proc"] += _net; p["qty"] = 0
+                EARLY_N["fired"] += 1
+                close_trade(p, d, f"early_stop({EARLY_STOP_D}d{EARLY_STOP_X:+.0f}%)")
                 del positions[tk]; closed.add(tk); last_exit[tk] = d
                 continue
 
