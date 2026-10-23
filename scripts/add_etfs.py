@@ -227,6 +227,107 @@ def _sb_client():
     return req
 
 
+# ★★★CAND-2026-10-20-8 — ★종목 범위 스테이징 swap.
+#   ★보고 → quant_infra/2026-10/RS_SWAP_QUEUE_CLOSE_2026-10-23.md
+#   ★마이그레이션 → supabase/migrations/2026-10-23_rs_universe_ticker_swap.sql
+#   ★모체 → export_rs_weekly.py:1104-1168 (`S2_RS_SWAP` · 채택 2026-10-20)
+#
+#   ★★무엇이 문제였나 — `:369-372` 가 ★종목별로 `DELETE` 한 뒤 `POST` 한다.
+#     ★그 사이에 죽으면 ★**그 1종목이 ★빈 채로 남는다**(`/rs96` 검색에 ★빈칸으로 보인다).
+#   ⚠️★★여기에는 ★`export_rs_weekly` 의 ★재시도(`S2_SUPABASE_RETRY`)가 ★없다 —
+#     ★`req()`(:213)는 ★`HTTPError` 를 ★`SystemExit` 으로 바꿔 ★한 번에 죽는다.
+#     ★그리고 ★`SystemExit` 은 ★`Exception` 이 ★아니라서 ★`:419` 의 종목별
+#     ★`except Exception` 을 ★통과해 ★스크립트 전체를 끝낸다.
+#
+#   ★★착상은 ★모체와 ★같다 — ★원자성은 ★「한 요청」이 아니라 ★「한 트랜잭션」에서 나온다.
+#     ①★그 (시장, 종목)분 ★스테이징 잔해를 ★먼저 지운다
+#     ②★행을 ★`rs_universe_weekly_staging` 에 ★올린다(★본표 무접촉)
+#     ③★`rs_universe_ticker_swap(market, [ticker])` ★1회가 ★교체한다
+#
+#   ⚠️★★모체 함수(`rs_weekly_swap`)를 ★그대로 쓰면 ★안 된다 — ★그것은
+#     ★`market = any(...)` 범위라 ★**그 시장 본표 전체**를 ★ETF 로 ★교체해 버린다.
+#     ★그래서 ★(시장, 종목) 범위 함수를 ★하나 ★더 만들었다.
+#
+#   ★★스테이징 표는 ★**새로 만들지 않는다** — ★모체 마이그레이션이 만든 것을 쓴다.
+#   ⚠️★그 표에는 ★주간 export 행이 ★남아 있다(모체가 ★끝에 비우지 않는 설계).
+#     ★그래서 ★①의 ★(시장, 종목) 삭제가 ★선택이 아니라 ★**필수**다.
+#
+#   ★되돌리기 — `S2_ETF_SWAP=0`(★기본값) ★한 줄.
+ETF_SWAP = os.environ.get("S2_ETF_SWAP", "0").strip() == "1"
+ETF_STAGING_SUFFIX = "_staging"
+
+
+def _etf_swap_body(market: str, tickers) -> dict:
+    """★swap RPC 본문 — ★네트워크를 ★타지 않는 ★순수 함수.
+
+    ★★분리한 이유는 ★모체 `_rs_swap_body` 와 ★같다 — ★off 재현 검증을 ★네트워크 없이
+      하려면 ★본문 생성이 ★POST 와 ★분리돼 있어야 한다.
+    ★★그리고 ★이 본문이 ★이 설계의 전부다 — ★**행이 한 건도 안 실린다.**
+    ⚠️★`tickers` 를 ★sorted 로 고정한다 — ★집합 순회는 ★프로세스마다 다르다(PYTHONHASHSEED).
+    """
+    return {"p_market": market, "p_tickers": sorted(tickers)}
+
+
+def _etf_swap_post(body: dict, sent: int) -> None:
+    r"""★`public.rs_universe_ticker_swap` 를 ★1회 호출하고 ★행수로 검산한다.
+
+    ★★분리한 이유 — ★모체 `_rs_swap_post` 와 ★같다. ★off 재현 하니스가 ★네트워크도
+      ★env 도 ★안 타게 하려면 ★이 경계가 ★있어야 한다(★하니스가 ★이 함수를 통째로 교체한다).
+    ⚠️★검산은 ★rc 가 아니라 ★함수가 돌려준 ★행수로 한다(모체 교훈 승계).
+    """
+    raw = json.dumps(body).encode("utf-8")
+    base = os.environ["SUPABASE_URL"].rstrip("/") + "/rest/v1"
+    key = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+    h = {"apikey": key, "Authorization": f"Bearer {key}",
+         "Content-Type": "application/json"}
+    r = urllib.request.Request(base + "/rpc/rs_universe_ticker_swap", data=raw,
+                               method="POST", headers=h)
+    try:
+        with urllib.request.urlopen(r, timeout=300) as resp:
+            got = json.loads(resp.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        _b = e.read().decode("utf-8")[:600]
+        raise SystemExit(
+            f"[supabase] POST /rpc/rs_universe_ticker_swap 실패 {e.code}: {_b}\n"
+            f"   ★본표는 ★종전 상태 그대로다(트랜잭션 ROLLBACK) — ★빈 표가 ★아니다.\n"
+            f"   ★함수가 없으면: "
+            f"supabase/migrations/2026-10-23_rs_universe_ticker_swap.sql 을 적용할 것.\n"
+            f"   ★되돌리기: S2_ETF_SWAP=0")
+    except (urllib.error.URLError, OSError) as e:
+        raise SystemExit(
+            f"[supabase] POST /rpc/rs_universe_ticker_swap ★네트워크 실패: {e!r}\n"
+            f"   ★본표는 ★종전 상태 그대로다(트랜잭션 미완 = ROLLBACK).\n"
+            f"   ★되돌리기: S2_ETF_SWAP=0")
+
+    if isinstance(got, list):          # PostgREST 가 배열로 싸는 경우
+        got = got[0] if got else {}
+    ins = (got.get("inserted") or {}).get("rs_universe_weekly")
+    if ins != sent:
+        raise SystemExit(
+            "[supabase] ★swap 적재 행수 불일치 — 보냄 %d / DB %s\n"
+            "   ★함수 정의를 확인할 것." % (sent, ins))
+    _del = (got.get("deleted") or {}).get("rs_universe_weekly")
+    print("  [swap] 교체 완료 · 행수 검산 통과 (삭제 %s · 적재 %s)" % (_del, ins))
+
+
+def _etf_swap_load(req, market: str, ticker: str, rows: list) -> None:
+    r"""★★CAND-2026-10-20-8 — ★스테이징 적재 + ★swap 1회.
+
+    ★★요청 모양이 ★종전과 ★같다 — ★표 이름에 `_staging` 이 붙을 뿐이다.
+      ★그래서 ★`req()` 를 ★그대로 쓴다(★청크 500 도 ★그대로).
+    ⚠️★`--weeks 56` 이라 ★`len(rows) <= 56` 이고 ★청크는 ★사실상 ★항상 1개다 —
+      ★즉 ★종전 경로에서도 ★**부분 적재는 원리적으로 안 난다.**
+      ★★이 처치가 없애는 것은 ★「부분 적재」가 아니라 ★**DELETE 성공 뒤 POST 실패로
+      ★그 1종목이 ★빈 채로 남는 창**이다.
+    """
+    S = ETF_STAGING_SUFFIX
+    q = urllib.parse.quote(ticker)
+    req("DELETE", f"/rs_universe_weekly{S}?market=eq.{market}&ticker=eq.{q}")
+    for i in range(0, len(rows), 500):
+        req("POST", f"/rs_universe_weekly{S}", rows[i:i + 500])
+    _etf_swap_post(_etf_swap_body(market, [ticker]), len(rows))
+
+
 def fetch_market_distribution(req, market: str, week: str) -> list[float]:
     """그 시장·주차 universe 종목들의 comp_return 분포 (RS 백분위 계산용)."""
     out: list[float] = []
@@ -366,10 +467,14 @@ def process_etf(req, etf: dict, market: str, market_weeks: list[str],
         print(f"  ⚠ 적재 row 0개")
         return 0
 
-    req("DELETE",
-        f"/rs_universe_weekly?market=eq.{market}&ticker=eq.{urllib.parse.quote(ticker)}")
-    for i in range(0, len(rows), 500):
-        req("POST", "/rs_universe_weekly", rows[i:i+500])
+    # ★★CAND-2026-10-20-8 — ★게이트 on 이면 ★스테이징 + swap(★기본 off = 종전 경로).
+    if ETF_SWAP:
+        _etf_swap_load(req, market, ticker, rows)
+    else:
+        req("DELETE",
+            f"/rs_universe_weekly?market=eq.{market}&ticker=eq.{urllib.parse.quote(ticker)}")
+        for i in range(0, len(rows), 500):
+            req("POST", "/rs_universe_weekly", rows[i:i+500])
     latest_rs = rows[0]["rs"]
     print(f"  ✓ {len(rows)}주 적재 · 최신 RS{latest_rs}")
     return len(rows)
