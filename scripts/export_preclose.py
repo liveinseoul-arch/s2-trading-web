@@ -69,7 +69,8 @@ def notify_preclose_fail(today_str, last_cached_str):
 
 
 def build(target_date, live):
-    cfg = Config(); cfg.lookback_days = sc.WINDOW
+    # ★★[CAND-2026-10-24-21] 15:10 알람을 20:30 계획과 맞춘다 — ★`S2_CAND_SYNC_OPS` off 면 ★종전 비트동일.
+    cfg = sc.apply_ops_sync(Config()); cfg.lookback_days = sc.WINDOW
     requested_live = bool(live)                     # 폴백 감지용: 호출 시점에 live 모드를 요청했는지
     px, nmap, mmap, target, live_out = sc.prepare(cfg, target_date, live)
     fallback = requested_live and not live_out      # 라이브 요청 → 캐시로 떨어졌으면 KRX 실패
