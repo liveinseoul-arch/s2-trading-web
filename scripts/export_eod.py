@@ -738,6 +738,14 @@ REENTRY_CD_N = {"blocked": 0}   # ★발동 카운터(VB_SKIP·PH_N 과 같은 �
 #   ★되돌리기 — run_eod.ps1 의 env 줄 삭제.
 #   근거: quant_infra/2026-08/REPRICE_S2_TRANSFER_2026-08-22.md §0·§2-3
 EXRIGHTS_BLOCK = os.environ.get("S2_EXRIGHTS_BLOCK", "0") == "1"
+# ★★[2026-10-23 · `CAND-2026-08-23-950` · ★해달별님 결정 「나머지 다 권고대로」= ★B안]
+#   ★★날짜 하한 — ★이 날짜 ★**이전**의 하한가 탐지는 ★버린다.
+#   ★★왜 — ★2019-03-11 ★이전 구간은 ★수집 경로가 달라 ★거래대금·가격 계열에 ★결함이 있고
+#     ★그 구간의 ★「하한가 이탈」이 ★제도상 불가능한 ★**오탐**으로 섞인다(CLAUDE.md §3-1).
+#     ★그 오탐이 ★ops 재검정 ★기준선에 ★그대로 들어갔다.
+#   ★★**코드 기본값은 `""`(= 하한 없음 = 종전 비트 동일)** — ★런처에서만 켠다.
+#   ★되돌리기 — ★`run_eod.ps1` 의 ★`S2_EXRIGHTS_FROM` ★한 줄 삭제.
+EXRIGHTS_FROM = (os.environ.get("S2_EXRIGHTS_FROM", "") or "").strip()[:10]
 EXR_N = {"hit": 0}              # ★발동 카운터(canonical 과 동일 이름 — 대조 검증용)
 EXR_HITS = []                   # (ticker, date, ratio)
 
@@ -1060,6 +1068,7 @@ SLIP_PATHS = ({"stop_stage"} if SLIP_SCOPE == "daybuf"
 #   fire = 실제로 체결가가 내려간 leg 수 · flat = 계산했으나 호가단위상 변화 0 ·
 #   cap = 상한에 걸린 수 · seam = 이음매 가드가 분모를 강등한 수 · nodenom = 분모 결측.
 SLIP_N = {"eval": 0, "fire": 0, "flat": 0, "cap": 0, "seam": 0, "nodenom": 0,
+          "floorwin": 0,                 # ★[CAND-2026-10-20-10] 하한(DAY_BUF)이 이긴 건수
           "disc": 0.0, "amt": 0.0, "est_max": 0.0, "m_max": 0.0,
           "f_stop_stage": 0, "f_sell": 0, "f_newlow_stop": 0, "f_time_stop": 0}
 if SLIP_ON:
@@ -1311,6 +1320,12 @@ def _slip_fill(p, r, d, base_px, qty, buf_applied, path):
     SLIP_N["m_max"] = max(SLIP_N["m_max"], m)
     extra = m - buf_applied
     if extra <= 0:                                          # 하한(DAY_BUF)이 이긴다
+        # ★★[2026-10-23 · `CAND-2026-10-20-10` · ★해달별님 결정 「나머지 다 권고대로」= ★B안]
+        #   ★★발동 카운터 ★한 줄 — ★종전엔 ★이 분기가 ★아무것도 안 세어
+        #     ★`[slip]` 출력의 ★`eval` 산술이 ★닫히지 않았다(사람이 역산해야 했다).
+        #   ★이제 ★eval = fire + flat + nodenom + floorwin (+ 조기반환) 로 ★맞는다
+        #     ⇒ ★§4-2d 관문 2(사문)가 ★사람 없이 성립한다.
+        SLIP_N["floorwin"] += 1
         return base_px
     out = _to_tick(base_px * (1 - extra), mode="floor")
     if out >= base_px:                                      # 호가단위 해상도상 변화 없음
@@ -1582,6 +1597,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 _pc, _cc = _cl[_i - 1], _cl[_i]
                 if _pc <= 0 or _cc <= 0:
                     continue
+                if EXRIGHTS_FROM and _dstr[_i] < EXRIGHTS_FROM:
+                    EXR_N["pre_cut"] = EXR_N.get("pre_cut", 0) + 1
+                    continue        # ★[CAND-2026-08-23-950] 하한 이전은 버린다(기본 off)
                 _lim = 0.30 if _dstr[_i] >= "2015-06-15" else 0.15
                 if (_cc / _pc < (1.0 - _lim) - 1e-9
                         and (_vo is None or _vo[_i - 1] > 0)
@@ -1590,7 +1608,10 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     EXR_HITS.append((_tk, _dstr[_i], round(_cc / _pc, 6)))
                     for _m in range(_i, min(len(_g), _i + _MA_PERIOD)):
                         _EX_BLOCK.add((_tk, _dstr[_m]))
-        print(f"[exrights-block] 권리락 진입차단 on — 발동 {EXR_N['hit']}건 · 차단일수 {len(_EX_BLOCK)}종목-일")
+        print(f"[exrights-block] 권리락 진입차단 on — 발동 {EXR_N['hit']}건 · "
+              f"차단일수 {len(_EX_BLOCK)}종목-일"
+              + (f" · ★날짜하한 {EXRIGHTS_FROM} 이전 제외 {EXR_N.get('pre_cut', 0)}건"
+                 if EXRIGHTS_FROM else " · 날짜하한 없음(기본)"))
 
     # (실험) 종목별 최근 RISE2W_WIN 거래일 순방향 최대상승폭(저점→이후고점) — 매수우선순위·차등목표 공용.
     _RISE2W = {}
@@ -3164,6 +3185,13 @@ def main():
     #     eval(계산 시도) 대비 fire(실제 하향) / flat(호가단위상 무변화) / nodenom(분모 결측)
     #     의 내역이 함께 나오므로 둘을 구분할 수 있다.
     if SLIP_ON:
+        # ★★[2026-10-23 · `CAND-2026-10-20-10`] ★산술이 닫히는지 그 자리에서 검산한다.
+        _slip_sum = (SLIP_N['fire'] + SLIP_N['flat'] + SLIP_N['nodenom']
+                     + SLIP_N['floorwin'])
+        print(f"[slip] ★산술 검산 — eval {SLIP_N['eval']} = fire {SLIP_N['fire']} "
+              f"+ flat {SLIP_N['flat']} + nodenom {SLIP_N['nodenom']} "
+              f"+ floorwin {SLIP_N['floorwin']} = {_slip_sum} "
+              f"{'✅일치' if _slip_sum == SLIP_N['eval'] else '⚠️★차 %+d' % (_slip_sum - SLIP_N['eval'])}")
         print(f"[slip] 마진 계산 {SLIP_N['eval']}건 → ★체결가 하향 {SLIP_N['fire']}건 "
               f"(호가단위상 무변화 {SLIP_N['flat']} · 분모결측 {SLIP_N['nodenom']} · "
               f"상한 {SLIP_N['cap']} · 이음매가드 {SLIP_N['seam']})")
