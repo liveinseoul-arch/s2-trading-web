@@ -789,6 +789,21 @@ for _x in (t.strip() for t in _f4x_s.split(",") if t.strip()):
 #       ★0(기본)=재배분 없음 · ★1.5=채택 권고(T1 과 같은 값).
 #   ★되돌리기 — `S2_LIQ_PART_MAX` 를 지운다(= 0 = off).
 LIQ_PART_MAX = float(os.environ.get("S2_LIQ_PART_MAX", "0") or 0)
+
+# ★★★[2026-10-24 신설 · CAND-2026-10-24-33 · ★해달별님 「진행」] ★분모 선택.
+#   ★★왜 — ★`med20` 은 ★20거래일 ★중앙값이라 ★상장 초기 폭발을 ★머금는다.
+#     ★실측(선행 0런) — ★당일 거래대금의 ★**최대 17.83배** ⇒
+#     ★med20 참여율이 ★상한 3.00%% 에 걸렸는데 ★당일 참여율은 ★**11.65%%**(3.88배).
+#   ★★선행 격자의 권고 좌표 = ★`tv5min` + `S2_LIQ_PART_MAX=0.01`
+#     ⇒ ★당일 3%% 초과 ★**22 → 0** · ★총투입 ★**−4.88%%**.
+#   ⚠️★★창 규약은 ★`med20` 과 ★같다(`d-4 … d` · `min_periods=1` · ★정지봉 제외) —
+#     ★**룩어헤드가 아니다**. ★EOD 는 ★`d` 마감 후 돌면서 ★`d+1` 주문계획을 만들므로
+#     ★`d` 거래대금은 ★이미 안다. ★체결일(`d+1`)을 분모에 쓰면 ★그때가 룩어헤드다
+#     (★선행 md §4 가 ★스스로 정정한 지점 — ★1차 계산이 거기에 걸렸다).
+#   ★되돌리기 — ★`S2_LIQ_DEN` 을 지운다(= `med20` = ★종전 비트 동일).
+LIQ_DEN = os.environ.get("S2_LIQ_DEN", "med20").strip().lower()
+if LIQ_DEN not in ("med20", "tv5min", "tv20min", "tv20p25"):
+    raise SystemExit("⚠️★S2_LIQ_DEN 은 med20/tv5min/tv20min/tv20p25 만 받는다 — %r" % LIQ_DEN)
 LIQ_ON = LIQ_PART_MAX > 0
 LIQ_LEGS = (os.environ.get("S2_LIQ_LEGS", "all").strip().lower() or "all")
 LIQ_RA = float(os.environ.get("S2_LIQ_REALLOC", "0") or 0)
@@ -833,7 +848,16 @@ def _liq_prepare(px):
     """
     v = px[px["trading_value"].fillna(0) > 0]        # ★거래가 있던 봉만(정지봉 제외)
     g = v.groupby("ticker")["trading_value"]
-    med = g.transform(lambda s: s.rolling(20, min_periods=1).median())
+    # ★★[2026-10-24 · CAND-2026-10-24-33] ★분모를 ★`S2_LIQ_DEN` 으로 고른다.
+    #   ★기본 `med20` 은 ★종전과 ★한 글자도 다르지 않다(아래 첫 분기).
+    if LIQ_DEN == "med20":
+        med = g.transform(lambda s: s.rolling(20, min_periods=1).median())
+    elif LIQ_DEN == "tv5min":
+        med = g.transform(lambda s: s.rolling(5, min_periods=1).min())
+    elif LIQ_DEN == "tv20min":
+        med = g.transform(lambda s: s.rolling(20, min_periods=1).min())
+    else:   # tv20p25
+        med = g.transform(lambda s: s.rolling(20, min_periods=1).quantile(0.25))
     for tk, dd, m in zip(v["ticker"].to_numpy(), v["date"].to_numpy(), med.to_numpy()):
         _LIQ_MED[(tk, str(dd)[:10])] = 0.0 if m != m else float(m)
     # ★★[CAND-2026-10-20-1] "last" 모드에서만 ★종목별 유효봉 날짜를 정렬해 둔다
@@ -848,7 +872,8 @@ def _liq_prepare(px):
     # ★정지봉 날짜는 맵에 ★안 넣는다 → `_liq_cap_krw` 가 None(무제한)을 돌려준다.
     #   ★정지봉에 사는 것은 ★이 게이트가 아니라 ★유효봉 가드(VALID_BAR)의 몫이다 — 축이 다르다.
     print("[LIQ] 참여율 상한 on — PART_MAX=%.4f · LEGS=%s · REALLOC=%s · med20 맵 %d"
-          % (LIQ_PART_MAX, LIQ_LEGS, LIQ_RA, len(_LIQ_MED)))
+          % (LIQ_PART_MAX, LIQ_LEGS, LIQ_RA, len(_LIQ_MED)), end="")
+    print(" · 분모 %s" % LIQ_DEN)
 
 
 def _liq_cap_krw(tk, d):
