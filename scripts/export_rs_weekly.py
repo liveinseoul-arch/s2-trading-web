@@ -225,6 +225,22 @@ LOG_MCAP_GAP = str(os.environ.get("RS_LOG_MCAP_GAP", "0")).strip().lower() \
 # ★발동 카운터(§4-2d 관문 2) — ★seen 이 0 이면 ★루프를 안 탄 것(사문)이다.
 MCAP_GAP_N = {"seen": 0, "nan": 0, "below_pct": 0, "below_min": 0}
 
+# ★★★[2026-10-24 신설 · `CAND-2026-10-24-36`] RS_YF_SUFFIX_FIX
+#   ⚠️★결함 — `fetch_daily_fallback` 의 ★KR 분기가 ★야후 접미사를 ★무조건 덧붙여
+#     `000400.KS` → `000400.KS.KS` 가 된다. ★JP 분기는 `tk.endswith(".T")` 로
+#     ★이미 같은 일을 하는데 ★KR 만 빠져 있었다.
+#   ★KR 캐시 키는 ★전부 접미사를 ★이미 갖고 있다(★실측 2026-10-24 —
+#     `_kr_weekly_cache.pkl` ★3,919/3,919 · `_kr_daily_cache.pkl` ★192/192)
+#     ⇒ ★★KR 일봉 EMA 폴백은 ★한 번도 성공한 적이 없다(★구조적 100% 404).
+#   ★실측 — ★현행 꼴 6요청 ★0성공 / ★수리 꼴 3요청 ★3성공(각 304봉).
+#   ★대조 — ★US 분기는 접미사를 ★안 붙여 ★215/219(98.2%) 성공한다.
+#   ★기본 "0" = ★종전 동작(★`symbols()` 반환이 ★전 종목에서 동일).
+#   ★되돌리기 — 런처에서 한 줄을 지운다(★기본값이 off 다).
+YF_SUFFIX_FIX = (str(os.environ.get("RS_YF_SUFFIX_FIX", "0")).strip().lower()
+                 not in ("", "0", "off", "false", "no"))
+# ★발동 카운터(§4-2d 관문 2) — ★seen 이 0 이면 `symbols()` 를 안 탄 것(사문)이다.
+YF_SUFFIX_N = {"seen": 0, "stripped": 0}
+
 US_SHARES_PKL = "_bt_shares_us.pkl"
 JP_SHARES_PKL = "_bt_shares_jp.pkl"
 JP_MKTCAP_YAHOO_PKL = "_jp_mktcap_yahoo.pkl"   # finance.yahoo.co.jp 직접 시총(엔). 우선순위 1.
@@ -511,6 +527,11 @@ def fetch_daily_fallback(market, tickers, max_n=300):
 
     def symbols(tk):
         if market == "KR":
+            YF_SUFFIX_N["seen"] += 1
+            # ★`CAND-2026-10-24-36` — 이미 야후 형식이면 덧붙이지 않는다(JP 와 같은 꼴)
+            if YF_SUFFIX_FIX and (tk.endswith(".KS") or tk.endswith(".KQ")):
+                YF_SUFFIX_N["stripped"] += 1
+                return [tk]
             return [f"{tk}.KS", f"{tk}.KQ"]
         if market == "JP":
             if tk.endswith(".T"):
@@ -875,6 +896,11 @@ def fetch_market(market, weeks_back):
                 if r["ema_21"] is not None:
                     patched += 1
         print(f"  일봉 EMA 폴백: 결측 {len(missing)}개 → {len(fb_lookup)}개 수집 · {patched}행 보강")
+        if YF_SUFFIX_FIX:
+            print("  ★[YF-SUFFIX] symbols() 호출 %s · 접미사 중복 회피 %s "
+                  "(`CAND-2026-10-24-36`)"
+                  % (format(YF_SUFFIX_N["seen"], ","),
+                     format(YF_SUFFIX_N["stripped"], ",")), flush=True)
 
     # ★★★[2026-09-16 신설 · 해달별님 요청] RS_UNIV_STICKY — ★조회하면 ★추이가 보이게
     #   ⚠️★문제 — ★`rs_history_weekly` 는 ★**RS96 을 한 번이라도 넘은 종목**만 담는다.
