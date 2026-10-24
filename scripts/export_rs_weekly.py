@@ -215,6 +215,16 @@ def _mktcap_top_pct(market):
     return MKTCAP_TOP_PCT.get(market)
 
 
+# ★★[CAND-2026-09-30-2 · 처치③] ★시총 결측으로 ★조용히 탈락한 종목-주를 ★센다.
+#   ⚠️★지금은 ★데이터가 없어서 빠지는데 ★로그에도 안 나와 ★규모를 모른다
+#     (★실측 2026-09-30 — US 공백 993/6,417 = 15.5% · 그중 894(90.0%)가 생존 종목).
+#   ★기본 "0" = ★한 줄도 안 찍는다 = ★종전 stdout 과 ★바이트 동일.
+#   ★되돌리기 — 런처 3줄을 지운다(기본값이 off 다).
+LOG_MCAP_GAP = str(os.environ.get("RS_LOG_MCAP_GAP", "0")).strip().lower() \
+    not in ("", "0", "off", "false", "no")
+# ★발동 카운터(§4-2d 관문 2) — ★seen 이 0 이면 ★루프를 안 탄 것(사문)이다.
+MCAP_GAP_N = {"seen": 0, "nan": 0, "below_pct": 0, "below_min": 0}
+
 US_SHARES_PKL = "_bt_shares_us.pkl"
 JP_SHARES_PKL = "_bt_shares_jp.pkl"
 JP_MKTCAP_YAHOO_PKL = "_jp_mktcap_yahoo.pkl"   # finance.yahoo.co.jp 직접 시총(엔). 우선순위 1.
@@ -657,11 +667,19 @@ def extract_week(week_ts, market, rs_table, weekly_cache, ticker_names,
 
         # mktcap 필터 — universe 통과 여부
         mc_val = mktcap_lookup(tk, week_ts, last_close)
+        if LOG_MCAP_GAP:
+            MCAP_GAP_N["seen"] += 1
+            if np.isnan(mc_val):
+                MCAP_GAP_N["nan"] += 1      # ★데이터가 없어서 빠진다(이 후보의 표적)
         if mktcap_top is not None and not np.isnan(pct_threshold):
             if np.isnan(mc_val) or mc_val < pct_threshold:
+                if LOG_MCAP_GAP and not np.isnan(mc_val):
+                    MCAP_GAP_N["below_pct"] += 1   # ★규칙대로 빠진다(정상)
                 continue
         if mktcap_min is not None:
             if np.isnan(mc_val) or mc_val < mktcap_min:
+                if LOG_MCAP_GAP and not np.isnan(mc_val):
+                    MCAP_GAP_N["below_min"] += 1   # ★규칙대로 빠진다(정상)
                 continue
 
         # universe 통과 — RS 컷오프 무관하게 저장
@@ -804,6 +822,8 @@ def fetch_market(market, weeks_back):
     hist_by_ticker = {}
     rs96_tickers = set()
     universe_all = []
+    if LOG_MCAP_GAP:        # ★한 프로세스가 여러 시장을 돌면 누적된다 — 시장마다 리셋
+        MCAP_GAP_N.update(seen=0, nan=0, below_pct=0, below_min=0)
 
     for i, w in enumerate(weeks, 1):
         top96, all_rs, universe = extract_week(w, market, rs_table, weekly_cache,
@@ -821,6 +841,15 @@ def fetch_market(market, weeks_back):
         if i % 10 == 0 or i == len(weeks):
             print(f"  진행 {i}/{len(weeks)}주 · top96 누적 {len(top96_all):,}건 · "
                   f"universe 누적 {len(universe_all):,}건", flush=True)
+
+    if LOG_MCAP_GAP:
+        _g = MCAP_GAP_N
+        print("  ★[MCAP-GAP] %s 종목-주 %s 중 ★시총 결측 %s (%.2f%%) — "
+              "★조용히 탈락 · 상위%% 미달 %s · 절대하한 미달 %s"
+              % (market, format(_g["seen"], ","), format(_g["nan"], ","),
+                 100.0 * _g["nan"] / max(1, _g["seen"]),
+                 format(_g["below_pct"], ","), format(_g["below_min"], ",")),
+              flush=True)
 
     # ── 일봉 EMA 폴백 — 표시 대상(RS96 이력 + 최신주 RS86+) 중 일봉 캐시 결측분 ──
     latest_str = weeks[-1].date().isoformat()
