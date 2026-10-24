@@ -27,6 +27,12 @@ function RunPy($label, [string[]]$pyArgs) {
 
 RunPy "1 Rebuild"     @("$qb\Rebuild_weekly_cache.py")
 RunPy "2 14_RS_KR"    @($silent, "$qb\14_RS_KR_pykrx.py")
+# ★★[2026-10-24 · CAND-2026-10-24-1 · ★해달별님 승인] ★정본 런처와 ★동기한다.
+#   ★`run_rs_kr_jp.ps1:259`·`:317` · `run_rs_us.ps1:95` 가 ★이미 `=1` 이다.
+#   ⚠️★게이트 기본값이 ★off 라 ★이 수동 런처는 ★swap 없이 돌았다
+#     ⇒ ★적재가 실패하면 ★그 시장 3표가 ★빈 채로 남는다.
+#   ★되돌리기 = ★이 줄을 지운다(한 줄).
+$env:S2_RS_SWAP = "1"
 RunPy "4 export KR"   @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "KR", "--weeks", "56", "--full-universe")
 RunPy "6 add KR ETFs" @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")
 # ★★[2026-09-18 · 해달별님 지시] ★이 런처는 ★스케줄러 미등록 = ★수동용이다.

@@ -26,6 +26,12 @@ function RunPy($label, [string[]]$pyArgs) {
 "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') rs_jp_only start (FETCH_WORKERS=$env:FETCH_WORKERS) =====" | Out-File -Append -Encoding utf8 $log
 
 RunPy "3 15_RS_JP"   @($silent, "$qb\15_RS_JP_screen.py")
+# ★★[2026-10-24 · CAND-2026-10-24-1 · ★해달별님 승인] ★정본 런처와 ★동기한다.
+#   ★`run_rs_kr_jp.ps1:259`·`:317` · `run_rs_us.ps1:95` 가 ★이미 `=1` 이다.
+#   ⚠️★게이트 기본값이 ★off 라 ★이 수동 런처는 ★swap 없이 돌았다
+#     ⇒ ★적재가 실패하면 ★그 시장 3표가 ★빈 채로 남는다.
+#   ★되돌리기 = ★이 줄을 지운다(한 줄).
+$env:S2_RS_SWAP = "1"
 RunPy "5 export JP"  @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "JP", "--weeks", "56", "--full-universe")
 # ★★[2026-09-18 · 해달별님 지시] ★이 런처는 ★스케줄러 미등록 = ★수동용이다.
 #   ★그래서 ★flash 를 쓴다 — ★pro 는 ★스케줄 3잡(S2_rs_kr_jp · S2_rs_us)에만.
