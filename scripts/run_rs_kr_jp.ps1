@@ -257,6 +257,8 @@ $jobJP = Start-Job -Name "JP chain" -ScriptBlock {
     # ★★CAND-2026-10-20-29 — 스테이징 swap. ⚠️★JP 는 ★별 Job(별 프로세스)이라 ★여기 ★따로 박는다
     #   (★메인에 넣고 ★상속을 믿으면 ★JP 만 ★종전 경로로 돌 수 있다 — §0-5b 와 같은 계열).
     $env:S2_RS_SWAP    = "1"
+    # ★★[2026-10-24 · CAND-2026-09-30-2 처치③ · 해달별님 2026-10-23 승인] ★시총 결측 탈락을 ★로그에 낸다(★적재 무변경).
+    $env:RS_LOG_MCAP_GAP = "1"
     function J($label, [string[]]$a) {
         "$(Get-Date -Format 'HH:mm:ss')  [$label] start" | Out-File -Append -Encoding utf8 $jobLog2
         try { & C:\Python314\python.exe @a *>> $jobLog2 } catch { "[$label] FAILED: $_" | Out-File -Append -Encoding utf8 $jobLog2 }
@@ -315,6 +317,8 @@ RunPyGate "2 14_RS_KR"   "C:\Python314\python.exe" @($silent, "$qb\14_RS_KR_pykr
 #   ★검증 — ★off 재현 요청 열 sha256 ★6/6 · ★컬럼 대조 ★3표 통과 · ★쓰기 0 가드 통과.
 #   ★되돌리기 — ★이 줄(과 JP Job 안의 같은 줄)을 ★지우면 ★종전 경로다(기본값 0).
 $env:S2_RS_SWAP = "1"
+# ★★[2026-10-24 · CAND-2026-09-30-2 처치③ · 해달별님 2026-10-23 승인] ★시총 결측 탈락을 ★로그에 낸다(★적재 무변경).
+$env:RS_LOG_MCAP_GAP = "1"
 RunPyGate "4 export KR"  $rsExportPy @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "KR", "--weeks", "56", "--full-universe")
 # export 가 (해당 마켓의) universe 전체 삭제 후 재적재 → KR ETF 재적재 필요 (JP 는 ETF 화이트리스트 없음)
 RunPyGate "6 add KR ETFs" $rsExportPy @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")

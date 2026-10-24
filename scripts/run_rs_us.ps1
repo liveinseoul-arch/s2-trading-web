@@ -93,6 +93,8 @@ RunPy "1 13_RS_US"    @($silent, "$qb\13_RS_US_screen.py")
 #   ★선결 — ★마이그레이션 `supabase/migrations/2026-10-20_rs_weekly_swap.sql` ★적용 완료.
 #   ★되돌리기 — ★이 줄을 ★지우면 ★종전 경로다(기본값 0).
 $env:S2_RS_SWAP = "1"
+# ★★[2026-10-24 · CAND-2026-09-30-2 처치③ · 해달별님 2026-10-23 승인] ★시총 결측 탈락을 ★로그에 낸다(★적재 무변경).
+$env:RS_LOG_MCAP_GAP = "1"
 RunPy "2 export US"   @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "US", "--weeks", "56", "--full-universe")
 RunPy "3 add US ETFs" @("s2-trading-web\scripts\add_etfs.py", "--market", "US", "--weeks", "56")
 
