@@ -113,6 +113,19 @@ $env:BT_END_DATE = $endDate
 $env:BT_ENTRY_MODE = "immediate"
 $env:BT_MARKET_FILTER = "1"
 $env:BT_MFILTER_MODE = "half"
+# ⚠️★★[2026-10-24 · CAND-2026-09-05-2] ★이름이 MKTCAP 인데 ★거르는 것은 ★거래대금이다.
+#   ★`BT_MKTCAP_TOP_PCT` → `filter_kr_mktcap_top()`(17_88_cmp_sf1.py:1574)
+#     = ★`close x volume` 상위 20%. ★엔진 배너도 「KR: 원화 기준 RS / ★거래대금 상위 20%」로 찍는다.
+#   ★진짜 시총 게이트는 ★`BT_KR_MKTCAP_TOP`(:315 · ★기본 0 = OFF)이고
+#     ★별도 파일 `screen\_kr_mktcap_top20.pkl`(thr·mc·top_pct)을 쓴다.
+#   ★★즉 ★RS 는 ★시총으로 거른 적이 ★한 번도 없다.
+#   ⚠️★★그리고 ★지금 켜면 ★안 된다 — ★`thr` 커버리지가 ★2018-01-02 – 2026-04-17(109점)인데
+#     ★창은 ★2016-01-01 이고, `kr_mktcap_pass`(:351)가 ★`thr` NaN 이면 ★무조건 미통과다.
+#     ★실측(2026-10-24 · 결정창 --end 2024-12-31 · 쌍 2런) — 거래 ★354 → 336(−18) 인데
+#     ★사라진 19건 중 ★18건이 ★2017년(= 커버리지 밖) · 1건은 ★mc 결측(031980.KS)이고
+#     ★★「진짜 시총 미달」로 떨어진 것은 ★0건이다. ★원장 차이 전부가 ★데이터 아티팩트다.
+#   근거: results\rs_kr_mktcap_gate_ledger_2026-10-24.csv · rs_kr_mktcap_gate_cause_2026-10-24.csv
+#         러너 archive\_2026-10-24_rs_kr_mktcap_gate.py
 $env:BT_MKTCAP_TOP_PCT = "0.20"
 $env:BT_ATR_SIZING_ENABLED = "1"
 # ★★★2026-08-09 채택 — 후보 C (RS_ENTRY 90 · RS_EXIT 83 · RISK 0.010 · 무차입 1.0)
