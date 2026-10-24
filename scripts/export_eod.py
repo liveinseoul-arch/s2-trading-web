@@ -955,13 +955,32 @@ if N_STAGES != 3:
           f"% + 잔량 {round((1-sum(SELL_STAGE_PCTS))*100,3)}%")
 
 
+# ★★[CAND-2026-10-21-15 · CAND-2026-10-22-26] 0주 매도단계 가드 — ★기본 off.
+#   ★왜 — 소량 포지션에서 `round(total_qty x 1%)` 가 ★0주가 되는데 ★단계는 소진되고
+#     ★손절선만 올라간다(★실측 결정창 **79건**). ★`ceil1` = 0 이 되면 ★1주로 올린다.
+#   ★가격표(결정창 · 2026-10-24 세계) — CAGR 16.3394 → 16.3208 = ★**−0.0186%p** ·
+#     ★peak·trough 동일(2023-11-08 / 11-23) · 절대손실 27,631,109 → 27,591,577원.
+#   ⚠️★★성과로 채택하지 않는다 — ★체결 현실성·달성가능성 축이다(§4-1b 면제 2).
+#   ★되돌리기 — ★env 를 지우면(기본 "") ★종전 비트 동일.
+SELL_ZEROQTY = (os.environ.get("S2_SELL_ZEROQTY", "") or "").strip().lower()
+# ★발동 카운터(§4-2d 관문 2 · CAND-2026-10-22-25) — ★계산에 한 글자도 안 쓴다.
+ZQ_N = {"zero": 0, "lifted": 0}
+
+
 def _stage_qty(stg, total_qty, remaining_qty):
     """stg 번째(1-base) 매도 물량. 마지막 단계(N_STAGES)면 잔량 전부,
     아니면 SELL_STAGE_PCTS[stg-1] 비율(반올림) — 잔량을 넘지 않게 min 으로 자른다.
     N_STAGES=3·SELL_STAGE_PCTS=(SELL_STAGE_PCT,SELL_STAGE_PCT) 이면 종전 로직과 완전 동일."""
     if stg >= N_STAGES:
         return remaining_qty
-    return min(round(total_qty * SELL_STAGE_PCTS[stg - 1]), remaining_qty)
+    _q = min(round(total_qty * SELL_STAGE_PCTS[stg - 1]), remaining_qty)
+    # ★★[CAND-2026-10-21-15] ★0주 단계 — ★세기만 하고(기본) ★`ceil1` 이면 1주로 올린다.
+    if _q <= 0 and remaining_qty > 0:
+        ZQ_N["zero"] += 1
+        if SELL_ZEROQTY == "ceil1":
+            ZQ_N["lifted"] += 1
+            return 1
+    return _q
 # 기간 손절 — N영업일 경과해도 분할매도 한 단계도 못 찍으면 강제 청산.
 # 기본 15(≈3주). 화석 포지션을 끊어 자본 회전 ↑ — MDD 개선의 지배적 요인
 # (2/6/14·-7% 만으론 MDD -28.8%, 기간손절 추가 시 -11.6%). 0 = 비활성(구 설정).
@@ -3114,6 +3133,10 @@ def main():
     #   ★§4-2d 관문 2 — 「0건이라 효과 없음」과 「코드가 안 돌아 0건」을 가른다.
     #   ⚠️★`size_demoted` 는 ★도달(reached) 기준이라 ★현금 제약으로 못 산 건도 센다.
     #     ★`ct_demoted` 가 ★실제 매수 기준이다(두 값이 다른 것이 정상).
+    # ★★[CAND-2026-10-22-25] 0주 매도단계 발동 카운터 — ★0 이면 표적이 없는 것이고
+    #   ★크면서 lifted 가 0 이면 ★게이트가 off(기본)인 것이다.
+    print(f"[ZEROQTY] mode={SELL_ZEROQTY or '(off)'} · 0주 단계 {ZQ_N['zero']}건 "
+          f"· 1주로 올림 {ZQ_N['lifted']}건")
     if REENTRY_SIGNAL_RESET:
         print(f"[REENTRY_SIGNAL_RESET] mode={REENTRY_SIGNAL_MODE} step={REENTRY_SIGNAL_STEP} · 리셋 {REENTRY_SR_N['reset']}건 (A {REENTRY_SR_N['A']} · B {REENTRY_SR_N['B']})")
     if REENTRY_RELAX:
