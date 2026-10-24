@@ -797,6 +797,21 @@ LIQ_RA_ON = LIQ_ON and LIQ_RA > 1.0
 LIQ_N = {"eval": 0, "cut": 0, "zero": 0, "ra_in": 0, "ra_out": 0}
 _LIQ_MED = {}          # (ticker, "YYYY-MM-DD") -> med20 (원). LIQ_ON 일 때만 채운다.
 
+# ★★[CAND-2026-10-20-1] ★`med20` 결측(= 정지봉 등으로 맵에 없는 종목-일)에서
+#   ★종전은 ★None(무제한)을 돌려 ★참여율 상한이 ★**fail-open** 했다.
+#   ★"open"(기본) = ★종전 비트 동일 · "block" = 그 날 그 종목은 못 산다
+#   · "last" = ★직전 유효봉 med20 을 이월한다.
+#   ⚠️★이 게이트만으로는 ★정지봉 진입 자체를 막지 않는다 — 그것은
+#     ★`S2_ENTRY_VALID_BAR` 의 몫이다. ★두 축을 섞지 말 것.
+LIQ_DEN_MISSING = os.environ.get("S2_LIQ_DEN_MISSING", "open").strip().lower()
+if LIQ_DEN_MISSING not in ("open", "block", "last"):
+    print("⚠️★[LIQ] S2_LIQ_DEN_MISSING=%r 를 모른다 — ★open(종전)으로 돈다"
+          % LIQ_DEN_MISSING)
+    LIQ_DEN_MISSING = "open"
+# ★발동 카운터(§4-2d 관문 2) — ★0 이면 ★「효과 없음」이 아니라 ★먼저 ★사문을 의심한다.
+LIQ_DEN_N = {"missing": 0, "block": 0, "last": 0, "lastfail": 0}
+_LIQ_DATES = {}        # ★"last" 모드 전용 — ticker -> 유효봉 날짜 ★정렬 리스트
+
 
 def _liq_prepare(px):
     """★(ticker, date) → med20. ★LIQ_ON 일 때만 호출된다(off 면 dict 가 빈 채로 남는다).
@@ -821,6 +836,15 @@ def _liq_prepare(px):
     med = g.transform(lambda s: s.rolling(20, min_periods=1).median())
     for tk, dd, m in zip(v["ticker"].to_numpy(), v["date"].to_numpy(), med.to_numpy()):
         _LIQ_MED[(tk, str(dd)[:10])] = 0.0 if m != m else float(m)
+    # ★★[CAND-2026-10-20-1] "last" 모드에서만 ★종목별 유효봉 날짜를 정렬해 둔다
+    #   (★bisect 로 직전 유효 med20 을 찾는다). ★open·block 에서는 ★비용 0.
+    if LIQ_DEN_MISSING == "last":
+        for _k in _LIQ_MED:
+            _LIQ_DATES.setdefault(_k[0], []).append(_k[1])
+        for _t in _LIQ_DATES:
+            _LIQ_DATES[_t].sort()
+    # ⚠️★아래 서술은 ★`S2_LIQ_DEN_MISSING="open"`(기본) 한정이다 —
+    #   ★block·last 에서는 ★결측이 ★무제한이 ★아니다(CAND-2026-10-20-1).
     # ★정지봉 날짜는 맵에 ★안 넣는다 → `_liq_cap_krw` 가 None(무제한)을 돌려준다.
     #   ★정지봉에 사는 것은 ★이 게이트가 아니라 ★유효봉 가드(VALID_BAR)의 몫이다 — 축이 다르다.
     print("[LIQ] 참여율 상한 on — PART_MAX=%.4f · LEGS=%s · REALLOC=%s · med20 맵 %d"
@@ -833,8 +857,34 @@ def _liq_cap_krw(tk, d):
         return None
     m = _LIQ_MED.get((tk, str(d)[:10]))
     if m is None:
-        return None                      # ★맵에 없으면 제한하지 않는다(보수적으로 종전 동작)
+        # ★★[CAND-2026-10-20-1] ★결측 처리를 ★게이트로 가른다(기본 open = 종전).
+        LIQ_DEN_N["missing"] += 1
+        if LIQ_DEN_MISSING == "block":
+            LIQ_DEN_N["block"] += 1
+            return 0.0                   # ★그 날 그 종목은 못 산다
+        if LIQ_DEN_MISSING == "last":
+            _p = _liq_last_med(tk, d)
+            if _p is not None:
+                LIQ_DEN_N["last"] += 1
+                return LIQ_PART_MAX * _p
+            LIQ_DEN_N["lastfail"] += 1   # ★직전 유효봉이 없다(상장 첫날 등) → open 으로
+        return None                      # ★"open"(기본) = ★종전 동작(비트 동일)
     return LIQ_PART_MAX * m
+
+
+def _liq_last_med(tk, d):
+    r"""★`last` 모드 전용 — 그 종목의 ★직전 유효봉 med20. ★없으면 None.
+
+    ⚠️★당일은 ★쓰지 않는다 — ★당일이 맵에 있으면 ★애초에 결측이 아니다.
+    """
+    _ds = _LIQ_DATES.get(tk)
+    if not _ds:
+        return None
+    import bisect
+    _i = bisect.bisect_left(_ds, str(d)[:10])
+    if _i <= 0:
+        return None
+    return _LIQ_MED.get((tk, _ds[_i - 1]))
 
 # --- (실험) 변동성 국면 사이징 — 기본 off. S2_VOL_SIZING=highvol|lowvol|linear ---
 # KOSPI 추세 변동성(과거만) 기준으로 진입 사이즈 배수. look-ahead 방지 위해 확장중앙값 사용.
@@ -1093,7 +1143,11 @@ if SLIP_ON:
 # 정의는 backtest.py:351 과 동일하게 둔다. S2_VALID_BAR=0 으로 구 동작 복원 가능.
 # 매도 경로(op >= t · hi >= t)는 0 이면 자연히 거짓이라 별도 가드가 필요 없다.
 VALID_BAR = os.environ.get("S2_VALID_BAR", "1") == "1"
-VB_SKIP = {"stop": 0, "add": 0, "newlow": 0, "minlow": 0}   # 가드가 실제로 막은 횟수
+VB_SKIP = {"stop": 0, "add": 0, "newlow": 0, "minlow": 0, "new": 0}   # 가드가 실제로 막은 횟수
+# ★★[CAND-2026-10-20-1] ★신규진입 유효봉 가드. ★"0"(기본) = ★종전 = 비트 동일.
+#   ⚠️★종전엔 ★진입 경로에 `bar_ok` 가 ★없었다 — `bar_ok` 는 보유 루프에서
+#     ★만들어져 거기서만 쓰이고 ★`VB_SKIP` 에 ★"new" 키조차 없었다.
+ENTRY_VALID_BAR = os.environ.get("S2_ENTRY_VALID_BAR", "0").strip() not in ("", "0", "off")
 
 # ── ★유령 체결 가드 (CAND-2026-08-23-126 · 기본 off = 종전 동작 비트 동일) ──────
 #
@@ -2176,6 +2230,16 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     REENTRY_WIN_N["size_demoted"] += 1   # ★창 밖 = 신규 취급(할인 면제)
             # ★★[CAND-2026-08-24-240] 참여율 상한 — ★비례 축소(차단 아님). off 면 cap=None.
             _cap = _liq_cap_krw(tk, d)
+            # ★★[CAND-2026-10-20-1] ★신규진입도 ★시장에 있던 봉에서만 체결한다
+            #   (보유 루프 `bar_ok` 와 ★같은 규칙). ★off(기본)면 ★종전이다.
+            #   ⚠️★`_liq_cap_krw` ★뒤에 둔다 — ★그래야 ★두 카운터가 ★독립으로 센다.
+            if ENTRY_VALID_BAR:
+                _rn = day.get(tk)
+                if _rn is None or not (float(_rn["open"]) > 0
+                                       and float(_rn["high"]) > 0
+                                       and float(_rn["low"]) > 0):
+                    VB_SKIP["new"] += 1
+                    continue
             if _cap is not None:
                 LIQ_N["eval"] += 1
                 if amt > _cap:
@@ -3029,7 +3093,9 @@ def main():
     _tot = sum(VB_SKIP.values())
     print(f"[유효봉 가드] {'ON' if VALID_BAR else 'OFF(S2_VALID_BAR=0)'} · "
           f"차단 {_tot}건 — 손절 {VB_SKIP['stop']} · 추가매수 {VB_SKIP['add']} · "
-          f"신저가손절 {VB_SKIP['newlow']} · min_low오염 {VB_SKIP['minlow']}")
+          f"신저가손절 {VB_SKIP['newlow']} · min_low오염 {VB_SKIP['minlow']} · "
+          f"★신규진입 {VB_SKIP['new']}"
+          f"{'' if ENTRY_VALID_BAR else ' (S2_ENTRY_VALID_BAR=0 — 가드 off)'}")
     if VB_SKIP["minlow"]:
         print(f"  ★min_low 오염 차단 {VB_SKIP['minlow']}건 — 막지 않았다면 "
               f"그 포지션들의 신저가 손절이 영구 비활성화됐다.")
@@ -3102,6 +3168,11 @@ def main():
               "재배분 적립 %d · 인출 %d · PART_MAX=%.4f · LEGS=%s · REALLOC=%s"
               % (LIQ_N["eval"], LIQ_N["cut"], LIQ_N["zero"],
                  LIQ_N["ra_in"], LIQ_N["ra_out"], LIQ_PART_MAX, LIQ_LEGS, LIQ_RA))
+        # ★★[CAND-2026-10-20-1] ★med20 결측 발동 카운터 — ★0 이면 ★표적이 없는 것이고
+        #   ★크면서 block·last 가 0 이면 ★게이트가 ★안 걸린 것(= open 기본)이다.
+        print("[LIQ-DEN] ★med20 결측 %d건 · MODE=%s → ★차단 %d · 이월 %d · 이월실패 %d"
+              % (LIQ_DEN_N["missing"], LIQ_DEN_MISSING, LIQ_DEN_N["block"],
+                 LIQ_DEN_N["last"], LIQ_DEN_N["lastfail"]))
 
     # ★★[CAND-2026-09-01-11] 갭 조건부 추가매수 차단 발동 카운터 (§4-2d 관문 2).
     #   ⚠️★block = 0 이면 「효과 없음」이 아니라 ★먼저 eval 을 본다 — eval 이 0이면
