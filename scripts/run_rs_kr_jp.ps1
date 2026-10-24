@@ -259,6 +259,10 @@ $jobJP = Start-Job -Name "JP chain" -ScriptBlock {
     $env:S2_RS_SWAP    = "1"
     # ★★[2026-10-24 · CAND-2026-09-30-2 처치③ · 해달별님 2026-10-23 승인] ★시총 결측 탈락을 ★로그에 낸다(★적재 무변경).
     $env:RS_LOG_MCAP_GAP = "1"
+    # ★★★[2026-10-24 채택 · CAND-2026-10-24-36 · ★★해달별님 결정] ★KR 야후 접미사 중복 수리 — ★KR 일봉 EMA 폴백이 ★한 번도 성공한 적이 없었다(`000400.KS.KS` 꼴 · ★라이브 6요청 ★현행 0/6 → ★수리 3/3).
+    #   ⚠️★미실시 — 종결조건 ②의 ★원문 방법(`--dry-run` 1런)은 ★안 돌렸다 ⇒ ★★「그 런에서 404 가 0 이 안 되면 ★이 close 는 무효」가 ★재개방 조건이다.
+    #   ★되돌리기 — ★이 줄(과 다른 2자리)을 지우면 ★기본 "0" = 종전.
+    $env:RS_YF_SUFFIX_FIX = "1"
     function J($label, [string[]]$a) {
         "$(Get-Date -Format 'HH:mm:ss')  [$label] start" | Out-File -Append -Encoding utf8 $jobLog2
         try { & C:\Python314\python.exe @a *>> $jobLog2 } catch { "[$label] FAILED: $_" | Out-File -Append -Encoding utf8 $jobLog2 }
@@ -319,6 +323,11 @@ RunPyGate "2 14_RS_KR"   "C:\Python314\python.exe" @($silent, "$qb\14_RS_KR_pykr
 $env:S2_RS_SWAP = "1"
 # ★★[2026-10-24 · CAND-2026-09-30-2 처치③ · 해달별님 2026-10-23 승인] ★시총 결측 탈락을 ★로그에 낸다(★적재 무변경).
 $env:RS_LOG_MCAP_GAP = "1"
+# ★★★[2026-10-24 채택 · CAND-2026-10-24-36 · ★★해달별님 결정] ★KR 야후 접미사 중복 수리 — ★KR 일봉 EMA 폴백이 ★한 번도 성공한 적이 없었다(`000400.KS.KS` 꼴 · ★라이브 6요청 ★현행 0/6 → ★수리 3/3).
+#   ⚠️★★여기가 ★메인(KR) 자리다 — ★JP Job 안(:265)과 ★둘 다 있어야 한다(§0-5b: ★JP 는 ★별 Job = ★별 프로세스라 ★상속을 믿으면 ★한쪽만 종전 경로로 돈다).
+#   ⚠️★미실시 — 종결조건 ②의 ★원문 방법(`--dry-run` 1런)은 ★안 돌렸다 ⇒ ★★「그 런에서 404 가 0 이 안 되면 ★이 close 는 무효」가 ★재개방 조건이다.
+#   ★되돌리기 — ★이 줄과 ★JP Job 안의 같은 줄을 ★함께 지우면 ★기본 "0" = 종전.
+$env:RS_YF_SUFFIX_FIX = "1"
 RunPyGate "4 export KR"  $rsExportPy @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "KR", "--weeks", "56", "--full-universe")
 # export 가 (해당 마켓의) universe 전체 삭제 후 재적재 → KR ETF 재적재 필요 (JP 는 ETF 화이트리스트 없음)
 RunPyGate "6 add KR ETFs" $rsExportPy @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")

@@ -95,6 +95,10 @@ RunPy "1 13_RS_US"    @($silent, "$qb\13_RS_US_screen.py")
 $env:S2_RS_SWAP = "1"
 # ★★[2026-10-24 · CAND-2026-09-30-2 처치③ · 해달별님 2026-10-23 승인] ★시총 결측 탈락을 ★로그에 낸다(★적재 무변경).
 $env:RS_LOG_MCAP_GAP = "1"
+# ★★★[2026-10-24 채택 · CAND-2026-10-24-36 · ★★해달별님 결정] ★KR 야후 접미사 중복 수리 — ★KR 일봉 EMA 폴백이 ★한 번도 성공한 적이 없었다(`000400.KS.KS` 꼴 · ★라이브 6요청 ★현행 0/6 → ★수리 3/3).
+#   ⚠️★미실시 — 종결조건 ②의 ★원문 방법(`--dry-run` 1런)은 ★안 돌렸다 ⇒ ★★「그 런에서 404 가 0 이 안 되면 ★이 close 는 무효」가 ★재개방 조건이다.
+#   ★되돌리기 — ★이 줄(과 다른 2자리)을 지우면 ★기본 "0" = 종전.
+$env:RS_YF_SUFFIX_FIX = "1"
 RunPy "2 export US"   @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "US", "--weeks", "56", "--full-universe")
 RunPy "3 add US ETFs" @("s2-trading-web\scripts\add_etfs.py", "--market", "US", "--weeks", "56")
 
