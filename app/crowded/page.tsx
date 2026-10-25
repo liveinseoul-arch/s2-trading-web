@@ -155,8 +155,10 @@ export default async function CrowdedPage() {
           <p>
             <b className="text-textc">「지지선에 못 닿아서」는 이유가 될 수 없다</b> — 발생건수의
             정의가 이미 <code>종가 &lt; MA20 × 0.80</code>이고, 과밀일에는 엔진 쪽 기준이{" "}
-            <code>× 0.85</code>로 <b className="text-textc">오히려 느슨</b>해진다. 자격 창(20일)과
-            거래대금 문턱(5,000억)도 양쪽이 같다.
+            <code>× 0.85</code>로 <b className="text-textc">오히려 느슨</b>해진다.
+            거래대금 문턱(<code>{DEFN.tvMinEok.toLocaleString()}억</code>)도 양쪽이 같다.{" "}
+            <b className="text-textc">단 자격 창은 양쪽이 다르다</b> — 이 화면은{" "}
+            <code>{DEFN.ma}일</code>, 엔진은 <code>{DEFN.qualWin}거래일</code>이다.
           </p>
           <p>
             그래서 <b className="text-textc">현금이 가득한데도 진입이 0인 날</b>이 생긴다. 툴팁의
