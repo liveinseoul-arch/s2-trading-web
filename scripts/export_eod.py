@@ -187,6 +187,30 @@ PROX = 0.05                      # 예비후보 근접 허용폭(지지선 위 5
 #   ★아래 START 가드가 ★그 조건을 ★시작 시 경고한다(동작은 안 바꾼다).
 MA_LONG, WINDOW, NL_AFTER = 120, 60, 2
 MAX_LEV = float(os.environ.get("S2_MAX_LEV", "1.3"))   # 1.3=30% 대출 허용 / 1.0=대출없음(현금한도)
+
+# ★★★[2026-10-25 신설 · CAND-2026-09-12-18 · ★★해달별님 「구현해줘」] 국면 조건부 레버.
+#   [무엇을] ★**전일** 현금 포화(`n_blocked > 0`)였던 날에만 ★레버 한도를 ★`S2_LEV_COND_MAX` 로 올린다.
+#     ★그 밖의 날은 ★`S2_MAX_LEV` 그대로다.
+#   ⚠️★★**왜 ★전일인가 — ★같은 날은 ★순환이다.** `n_blocked` 는 ★그날 진입 루프 ★안에서 세어지고
+#     (`:2106` 초기화 · `:2326` 증가) ★그 차단 자체가 ★한도의 ★결과다. ⇒ ★한도가 차단을 정하는데
+#     ★차단으로 한도를 정하게 된다. ★실측 — ★전일 lag 로 바꿔도 ★결정창 표적이 ★**6일로 같다**
+#     (포화일이 연속으로 붙지 않는다) ⇒ ★★**순환을 피하는 비용이 0 이다**.
+#   [게이트] ★`S2_LEV_COND_MAX` — ★**빈 문자열·0 = off = 종전 비트 동일**(기본).
+#     ★`S2_LEV_COND_PREV` — ★조건을 볼 ★지연 일수(기본 **1** = 전일). ⚠️★`0` 은 ★받지 않는다(순환).
+#   ⚠️★★**[돌리기 전에 읽을 것] ★결정창 기대 부호는 ★음수다** —
+#     ★상시 레버 4점(1.00·1.05·1.10·1.15) ΔCAGR 이 ★전부 음수이고(−0.0918 – −0.1419)
+#     ★표적이 ★**6일 / 2,549일**(0.24%)이다. ★이득 주장(2026 에 99.5%)은 ★홀드아웃 기반이고
+#     ★「2026 을 이 축에 쓰지 않는다」가 ★확정 결정이다.
+#     ⇒ ★★**이 게이트는 ★켜라고 만든 것이 아니라 ★재려고 만든 것이다.**
+#   ★되돌리기 — ★`S2_LEV_COND_MAX` ★한 줄 삭제.
+#   근거: quant_infra/2026-10/S2_LEVCOND_FEASIBILITY_2026-10-25.md
+_lcm = (os.environ.get("S2_LEV_COND_MAX", "") or "").strip()
+LEV_COND_MAX = float(_lcm) if _lcm else 0.0
+LEV_COND_PREV = int(os.environ.get("S2_LEV_COND_PREV", "1") or 1)
+if LEV_COND_MAX > 0 and LEV_COND_PREV < 1:
+    raise SystemExit("⚠️★S2_LEV_COND_PREV 는 1 이상이어야 한다 — 0 은 ★같은 날 조건이고 ★순환이다")
+LEV_COND_ON = LEV_COND_MAX > 0
+LEVCOND_N = {"hit": 0, "satday": 0}
 # ★★★[2026-09-02 신설 · CAND-2026-09-01-27] ex-ante 레버 게이트 — ★진단 전용 · 기본 off.
 #   ★무엇을 재나 — 백테스트의 `lev_ok` 는 ①그날 종가 마크 ②그날 매도대금이 이미 들어온 현금
 #     ③순차 체결을 밑판으로 쓴다. ★실계좌(Flow A)는 15:20 에 다음 거래일치 감시주문을
@@ -1596,6 +1620,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
     cash = float(start_cap); peak = cash
     executions, trades, legs, nav_rows, snaps = [], [], [], [], []
     candidates, counts = [], []
+    # ★[CAND-2026-09-12-18] 조건부 레버 상태. ★off 면 `eff` 가 ★MAX_LEV 에서 ★안 움직인다.
+    _LEVC = {"eff": MAX_LEV, "hist": []}
     tid_seq = 0
     didx = {d: i for i, d in enumerate(all_dates)}
 
@@ -1624,7 +1650,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
 
     def lev_ok(day, cost):
         hv = cur_hv(day); nav = cash + hv
-        return nav > 0 and (hv + cost) <= MAX_LEV * nav
+        # ★[CAND-2026-09-12-18] off 면 `_LEVC["eff"]` 가 ★MAX_LEV 와 ★항등이다.
+        return nav > 0 and (hv + cost) <= _LEVC["eff"] * nav
 
     def lev_ok_entry(day, cost):
         """★[CAND-2026-09-01-27] 진입 전용 레버 판정. off("0")면 lev_ok 와 ★항등."""
@@ -1632,7 +1659,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             return lev_ok(day, cost)
         LEVXA_N["eval"] += 1
         nav = _xa_cash + _xa_hv
-        ok = nav > 0 and (_xa_hv + cost) <= MAX_LEV * nav
+        ok = nav > 0 and (_xa_hv + cost) <= _LEVC["eff"] * nav
         if not ok:
             LEVXA_N["block"] += 1
         elif lev_ok(day, cost):
@@ -2102,6 +2129,16 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 close_trade(p, d, "stop"); del positions[tk]; closed.add(tk); last_exit[tk] = d
             elif tk in positions and p["qty"] == 0:
                 close_trade(p, d, f"sell_{N_STAGES}"); del positions[tk]; closed.add(tk); last_exit[tk] = d
+        # ★★[CAND-2026-09-12-18] 조건부 레버 — ★**전일**(정확히 LEV_COND_PREV 거래일 전)
+        #   `n_blocked > 0` 이면 ★이 날만 한도를 올린다. ★off 면 이 블록이 ★아무것도 안 한다.
+        if LEV_COND_ON:
+            _hb = _LEVC["hist"]
+            _pb = _hb[-LEV_COND_PREV] if len(_hb) >= LEV_COND_PREV else 0
+            if _pb > 0:
+                _LEVC["eff"] = LEV_COND_MAX
+                LEVCOND_N["hit"] += 1
+            else:
+                _LEVC["eff"] = MAX_LEV
         # 예비후보 스캔(근접 포함) + 신규 진입(지지선 이하만 체결)
         n_cand = n_reached = n_bought = n_blocked = 0
         _reached = []                                  # (tk, price, sz, above, bull) — 체결 대상 수집
@@ -2383,6 +2420,11 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     REENTRY_WIN_N["ct_demoted"] += 1       # ★창 밖 = 카운터를 안 올린다
         counts.append(dict(d=d, n_candidates=n_cand, n_reached=n_reached,
                            n_bought=n_bought, n_blocked=n_blocked))
+        # ★[CAND-2026-09-12-18] 전일 조건을 보려면 ★이력이 필요하다. ★off 에서도 길이만 늘어난다
+        #   (★계산에 안 쓰이므로 ★결과는 비트 동일).
+        _LEVC["hist"].append(n_blocked)
+        if n_blocked > 0:
+            LEVCOND_N["satday"] += 1
 
         # ══ ★S2_COMBO_RS — RS 슬리브. **S2 다음**(엔진 run():620-626 순서) ══
         #    off 면 COMBO_RS 가 False 라 이 블록 전체가 skip 된다 → 완전 무영향.
@@ -3211,6 +3253,13 @@ def main():
     #   ⚠️★cut = 0 이면 「효과 없음」이 아니라 ★먼저 「eval 이 0인가」를 본다 —
     #     eval 이 0이면 ★맵이 안 채워진 것(코드가 안 돌았다)이고, eval 이 크고 cut 이 0이면
     #     ★진짜로 상한에 걸린 매수가 없는 것이다.
+    # ★★[CAND-2026-09-12-18] 조건부 레버 발동 카운터 — ★off 면 한 줄도 안 찍는다.
+    if LEV_COND_ON:
+        print("[LEVCOND] ★조건부 레버 on — 전일 lag %d거래일 · 기본 %.2f → 포화일 %.2f "
+              "· ★포화일 %d일 · ★발동 %d일"
+              % (LEV_COND_PREV, MAX_LEV, LEV_COND_MAX,
+                 LEVCOND_N["satday"], LEVCOND_N["hit"]), flush=True)
+
     if LIQ_ON:
         print("[LIQ] ★평가 %d건 → ★축소 %d건 (그중 상한 0 = %d) · "
               "재배분 적립 %d · 인출 %d · PART_MAX=%.4f · LEGS=%s · REALLOC=%s"
