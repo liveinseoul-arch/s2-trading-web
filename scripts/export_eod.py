@@ -1178,6 +1178,16 @@ SLIP_WIN   = int(os.environ.get("S2_SLIP_WIN", "5"))        # 사전 분모 창(
 SLIP_CAP   = float(os.environ.get("S2_SLIP_CAP", "0.03"))   # 마진 상한(무제한 금지 — decay 계열 반례)
 SLIP_SCOPE = os.environ.get("S2_SLIP_SCOPE", "all").strip().lower()   # all=변형C · daybuf=변형A
 SLIP_GUARD = float(os.environ.get("S2_SLIP_GUARD", "0.31"))  # 권리락 이음매 문턱(0 = 가드 off)
+# ★★[2026-10-25 신설 · `CAND-2026-10-20-12` · ★해달별님 「③ 높은 순 3건」]
+#   ★변형 D — ★슬리피지 마진을 ★DAY_BUF 와 ★겹쳐 쓰지 않고 ★**더한다**.
+#   ★왜 — ★매도액의 ★61.8%(83.58억/135.16억)가 ★`stop` 경로로 나가는데 ★현행은
+#     ★`extra = m - buf_applied` 라 ★DAY_BUF 가 ★이기면(`extra <= 0`) ★마진이 ★0 이 된다
+#     ⇒ ★그 경로가 ★참여율 가드의 ★**사각**이다(`floorwin` 카운터가 387·391건).
+#   ★★**기본 0 = ★종전 비트동일.** ★되돌리기 = ★env 한 줄 삭제.
+#   ⚠️★체결 현실성 축이다(§4-1b 면제 2) — ★★성과로 판정하지 않는다.
+#     ★성공 = 「CAGR 이 오른다」❌ · ★「백테스트 수치가 ★실제로 달성 가능해진다」✅
+#   ★사전등록 `quant_infra/prereg/2026-10-25_s2-slip-add-w5-stop.md`(커밋 `1099291` · 런 전)
+SLIP_ADD   = os.environ.get("S2_SLIP_ADD", "0").strip() in ("1", "true", "yes")
 SLIP_ON    = SLIP_K > 0
 SLIP_PATHS = ({"stop_stage"} if SLIP_SCOPE == "daybuf"
               else {"stop_stage", "sell", "newlow_stop", "time_stop"})
@@ -1440,7 +1450,7 @@ def _slip_fill(p, r, d, base_px, qty, buf_applied, path):
         SLIP_N["cap"] += 1
     SLIP_N["est_max"] = max(SLIP_N["est_max"], est)
     SLIP_N["m_max"] = max(SLIP_N["m_max"], m)
-    extra = m - buf_applied
+    extra = m if SLIP_ADD else (m - buf_applied)   # ★변형 D(S2_SLIP_ADD=1) = 더한다
     if extra <= 0:                                          # 하한(DAY_BUF)이 이긴다
         # ★★[2026-10-23 · `CAND-2026-10-20-10` · ★해달별님 결정 「나머지 다 권고대로」= ★B안]
         #   ★★발동 카운터 ★한 줄 — ★종전엔 ★이 분기가 ★아무것도 안 세어
