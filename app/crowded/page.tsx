@@ -27,7 +27,9 @@ export default async function CrowdedPage() {
           그날 <code className="rounded bg-surface px-1">MA20</code>이 있고, 최근 {DEFN.ma}일 최대
           거래대금이 <code className="rounded bg-surface px-1">{DEFN.tvMinEok.toLocaleString()}억</code> 이상이며,
           종가가 <code className="rounded bg-surface px-1">MA20 × {(1 - DEFN.baseEp).toFixed(2)}</code>{" "}
-          아래인 <b className="text-textc">종목-일</b>. 색이 진할수록 그날 후보가 많다.
+          아래인 <b className="text-textc">종목-일</b>. 색이 진할수록 그날 후보가 많다.{" "}
+          <b className="text-textc">이 {DEFN.ma}일은 밀도맵의 창</b>이다 — 엔진이 진입 자격을 판정하는
+          창은 <code className="rounded bg-surface px-1">{DEFN.qualWin}거래일</code>로 다르다(아래 각주).
         </p>
       </div>
 
@@ -204,6 +206,12 @@ export default async function CrowdedPage() {
             정의는 <code>update_env_density.py</code>에서 <b className="text-textc">상수째</b>{" "}
             가져온다(<code>MA={DEFN.ma} · WIN={DEFN.win} · TOPQ={DEFN.topq}</code>). 그래서 이 화면과{" "}
             <b className="text-textc">실제 진입 문턱 완화가 쓰는 과밀일 목록이 어긋날 수 없다</b>.
+          </p>
+          <p>
+            ⚠️ 단 <b className="text-textc">엔진의 자격 판정 창은 {DEFN.qualWin}거래일</b>이고 이 화면의{" "}
+            <code>MA={DEFN.ma}</code>과 <b className="text-textc">다르다</b> — 두 창은 의도적으로 갈라져
+            있다. 그래서 이 달력의 후보 수는{" "}
+            <b className="text-textc">엔진이 그날 실제로 자격을 준 종목 수와 같지 않다</b>. 비교하지 말 것.
           </p>
           <p>
             ⚠️ 이것은 <b className="text-textc">후보</b>이지 <b className="text-textc">체결</b>이

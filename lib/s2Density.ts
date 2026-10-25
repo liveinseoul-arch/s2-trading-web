@@ -181,5 +181,13 @@ export function levelOf(n: number): number {
 
 export const WD = ["월", "화", "수", "목", "금"];
 
-/** 진입 문턱 — 화면 각주용(익스포터가 쓰는 값과 같아야 한다). */
-export const DEFN = { ma: 20, tvMinEok: 5000, baseEp: 0.2, win: 15, topq: 0.0425, relax: 0.15 };
+/** 진입 문턱 — 화면 각주용(익스포터가 쓰는 값과 같아야 한다).
+ *  ★[CAND-2026-09-03-5] `ma` 와 `qualWin` 은 ★다른 자다. 겸용하면 화면이 틀린다.
+ *    ma      = 20 — ★이 화면이 그리는 밀도맵의 창. MA20 과 거래대금 롤링최대에 쓴다
+ *                   (update_env_density.py:103 · export_density.py:86-87)
+ *    qualWin = 60 — ★엔진이 ★진입 자격을 판정하는 창
+ *                   (export_eod.py:188 WINDOW · :1484 `within = (k - last) < WINDOW`)
+ *  ⚠️★달력의 `n` 은 ★`ma`(20) 로 계산된다 — ★`qualWin` 으로 세지 않는다.
+ *    ★두 창이 갈라진 것은 ★의도다(S2_ENVMAP_QUALWIN_2026-09-03 2x2 분해로 확정).
+ */
+export const DEFN = { ma: 20, qualWin: 60, tvMinEok: 5000, baseEp: 0.2, win: 15, topq: 0.0425, relax: 0.15 };
