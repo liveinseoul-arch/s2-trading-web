@@ -481,12 +481,47 @@ def _missing_report(market_rows, cats):
     return missing, per
 
 
+def _market_presence_gate(week, market_rows, total):
+    """★★[2026-10-25 신설 · CAND-2026-09-27-7 처치 ①] ★3국 사전 게이트.
+
+    ⚠️★★왜 — ★아래 `total == 0` 은 ★**세 시장 합계가 0 일 때만** 멈춘다.
+      ★한 시장이 ★0종목이어도 ★그대로 Gemini 를 호출하고 ★`exit=0` 으로 끝난다.
+      ★실발생 — ★2026-09-25 주차 ★KR 0/51 · US 37/37 · JP 0/62
+        (★해달별님이 ★웹앱 「한미일 테마」 화면에서 발견).
+    ⚠️★★그리고 ★하류 완전성 관문은 ★**원리적으로 못 잡는다** —
+      ★그 판정식이 `dead = [mk for mk,(a,b) in per.items() if b > 0 and a == 0]` 이라
+      ★분모 b 자체가 0 인 시장은 ★`dead` 에 안 들어간다.
+      ★`check_docs.py` ★검사 29 도 ★같은 판정식이라 ★★탐지로는 메울 수 없는 구멍이다.
+      ★★즉 ★예방은 ★여기 ★한 곳뿐이다 — ★Gemini 를 부르기 ★**전에** 막는다.
+
+    ★판정식 — ★`total > 0` 인데 ★어느 시장이 ★0행이면 ★「시장 실종」으로 보고 ★중단한다.
+      ★`total == 0`(전 시장 공백 = 아직 안 온 주차)은 ★종전대로 ★skip 이다.
+    ★★기본 off = ★종전 비트동일. ★스케줄 경로(`run_rs_us.ps1`)만 ★`=1` 을 명시한다.
+      ⚠️★왜 런처에서만 켜나 — ★`--refill`·수동 백필은 ★옛 주차를 훑는데
+        ★JP·US 는 ★수집 시작이 늦어 ★0행이 ★정상이다. ★거기서 켜면 ★오탐이다.
+    ★되돌리기 — ★`run_rs_us.ps1` 의 ★`$env:RS_THEME_MKT_GATE` ★한 줄을 지운다(또는 `=0`).
+    """
+    if os.environ.get("RS_THEME_MKT_GATE", "0") == "0":
+        return
+    empty = [mk for mk in MARKETS_ALL if not market_rows.get(mk)]
+    if not empty:
+        return
+    detail = " · ".join(f"{mk} {len(market_rows.get(mk) or [])}" for mk in MARKETS_ALL)
+    raise SystemExit(
+        f"⚠️★★[{week}] ★3국 사전 게이트 — 적재하지 않는다(Gemini 호출 0회).\n"
+        f"   ★★시장 실종: {', '.join(empty)} · 원본 {detail} = 총 {total}종목\n"
+        f"   ★왜 여기서 막나 — 하류 완전성 관문은 분모가 0 인 시장을 못 센다.\n"
+        f"   ★되돌리기: RS_THEME_MKT_GATE=0")
+
+
 def classify_one(req, week):
     market_rows = {mk: fetch_top96(req, mk, week) for mk in MARKETS_ALL}
     total = sum(len(v) for v in market_rows.values())
     if total == 0:
         print(f"[{week}] RS96+ 종목 없음 — skip")
         return False
+    # ★[CAND-2026-09-27-7 ①] ★Gemini 호출 ★앞에서 ★시장 실종을 막는다(기본 off).
+    _market_presence_gate(week, market_rows, total)
     print(f"[{week}] KR={len(market_rows['KR'])} · US={len(market_rows['US'])} · "
           f"JP={len(market_rows['JP'])} = 총 {total}종목 → Gemini 호출", flush=True)
 

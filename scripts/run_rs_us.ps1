@@ -120,6 +120,16 @@ RunPy "3 add US ETFs" @("s2-trading-web\scripts\add_etfs.py", "--market", "US", 
 #   ★되돌리기 — 이 리터럴을 "gemini-2.5-flash" 로. ★또는 $env:GEMINI_MODEL 한 줄.
 $env:GEMINI_MODEL = "gemini-2.5-pro"
 RunPy "4 classify US" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "US", "--weeks", "1")
+# ★★[2026-10-25 신설 · CAND-2026-09-27-7 처치 ①] ★3국 사전 게이트 — 0종목 시장이면 중단.
+#   ★무엇 — classify_global_themes.py 가 Gemini 를 부르기 ★전에 KR·US·JP 행수를 보고
+#     ★한 시장이라도 0행이면 ★exit=1 로 멈춘다(위 RunPy 가 알림 + 잡 중단).
+#   ★실발생 — 2026-09-25 주차 KR 0/51 · US 37/37 · JP 0/62 가 ★그대로 적재됐고 ★exit=0 이었다.
+#     ⚠️하류 완전성 관문은 ★원리적으로 못 잡는다 — 판정식이 b > 0 and a == 0 이라
+#     ★분모 b 가 0 인 시장은 세지 않는다. check_docs 검사 29 도 같은 식이라 ★탐지로는 못 메운다.
+#   ★왜 런처에서만 켜나 — 스케줄 경로는 --weeks 1(최신 주차)이라 세 시장이 다 있어야 정상이다.
+#     수동 백필(--refill)은 옛 주차를 훑어 JP·US 0행이 ★정상이므로 코드 기본값은 off 로 둔다.
+#   ★되돌리기 — ★이 줄을 지운다(또는 "0"). ★기본 "0" = 종전 비트동일(합성 대조 4/4 stdout 동일).
+$env:RS_THEME_MKT_GATE = "1"
 RunPy "5 classify global" @("s2-trading-web\scripts\classify_global_themes.py", "--weeks", "1")
 RunPy "6 subdivide"   @("s2-trading-web\scripts\subdivide_global_themes.py", "--weeks", "1", "--min", "50")
 
