@@ -1096,6 +1096,33 @@ if DAY_BUF > 0:
     print(f"[day-buf] 손절선 = 매도단계 목표가 x (1 - {DAY_BUF:g}) · 호가단위 floor "
           f"(시뮬 + 감시주문 동시 적용)")
 
+# ★★[2026-10-26 신설 · `CAND-2026-08-28-27` · ★R12 레인 F · ★prereg
+#   `quant_infra/prereg/2026-10-26_R12_게이트이식_4건.md`(커밋 `d49c43a` · 런 **전**)]
+#   ★★**B축 — 「무장 전 저가로 손절」 반사실을 ★운영 경로에 ★이식한다.**
+#   ★무엇이 문제인가 — S2 의 `stop` 은 ★**이익 보호 손절**이라 ★손절선이 ★1차 이상 매도가
+#     ★체결된 ★그 순간에 ★처음 생긴다(=「무장」). ★그런데 ★아래 「분할매도 후 당일 손절」
+#     분기(`:2128` 계열)는 ★`lo`(★그날 ★전체 저가)를 본다 ⇒ ★오전에 생긴 손절선을
+#     ★★**아침 저가로 소급 판정**한다. ★실계좌에서는 ★체결 이전 시각의 저가로
+#     ★손절이 트리거될 수 ★없다(일봉은 그 순서를 구분 못 한다).
+#   ★처치 — `1` 이면 ★**그날 막 무장된 손절선은 ★그날 저가로 판정하지 않는다**
+#     (무장은 ★익일부터 유효). ★이월 손절선은 ★손대지 않는다 — ★그쪽은 ★이 루프 머리의
+#     「매도단계 후 손절 (장초 갭 포함)」(`:1840` 계열)이 ★이미 판정했고 ★그 판정은 ★정당하다.
+#   ★canonical 대응 — `kr_s2_engine.py` `sim(stop_arm_low_only=True)`(`:463`·`:1225`) ·
+#     데몬 대응 — `WL_STOP_ARM_LOW_ONLY`(기본 off).
+#   ⚠️★★**건수(187 중 85 = 45.5%)는 ★canonical/데몬 세계 값이다** — ★이 게이트가 내는
+#     카운터와 ★같은 부등호에 넣지 않는다(§2 재현 함정 4 · §4-2d 관문 4).
+#   ⚠️★체결 현실성 축이다(§4-1b 면제 2) — ★★성과로 판정하지 않는다.
+#     ★성공 = 「CAGR 이 오른다」❌ · ★「백테스트 수치가 ★실제로 달성 가능해진다」✅
+#   ★★**기본 "0" = ★종전 비트동일.** ★★**되돌리기 = ★env 한 줄 삭제**(또는 `S2_STOP_ARM_LOW_ONLY=0`).
+STOP_ARM_LOW_ONLY = os.environ.get("S2_STOP_ARM_LOW_ONLY", "0").strip() in ("1", "true", "yes")
+# ★발동 카운터 (§4-1b 사문 관문 #2) — 「0건이라 효과 없음」과 「코드가 안 돌아 0건」을 가른다.
+#   target = ★그날 무장된 손절선이 ★그날 저가에 닿은 포지션-일(★게이트 ★on/off ★양 팔에서 센다)
+#   skip   = ★게이트가 ★실제로 억제한 건수(★대조 팔은 ★정확히 0 이어야 한다 · §0-5b)
+SAL_N = {"target": 0, "skip": 0, "skip_qty_amt": 0.0}
+if STOP_ARM_LOW_ONLY:
+    print("[stop-arm-low-only] ★on — 그날 막 무장된 손절선은 그날 저가로 판정하지 않는다"
+          "(무장은 익일부터 · B축 반사실 · 체결 현실성 축이라 성과로 판정하지 않는다)")
+
 # ── ★구목표 우선 가드 (CAND-2026-08-19-9, 2026-08-25 신설, 기본 off) ─────────────────
 #   ★무엇을 고치나 — 「추가매수 발생일은 hi 기반 분할매도 검사 보류」(:1242 옵션B 주석) 가
 #     같은 봉에 ①추가매수 트리거(lo<=at) ②구(추가매수 전) 평단 기준 1단 목표가 도달(hi>=t[0])
@@ -1188,6 +1215,22 @@ SLIP_GUARD = float(os.environ.get("S2_SLIP_GUARD", "0.31"))  # 권리락 이음�
 #     ★성공 = 「CAGR 이 오른다」❌ · ★「백테스트 수치가 ★실제로 달성 가능해진다」✅
 #   ★사전등록 `quant_infra/prereg/2026-10-25_s2-slip-add-w5-stop.md`(커밋 `1099291` · 런 전)
 SLIP_ADD   = os.environ.get("S2_SLIP_ADD", "0").strip() in ("1", "true", "yes")
+# ★★[2026-10-26 신설 · `CAND-2026-10-20-11` · ★R12 레인 F · ★prereg
+#   `quant_infra/prereg/2026-10-26_R12_게이트이식_4건.md`(커밋 `d49c43a` · 런 **전**)]
+#   ★★**반 틱 임계 — ★호가단위 `floor` 양자화가 ★K 와 무관한 ★마진 바닥을 만든다.**
+#   ★무엇이 문제인가 — 아래 `out = _to_tick(base_px x (1 - extra), "floor")` 에서
+#     ★`base_px` 가 ★이미 틱 격자 위라 ★`extra` 가 ★아무리 작아도 ★**한 틱**이 깎인다
+#     ⇒ ★작은 K 격자는 ★K 가 아니라 ★**양자화**를 잰다. ★실측(모체 §3-3) — ★금액가중
+#     1틱이 ★실측 할인율의 ★**29.3%(W5) · 59.0%(W1)**.
+#   ★처치(★후보 원문 ①) — ★의도 할인액(`base_px x extra`)이 ★**반 틱 미만**이면
+#     ★`base_px` 를 ★그대로 둔다(임계). ⇒ ★floor 가 만드는 ★바닥이 사라진다.
+#   ⚠️★★**임계는 ★총 마진에 걸린다** — ★그래서 ★이 게이트는 ★작은 K 에서 크고
+#     ★K=1.0 에서는 ★작은 leg(참여율이 작은 leg)에만 닿는다. ★그 몫이 ★비중(W) 의존이고
+#     ★★그것이 ★`CAND-2026-10-20-11` 종결조건 ③의 「참여율 비례 상호작용」이다.
+#   ⚠️★체결 현실성 축이다(§4-1b 면제 2) — ★★성과로 판정하지 않는다.
+#   ★★**기본 "0" = ★종전 비트동일**(★`SLIP_K=0` 이면 `_slip_fill` 이 ★조기 반환하므로 ★이중으로 무해).
+#     ★★**되돌리기 = ★env 한 줄 삭제**(또는 `S2_SLIP_HALFTICK=0`).
+SLIP_HALFTICK = os.environ.get("S2_SLIP_HALFTICK", "0").strip() in ("1", "true", "yes")
 SLIP_ON    = SLIP_K > 0
 SLIP_PATHS = ({"stop_stage"} if SLIP_SCOPE == "daybuf"
               else {"stop_stage", "sell", "newlow_stop", "time_stop"})
@@ -1197,6 +1240,9 @@ SLIP_PATHS = ({"stop_stage"} if SLIP_SCOPE == "daybuf"
 #   cap = 상한에 걸린 수 · seam = 이음매 가드가 분모를 강등한 수 · nodenom = 분모 결측.
 SLIP_N = {"eval": 0, "fire": 0, "flat": 0, "cap": 0, "seam": 0, "nodenom": 0,
           "floorwin": 0,                 # ★[CAND-2026-10-20-10] 하한(DAY_BUF)이 이긴 건수
+          "halftick": 0,                 # ★[CAND-2026-10-20-11] 의도 할인이 반 틱 미만이라 유지
+          "halftick_amt": 0.0,           # 〃 그 leg 들의 마진 전 매도액(원)
+          "ht_cand": 0,                  # 〃 ★게이트 ★off 여도 센다 = ★표적 규모(양 팔 비교용)
           "disc": 0.0, "amt": 0.0, "est_max": 0.0, "m_max": 0.0,
           "f_stop_stage": 0, "f_sell": 0, "f_newlow_stop": 0, "f_time_stop": 0}
 if SLIP_ON:
@@ -1459,6 +1505,15 @@ def _slip_fill(p, r, d, base_px, qty, buf_applied, path):
         #     ⇒ ★§4-2d 관문 2(사문)가 ★사람 없이 성립한다.
         SLIP_N["floorwin"] += 1
         return base_px
+    # ★★[2026-10-26 · `CAND-2026-10-20-11`] ★반 틱 임계 — ★의도 할인액이 ★반 틱 미만이면
+    #   ★floor 양자화가 ★한 틱(= 의도의 여러 배)을 깎는다 ⇒ ★그 leg 은 ★그대로 둔다.
+    #   ★`ht_cand` 는 ★게이트 ★off 에서도 센다 — ★표적 규모를 ★양 팔에서 비교하기 위해(§0-5b).
+    if base_px * extra < _tick(base_px) * 0.5:
+        SLIP_N["ht_cand"] += 1
+        if SLIP_HALFTICK:
+            SLIP_N["halftick"] += 1
+            SLIP_N["halftick_amt"] += base_px * qty
+            return base_px
     out = _to_tick(base_px * (1 - extra), mode="floor")
     if out >= base_px:                                      # 호가단위 해상도상 변화 없음
         SLIP_N["flat"] += 1
@@ -1834,6 +1889,10 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 p["ref_close"] = cl; p["halt_n"] = 0
             else:
                 p["halt_n"] = p["ph_halt"] + 1
+            # ★★[2026-10-26 · `CAND-2026-08-28-27`] ★오늘 분할매도가 체결됐나 = ★손절선이
+            #   ★오늘 막 무장됐나. ★아래 두 분할매도 경로(시초 op · 장중 hi)에서 True 가 된다.
+            #   ★`STOP_ARM_LOW_ONLY` off 면 ★이 변수를 ★읽는 곳이 없어 ★종전과 비트동일이다.
+            _sold_today = False
             # 매도단계 후 손절 (장초 갭 포함)
             if p["sell_count"] >= 1 and p["qty"] > 0 and not bar_ok and lo <= p["stop"]:
                 VB_SKIP["stop"] += 1
@@ -1867,6 +1926,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     _net = sq * fill * SELL_MULT
                     cash += _net; p["proc"] += _net
                     p["qty"] -= sq; p["sell_count"] = stg; p["stop"] = _stop_px(t[stg - 1])
+                    _sold_today = True          # ★[CAND-2026-08-28-27] 손절선이 오늘 무장됐다
                 else:
                     break
 
@@ -2123,11 +2183,21 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                         _net = sq * _sfill * SELL_MULT
                         cash += _net; p["proc"] += _net
                         p["qty"] -= sq; p["sell_count"] = stg; p["stop"] = _stop_px(t[stg - 1])
+                        _sold_today = True      # ★[CAND-2026-08-28-27] 손절선이 오늘 무장됐다
                     else:
                         break
             if p["sell_count"] >= 1 and p["qty"] > 0 and not bar_ok and lo <= p["stop"]:
                 VB_SKIP["stop"] += 1
-            if p["sell_count"] >= 1 and p["qty"] > 0 and bar_ok and lo <= p["stop"]:
+            # ★★[2026-10-26 · `CAND-2026-08-28-27`] ★B축 — ★오늘 막 무장된 손절선은
+            #   ★오늘 저가로 ★소급 판정하지 않는다(무장은 익일부터). ★`target` 은 ★양 팔에서 센다.
+            if (p["sell_count"] >= 1 and p["qty"] > 0 and bar_ok
+                    and lo <= p["stop"] and _sold_today):
+                SAL_N["target"] += 1
+                if STOP_ARM_LOW_ONLY:
+                    SAL_N["skip"] += 1
+                    SAL_N["skip_qty_amt"] += p["qty"] * p["stop"]
+            if (p["sell_count"] >= 1 and p["qty"] > 0 and bar_ok and lo <= p["stop"]
+                    and not (STOP_ARM_LOW_ONLY and _sold_today)):
                 if DAY_BUF > 0:                       # ★발동 카운터 (§4-1b #2)
                     DAY_BUF_N["hit_buf"] += 1
                 # ★slip — 이 자리는 DAY_BUF 가 이미 박힌 손절선에서의 체결이라 buf_applied = DAY_BUF
@@ -3353,6 +3423,13 @@ def main():
               f"손절 청산 {DAY_BUF_N['hit_buf'] + DAY_BUF_N['hit_gap']}건 = "
               f"버퍼선 체결 {DAY_BUF_N['hit_buf']} + 갭하락 시가 체결 {DAY_BUF_N['hit_gap']}(마진 무관)")
 
+    # ★★[2026-10-26 · `CAND-2026-08-28-27`] ★B축 발동 카운터 — ★항상 찍는다.
+    #   ★★**양 팔에서 찍어야 §4-2d 관문 2 가 성립한다** — ★대조 팔은 `억제 0` 이어야 하고
+    #     ★`표적` 이 0 이면 ★「코드가 안 돌아 0」이 아니라 ★「그런 날이 없다」다.
+    print(f"[stop-arm-low-only] mode={'on' if STOP_ARM_LOW_ONLY else '(off)'} · "
+          f"★표적(그날 무장된 손절선이 그날 저가에 닿은 포지션-일) {SAL_N['target']}건 · "
+          f"★억제 {SAL_N['skip']}건 · 억제 금액(손절선x수량) {SAL_N['skip_qty_amt']:,.0f}원")
+
     # ★구목표 우선 가드 발동 카운터 (§4-1b 사문 관문 #2 · CAND-2026-08-19-9) — on 일 때만 출력
     if OLDTGT_PRIORITY:
         print(f"[oldtgt-priority] add-buy 후보 검사 {OLDTGT_N['eval']}회 · "
@@ -3365,10 +3442,17 @@ def main():
     if SLIP_ON:
         # ★★[2026-10-23 · `CAND-2026-10-20-10`] ★산술이 닫히는지 그 자리에서 검산한다.
         _slip_sum = (SLIP_N['fire'] + SLIP_N['flat'] + SLIP_N['nodenom']
-                     + SLIP_N['floorwin'])
+                     + SLIP_N['floorwin'] + SLIP_N['halftick'])
+        # ★★[2026-10-26 · `CAND-2026-10-20-11`] ★반 틱 임계 카운터 — ★항상 찍는다.
+        #   ★`표적` 은 ★게이트 ★off 에서도 센다 ⇒ ★「0건이라 효과 없음」과
+        #   ★「코드가 안 돌아 0건」을 ★양 팔 대조로 가른다(§4-2d 관문 2).
+        print(f"[slip-halftick] mode={'on' if SLIP_HALFTICK else '(off)'} · "
+              f"★표적(의도 할인 < 반 틱) {SLIP_N['ht_cand']}건 · "
+              f"★유지 {SLIP_N['halftick']}건 · "
+              f"유지 leg 의 마진 전 매도액 {SLIP_N['halftick_amt']:,.0f}원")
         print(f"[slip] ★산술 검산 — eval {SLIP_N['eval']} = fire {SLIP_N['fire']} "
               f"+ flat {SLIP_N['flat']} + nodenom {SLIP_N['nodenom']} "
-              f"+ floorwin {SLIP_N['floorwin']} = {_slip_sum} "
+              f"+ floorwin {SLIP_N['floorwin']} + halftick {SLIP_N['halftick']} = {_slip_sum} "
               f"{'✅일치' if _slip_sum == SLIP_N['eval'] else '⚠️★차 %+d' % (_slip_sum - SLIP_N['eval'])}")
         print(f"[slip] 마진 계산 {SLIP_N['eval']}건 → ★체결가 하향 {SLIP_N['fire']}건 "
               f"(호가단위상 무변화 {SLIP_N['flat']} · 분모결측 {SLIP_N['nodenom']} · "
