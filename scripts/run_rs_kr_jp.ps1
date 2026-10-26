@@ -159,12 +159,30 @@ function FinishJP {
     Wait-Job -Job $script:jobJP -Timeout 3600 | Out-Null
     Log "[JP chain] done (job state=$($script:jobJP.State))"
     Remove-Job -Job $script:jobJP -Force -ErrorAction SilentlyContinue
+    # ── ★★[2026-10-26 신설 · CAND-2026-10-25-17] ★ABORT 경로에서도 ★JP 실패를 ★FAIL 로 찍는다 ──
+    #   ⚠️★★결함 — ★메인 합류 경로(:365)에는 `$jpFail` 판정이 ★있는데 ★이 함수에는 ★없었다.
+    #     ★즉 ★KR 이 ABORT 하면 ★JP 가 ★실패해도 ★로그 병합만 하고 ★조용히 지나갔다.
+    #     ★부모 exit 1 은 ★KR 사유라 ★JP 실패는 ★어디에도 안 남는다(★침묵 실패).
+    #   ★★기본 off("1" 일 때만 작동) → ★안 켜면 ★종전과 비트 동일이다.
+    #   ★판정 사양은 ★메인 경로(:365-372)와 ★똑같다 — `done (exit≠0)` 또는 `FAILED:`.
+    #   ★되돌리기 — $env:RS_JP_FAIL_ON_ABORT 를 지우거나 0 으로.
+    $jpFail = $false
     if ($script:logJP -and (Test-Path $script:logJP)) {
         "--- $script:logJP (★KR 중단 후 JP 마무리) ---" | Out-File -Append -Encoding utf8 $log
         Get-Content $script:logJP -Encoding utf8 | Out-File -Append -Encoding utf8 $log
+        if ($env:RS_JP_FAIL_ON_ABORT -eq "1") {
+            $jpLines = Get-Content $script:logJP -Encoding utf8
+            $jpBad = $jpLines | Select-String -Pattern 'done \(exit=(-?\d+)\)' | Where-Object { $_.Matches[0].Groups[1].Value -ne '0' }
+            if ($jpBad -or ($jpLines | Select-String -SimpleMatch 'FAILED:')) { $jpFail = $true }
+        }
         Remove-Item $script:logJP -Force -ErrorAction SilentlyContinue
     }
     $script:jobJP = $null
+    if ($jpFail) {
+        Log "[JP chain] 단계 실패 감지 (KR 중단 경로) — 텔레그램 알림 (부모는 KR 사유로 exit 1)"
+        Notify "[rs_kr_jp] JP 체인 단계 실패 감지 (KR 중단 경로) — 로그: rs_kr_jp.log"
+        Log "===== rs_kr_jp done (JP FAIL · KR ABORT) ====="
+    }
 }
 
 function RunPyGate($label, $exe, [string[]]$pyArgs, [switch]$NonFatal) {
