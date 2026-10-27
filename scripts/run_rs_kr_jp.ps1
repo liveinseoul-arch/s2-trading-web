@@ -90,6 +90,18 @@ $env:BT_RS_PCTILE_PIT_DELIST = "1"
 #   근거: quant_infra/2026-09/SUMMARY_2026-09-14.md §①1-b · 커밋 61aea70
 $env:RS_STAGE_NONFATAL = "1"
 
+# ★★[2026-10-27 채택 · 해달별님 「권고대로」 · CAND-2026-10-26-19] ★ABORT 경로의 JP 실패 전파
+#   ★결함 — 메인 합류 경로(:365)에는 $jpFail 판정이 있는데 FinishJP 함수에는 없어
+#     ★KR 이 ABORT 하면 JP 가 실패해도 로그 병합만 하고 조용히 지나갔다(침묵 실패).
+#   ⚠️★코드는 -eq "1" 만 본다 — "on"·"true"·"yes" 는 안 먹는다. 정확히 "1".
+#   ⚠️★외부 전송 — 켜면 Notify 로 텔레그램 1건이 늘어난다(KR ABORT ★그리고 JP FAIL 인 날에만).
+#     ★그래서 §4-6 「그래도 언제나 묻는 것」이었고 2026-10-27 에 결재받았다.
+#   ★코드 기본값은 off 로 남긴다 — 뒤집으면 모든 호출자의 기본 동작이 한꺼번에 바뀌고
+#     ★그것이 §0-5b 가 경고하는 「대조 팔이 처치군이 되는」 모양이다.
+#   ★★되돌리기 — 이 한 줄을 "0" 으로 두거나 지운다(기본 미설정 = 종전 비트동일).
+#   근거: quant_infra/2026-10/R12_laneD_2026-10-26.md §0-3 ①
+$env:RS_JP_FAIL_ON_ABORT = "1"
+
 # 절대경로 사용 — Start-Job 은 새 세션에서 시작되어 부모의 CWD 를 상속하지 않는다.
 # (상대경로였을 때 JP 잡이 ~\Documents 기준으로 풀려 매번 즉시 실패했음: 2026-07-17 확인)
 $silent = Join-Path $root "s2-trading-web\scripts\silent_run.py"
