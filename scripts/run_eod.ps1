@@ -787,7 +787,7 @@ $env:S2_NEWLIST_ENTRY_DROP = "0"                                       # ★B �
 #   ★되돌리기 — ★아래 `S2_NEWLIST_TV_SKIP` 한 줄을 "0" 으로(기본 off = 종전 비트동일).
 #   → quant_infra/2026-10/S2_NEWLIST_2X2_2026-10-23.md §④ · prereg/2026-10-22_S2_신규상장_첫날_거래대금_제외.md
 $env:S2_NEWLIST_TV_SKIP      = "1"                                     # ★신규상장 초기 거래대금을 자격에서 제외(기본 off)
-$env:S2_NEWLIST_TV_SKIP_DAYS = "2"                                     # ★「초기 이틀」 — 해달별님 지시 2026-10-23
+$env:S2_NEWLIST_TV_SKIP_DAYS = "7"                                     # ★「초기 7거래일」 — ★★해달별님 지시 2026-10-28(종전 2 · 되돌리기 "2")
 
 $rcExport = Invoke-Py -PyArgs @("s2-trading-web\scripts\export_eod.py") -Tag "export_eod.py" -Fatal  # executions/보유/거래/카운트/후보 적재
 # ★[2026-08-24 · CAND-2026-08-24-520] ★try/catch — ★위 서문 참조(로그만 · rc 불변).
