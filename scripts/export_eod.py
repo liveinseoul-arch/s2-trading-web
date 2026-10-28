@@ -773,6 +773,29 @@ EXRIGHTS_FROM = (os.environ.get("S2_EXRIGHTS_FROM", "") or "").strip()[:10]
 EXR_N = {"hit": 0}              # ★발동 카운터(canonical 과 동일 이름 — 대조 검증용)
 EXR_HITS = []                   # (ticker, date, ratio)
 
+# ★★[2026-10-28 신설 · `CAND-2026-10-28-9` · `OBS-2026-10-28-4`·`-5`] MA20 정지봉 오염 진입차단.
+#   ★배경 — 거래정지일은 `prices` 에 ★`open=high=low=0` 이고 ★`close` 는 ★직전 종가가 반복된다.
+#     ★그 종가가 ★`ma20` 20일 창에 들어가 ★평균을 고정값 쪽으로 끌어당기고
+#     ★`support = ma20 x (1 − ep)` 가 ★틀린 자리에 서서 ★가짜 진입 신호를 만든다.
+#   ★실측(0런 · full3 · 2019-07-01 – 2026-08-04 · ep=0.20) — 정지봉 **145,622행(2.2452%)** ·
+#     ★`ma20` 창에 1일 이상 낀 종목-일 **23,736** · ★★진입 판정이 갈린 것 **503**
+#     (★현행만 신호 = 가짜 진입 의심 **325**) · ★S2 자격까지 통과한 표적 **19**.
+#     ★극단 `011810` 2023-09-19 — ma20 34,047.5 대 정지봉 제외 24,336.5 = ★**+39.90%**.
+#   ★★**정밀 설계**(★★해달별님 결정 2026-10-28) — ★`ma_period` 통째를 막지 않는다.
+#     ★`sig_raw & ~sig_ex`(= ★오염이 만든 ★가짜 진입)인 날만 막는다.
+#     ★`~raw & ex`(현행이 ★놓친 신호)는 ★차단으로 못 살리므로 ★뺀다.
+#     ★실측 — ★광범위 대비 ★차단 종목-일 **112,592 → 318**(★354배 축소) · ★정밀도 **34.5% → 83.3%**.
+#   ★★`S2_ENTRY_VALID_BAR=1`(2026-10-24 채택)과 ★다른 것이다 — 그것은 ★정지일 ★그 자체만 막고
+#     ★이것은 ★**정지 이후** ★`ma20` 창에 그 종가가 남아 있는 구간을 본다.
+#   ★조치는 ★진입 차단만(가격 리스케일 안 함) — ★보유 매도·손절은 정상 작동.
+#   ★off재현 — ★기본 "0" ⇒ ★`_HALT_BLOCK` 이 ★빈 set ⇒ ★분기가 항등(canonical 비트 동일).
+#   ★되돌리기 — ★`run_eod.ps1` 의 ★env 줄 삭제.
+#   근거: quant_infra/2026-10/S2_RESISTANCE_SYMMETRY_CENSUS_2026-10-28.md §7
+_MA20_SH = (os.environ.get("S2_MA20_SKIP_HALT", "0") or "0").strip().lower()
+MA20_SKIP_HALT = _MA20_SH in ("1", "precise", "wide", "on", "true")
+MA20_SKIP_HALT_WIDE = _MA20_SH == "wide"
+HALT_N = {"hit": 0, "block": 0, "split": 0}
+
 # ★★★[2026-08-26 신설 · CAND-2026-08-26-14] F4 반사실 전용 — 지정 종목을 유니버스에서
 #   완전히 제외(신규진입 자체를 막음 · 기존 보유는 영향 없음, 애초에 이 게이트를 켠
 #   런에는 그 종목 보유가 없다). ★연구용 일회성 게이트 — 기본 빈 문자열=off=canonical
@@ -1803,6 +1826,48 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
               + (f" · ★날짜하한 {EXRIGHTS_FROM} 이전 제외 {EXR_N.get('pre_cut', 0)}건"
                  if EXRIGHTS_FROM else " · 날짜하한 없음(기본)"))
 
+    # ★★MA20 정지봉 오염 진입차단(CAND-2026-10-28-9) — backtest.py 의 정밀 판정식 이식.
+    #   ★종목별로 ★정지봉을 건너뛴 ma20 을 따로 만들어 ★sig 가 갈리는 날만 집합에 넣는다.
+    #   ★룩어헤드 0 — 그날까지의 종가만 쓴다(rolling + ffill).
+    _HALT_BLOCK: set = set()        # {(ticker, "YYYY-MM-DD"), ...}
+    if MA20_SKIP_HALT:
+        import numpy as _np
+        _MAP2 = 20                   # backtest.py Config.ma_period 기본값과 동일
+        for _tk, _g in px.groupby("ticker"):
+            _g = _g.sort_values("date")
+            _op = _g["open"].to_numpy(dtype=float)
+            _hi = _g["high"].to_numpy(dtype=float)
+            _lo = _g["low"].to_numpy(dtype=float)
+            _hl = (_op == 0) & (_hi == 0) & (_lo == 0)
+            if not _hl.any():
+                continue
+            HALT_N["hit"] += int(_hl.sum())
+            _dstr = [str(x)[:10] for x in _g["date"].to_numpy()]
+            _n2 = len(_g)
+            if MA20_SKIP_HALT_WIDE:
+                for _i in _np.flatnonzero(_hl):
+                    for _m in range(int(_i), min(_n2, int(_i) + _MAP2)):
+                        _HALT_BLOCK.add((_tk, _dstr[_m]))
+                continue
+            _cl = _g["close"].to_numpy(dtype=float)
+            _sup = _g["support"].to_numpy(dtype=float)
+            _ma = _g["ma20"].to_numpy(dtype=float)
+            _s = pd.Series(_np.where(_hl, _np.nan, _cl))
+            _ex = (_s.dropna().rolling(_MAP2, min_periods=_MAP2)
+                   .mean().reindex(range(_n2)).ffill().to_numpy(dtype=float))
+            with _np.errstate(divide="ignore", invalid="ignore"):
+                _k = _np.where(_ma > 0, _sup / _ma, _np.nan)    # = (1 − ep)
+                _sup_ex = _ex * _k
+            _sig_raw = (_cl <= _sup) & _np.isfinite(_sup)
+            _sig_ex = (_cl <= _sup_ex) & _np.isfinite(_sup_ex)
+            for _i in _np.flatnonzero(_sig_raw & (~_sig_ex) & _np.isfinite(_sup_ex)):
+                HALT_N["split"] += 1
+                _HALT_BLOCK.add((_tk, _dstr[int(_i)]))
+        HALT_N["block"] = len(_HALT_BLOCK)
+        print(f"[ma20-skip-halt] 정지봉 MA20 오염 진입차단 on({_MA20_SH}) — "
+              f"정지봉 {HALT_N['hit']}건 · 판정갈림 {HALT_N['split']}건 · "
+              f"차단 {HALT_N['block']}종목-일")
+
     # (실험) 종목별 최근 RISE2W_WIN 거래일 순방향 최대상승폭(저점→이후고점) — 매수우선순위·차등목표 공용.
     _RISE2W = {}
     if BUY_PRIORITY == "rise2w" or _WIDE_T is not None:
@@ -2228,6 +2293,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             if tk in F4_EXCLUDE:      # ★F4 반사실 전용(2026-08-26 · CAND-2026-08-26-14). 기본 빈 set=off=무영향
                 continue
             if EXRIGHTS_BLOCK and (tk, str(r["date"])[:10]) in _EX_BLOCK:   # ★CAND-2026-08-22-120. off=빈 set=무영향
+                continue
+            if MA20_SKIP_HALT and (tk, str(r["date"])[:10]) in _HALT_BLOCK:   # ★CAND-2026-10-28-9. off=빈 set=무영향
                 continue
             if not (pd.notna(r["ma20"]) and r["date"] >= period_start):
                 continue
