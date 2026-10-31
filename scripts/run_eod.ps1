@@ -487,6 +487,14 @@ $env:S2_CA_DB = $null
 #   ★되돌리기: 아래 한 줄을 지운다(빈 문자열 = 종전 동작 = 새 파일을 하나도 안 만듦).
 $env:S2_PLAN_ARCHIVE_DIR = (Join-Path $root "results\daily_order_plan_archive")
 
+# ★★★[2026-10-31 · CAND-2026-10-31-11 · ★해달별님 결정 「①-a 점화」] EOD 재진입 장부 사이드카 — ★쓰기만.
+#   ★무엇 — EOD 가 끝날 때 재진입 장부(last_exit · s2_reentry_ct · 손실률 · 보유)를
+#     results\reentry_state\reentry_state_<기준일>_<생성시각>.json + latest.json 포인터로 남긴다(원자적 · fail-open).
+#   ★왜 — s2_reentry_ct 는 어디에도 저장되지 않아(OBS-2026-10-31-14) 15:10 알람이 EOD 재진입 규칙을 못 본다.
+#   ★영향 — 9 CSV · Supabase 적재 · 텔레그램 바이트 동일(검증 V-1) · 디스크 하루 약 27KB · 알람 읽기는 별도 게이트(0 = 종전).
+#   ★되돌리기 — 이 줄을 "0" 으로(또는 지운다). → quant_infra/2026-10/S2_REENTRY_SIDECAR_VERIFY_2026-10-31.md
+$env:S2_REENTRY_SIDECAR = "1"
+
 # ★★★[2026-08-24 채택 · CAND-2026-08-24-240 · 해달별님 결정] 유동성 참여율 상한 — ★비례 축소
 #   ★해달별님 설계: *"참여율이 걸리면 ★투입금액을 ★비례하여 줄이는 형태로 가면 더 좋을 것 같은데."*
 #   [무엇을] 하루에 한 종목에 넣는 금액을 ★`0.03 x med20` 로 ★깎는다(★차단이 아니다).
