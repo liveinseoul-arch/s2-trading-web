@@ -62,6 +62,8 @@ def notify_preclose(target, rows):
         lines.append("오늘 신규 진입 후보 없음.")
     if getattr(sc, "EOD_LABEL", False):     # ★[CAND-2026-10-20-35] off 면 한 줄도 안 붙는다
         lines.extend(sc.eod_label_footer())
+    if getattr(sc, "REENTRY_SIDECAR", "") in ("label", "gate"):   # ★[2026-10-31 · CAND-2026-10-31-11] 재진입 사이드카 꼬리말 — off · shadow 면 안 붙는다
+        lines.extend(sc.reentry_sidecar_footer())                 # ★되돌리기 = run_preclose.ps1 `S2_ALARM_REENTRY_SIDECAR` "0"
     telegram_send("\n".join(lines))
 
 

@@ -1705,6 +1705,16 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
     #   「1차매수금액 대비 pnl」 손실률(%). REENTRY_COOLDOWN_DAYS 가 None(기본)이면
     #   값은 계속 채워지지만 아래 게이트 분기가 통째로 죽어 canonical 항등이다.
     last_exit_lossrate = {}
+    # ★★[2026-10-31 · CAND-2026-10-31-11] 재진입 장부 사이드카 — ★기록 전용(계산에 한 톨도 안 쓰인다).
+    #   off(`S2_REENTRY_SIDECAR` 미설정 · HIST 미설정)면 `_rsc_hist` 는 빈 채로 남고 `_rsc_snap` 은 불리지 않는다.
+    _rsc_hist = []
+
+    def _rsc_snap(day_d):
+        """그날 마감 장부 4필드의 ★얕은 사본 — 보유(진입일 · 매수 · 매도 회차) · last_exit · 카운터 · 손실률."""
+        return dict(d=day_d,
+                    positions={_t: (_p["entry_date"], _p["buy_count"], _p["sell_count"])
+                               for _t, _p in positions.items()},
+                    last_exit=dict(last_exit), ct=dict(s2_reentry_ct), lossrate=dict(last_exit_lossrate))
     cash = float(start_cap); peak = cash
     executions, trades, legs, nav_rows, snaps = [], [], [], [], []
     candidates, counts = [], []
@@ -2678,9 +2688,14 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 last_close=round(curp), eval_amount=round(p["qty"] * curp), eval_pnl=round(p["qty"] * (curp - p["avg_buy"])),
                 ret_pct=round((curp / p["avg_buy"] - 1) * 100, 2),
                 port_pct=round(p["qty"] * curp / nav * 100, 2) if nav > 0 else None))
+        # ★[CAND-2026-10-31-11] 검증 전용 HIST(dry-run 한정) — off 면 조건 1회 평가뿐(계산 무관)
+        if REENTRY_SIDECAR_HIST is not None and str(d)[:10] >= REENTRY_SIDECAR_HIST:
+            _rsc_hist.append(_rsc_snap(d))
 
     # 미청산 포지션 → trades open
     last_d = all_dates[-1]
+    # ★[CAND-2026-10-31-11] 최종 장부 — 날짜 루프 직후(아래 open 정리 · 주문계획 전). off 면 None(아무도 안 읽는다)
+    _rsc_final = _rsc_snap(last_d) if REENTRY_SIDECAR else None
     for tk, p in positions.items():
         trades.append(dict(_tid=p["tid"], ticker=tk, name=p["name"], market=p["market"],
             entry_date=p["entry_date"], exit_date=None, buy_count=p["buy_count"], max_invested=round(p["cost"]),
@@ -2708,10 +2723,16 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                                 price=mp, amount=round(_net), entry_date=p["entry_date"],
                                 exit_date=p["exit_date"], w=p["w"], pnl=round(_net - p["cost"])))
 
-    return dict(executions=executions, trades=trades, legs=legs, nav_daily=nav_rows,
+    _ret = dict(executions=executions, trades=trades, legs=legs, nav_daily=nav_rows,
                 position_snapshots=snaps, daily_order_plan=order_plan, monthly_stats=monthly,
                 daily_candidates=candidates, daily_counts=counts, last_date=last_d,
                 rs_positions=rs_rows)   # ★10번째. 9개 CSV·Supabase 스키마는 불변이다
+    # ★★[CAND-2026-10-31-11] 게이트 on 일 때만 키 2개를 더한다 — ★off 면 키가 안 생긴다(종전과 같은 dict).
+    #   소비처(dry_run_dump · upsert_supabase_rpc · upsert_supabase · notify_eod)는 전부 ★이름을 지정해 읽는다.
+    if REENTRY_SIDECAR:
+        _ret["reentry_state"] = _rsc_final
+        _ret["reentry_state_hist"] = _rsc_hist
+    return _ret
 
 
 # ── ★daily_order_plan 일별 아카이브 (CAND-2026-08-24-203 · 기본 off) ──────────
@@ -2729,6 +2750,93 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
 #   ⚠️★운영(run_eod.ps1) 점화는 §4-6 「새 파일 신설」 승인 대상이다 — 이 라운드는
 #     코드만 넣고 기본 off 로 둔다(해달별님 결정 대기).
 PLAN_ARCHIVE_DIR = os.environ.get("S2_PLAN_ARCHIVE_DIR", "").strip()
+
+# ── ★★[2026-10-31 · CAND-2026-10-31-11 · 해달별님 결정 「제안대로 착수」] EOD 재진입 장부 사이드카(로컬 기록) ──
+#   [무엇] EOD 가 끝날 때 재진입 장부 4필드(보유 · last_exit · s2_reentry_ct · last_exit_lossrate)와
+#     규칙값 · 런 지문을 로컬 JSON 으로 남긴다 — 15:10 알람(s2_candidates)이 그것으로 재진입을 EOD 규칙 그대로 판정한다.
+#     ★`s2_reentry_ct` 는 지금 어디에도 저장되지 않는다(simulate() 지역 dict · CSV 9종 · Supabase 본문에 없음) ⇒ 이 기록 말고는 경로가 없다.
+#   [게이트] `S2_REENTRY_SIDECAR` — 미설정 · "0" = off = ★종전 바이트 동일(simulate 반환 dict 에 키조차 안 생긴다).
+#     "1" = on — 운영 런이면 `results/reentry_state/` 에 날짜+시각 새 파일 + `latest.json` 포인터 교체,
+#     ★dry-run 이면 무조건 dry-run 출력 폴더에만(운영 폴더 · 포인터 무접근 — OBS-2026-10-31-13 교훈).
+#     ★계산 무영향 — on 이어도 9 CSV · Supabase 9표 · 텔레그램 바이트 불변(관측 전용 계약 · 검증 V-1).
+#   [검증 전용] `S2_REENTRY_SIDECAR_HIST="YYYY-MM-DD"` — ★dry-run 이고 위 게이트가 on 일 때만. 그날부터 마지막 날까지
+#     매일 마감 스냅샷을 `reentry_state_hist.json` 에. ★런처에 넣지 않는다(넣으면 dry-run 가드가 격리 폴더를 강제한다).
+#     ★비 dry-run 이면 무시 + 경고 1줄(운영 EOD 를 죽이지 않는다).
+#   ⚠️★이름이 `S2_REENTRY_*` 계열이지만 ★규칙이 아니라 기록 스위치다 — 읽는 쪽 규칙 지문 비교에서 뺀다.
+#   ★되돌리기 — `run_eod.ps1` 의 `S2_REENTRY_SIDECAR` 한 줄을 "0" 으로(기본 off).
+#   → quant_infra/2026-10/SPEC_S2_REENTRY_SIDECAR_2026-10-31.md §2
+_rsc_env = os.environ.get("S2_REENTRY_SIDECAR", "").strip().lower()
+REENTRY_SIDECAR = _rsc_env in ("1", "true", "yes", "on")
+REENTRY_SIDECAR_HIST = None
+_rsch_env = os.environ.get("S2_REENTRY_SIDECAR_HIST", "").strip()
+if _rsch_env:
+    try:
+        _rsch_ok = date.fromisoformat(_rsch_env).isoformat() == _rsch_env
+    except ValueError:
+        _rsch_ok = False
+    if not _is_dry:
+        print("  ⚠️[reentry-sidecar] S2_REENTRY_SIDECAR_HIST 는 --dry-run 전용 — 무시한다(EOD 는 계속)")
+    elif not REENTRY_SIDECAR:
+        print("  ⚠️[reentry-sidecar] S2_REENTRY_SIDECAR_HIST 는 S2_REENTRY_SIDECAR=1 일 때만 — 무시한다")
+    elif not _rsch_ok:
+        print(f"  ⚠️[reentry-sidecar] S2_REENTRY_SIDECAR_HIST={_rsch_env!r} 형식 오류(YYYY-MM-DD) — 무시한다")
+    else:
+        REENTRY_SIDECAR_HIST = _rsch_env
+
+
+def write_reentry_sidecar(data, dry_run, cfg=None, base_cap=None, period_start=None):
+    """★EOD 재진입 장부 사이드카 쓰기(CAND-2026-10-31-11). ★게이트 on 일 때만 부른다.
+
+    ★fail-open — 어떤 예외도 밖으로 안 낸다(EOD rc 불변 · 텔레그램 없음 · 경보 채널은 다음 날 15:10 꼬리말).
+    ★dry-run 이면 dry-run 출력 폴더(`dry_run_dump()` 와 같은 식)에만 쓰고 ★포인터는 한 번도 안 쓴다."""
+    try:
+        import s2_reentry_sidecar as _rsm          # ★지연 import(ROOT 는 :27 에서 sys.path) — 깨져도 EOD 는 계속
+        raw = data.get("reentry_state")
+        if raw is None:
+            raise RuntimeError("simulate() 가 reentry_state 를 돌려주지 않았다")
+        last_d = data["last_date"]
+        rules = _rsm.make_rules(
+            relax=REENTRY_RELAX, max_count=REENTRY_MAX_COUNT, reset_days=REENTRY_RESET_DAYS,
+            window_days=REENTRY_WINDOW_DAYS, cooldown_days=REENTRY_COOLDOWN_DAYS,
+            cooldown_threshold=REENTRY_COOLDOWN_THRESHOLD, signal_reset=REENTRY_SIGNAL_RESET,
+            signal_mode=REENTRY_SIGNAL_MODE, signal_step=REENTRY_SIGNAL_STEP, prox=PROX)
+        _nav = data.get("nav_daily") or []
+        _tr = data.get("trades") or []
+        _here = Path(__file__).resolve()
+        fp = _rsm.fingerprint(
+            export_eod_path=_here, backtest_path=ROOT / "backtest.py",
+            run_eod_path=_here.parent / "run_eod.ps1", environ=os.environ,
+            db_path=getattr(cfg, "db_path", None),
+            px_last_date=_rsm.iso(last_d), period_start=_rsm.iso(period_start),
+            lookback_days=int(os.environ.get("S2_LOOKBACK_DAYS", "4000")),
+            base_cap=None if base_cap is None else float(base_cap),
+            final_nav=(_nav[-1]["nav"] if _nav else None),
+            trades_closed=sum(1 for t in _tr if t.get("status") == "closed"),
+            trades_open=sum(1 for t in _tr if t.get("status") == "open"))
+        snap = _rsm.snapshot_from_raw(raw)
+        doc = _rsm.build_state(snap, rules, fp,
+                               _rsm.eod_day_sets(data["daily_candidates"], data["executions"], last_d),
+                               "dry-run" if dry_run else "live")
+        hist_n = None
+        if dry_run:
+            outdir = Path(os.environ.get("S2_DRYRUN_DIR", "").strip()
+                          or (_here.parent / "_dryrun"))
+            hist_doc = None
+            if REENTRY_SIDECAR_HIST is not None:
+                hist_doc = _rsm.build_hist(
+                    [_rsm.snapshot_from_raw(h) for h in (data.get("reentry_state_hist") or [])],
+                    rules, fp, REENTRY_SIDECAR_HIST,
+                    _rsm.eod_by_day(data["daily_candidates"], data["executions"]))
+                hist_n = len(hist_doc["days"])
+            dest = _rsm.write_dryrun(outdir, doc, hist_doc)[0]
+        else:
+            dest, _sha = _rsm.write_live(ROOT / "results" / "reentry_state", doc)
+        c = doc["counts"]
+        print(f"  ★[reentry-sidecar] {dest} (종목 {c['tickers']} · 보유 {c['holdings']} · "
+              f"카운터≥{rules['max_count']} {c['ct_ge_max']} · 기준일 {doc['base_date']}"
+              f"{' · HIST %d일' % hist_n if hist_n is not None else ''})")
+    except Exception as _e:                                       # noqa: BLE001
+        print(f"  ⚠️[reentry-sidecar] 쓰기 실패 — EOD 는 계속(rc 불변): {type(_e).__name__}: {_e}")
 
 
 def archive_order_plan(plan, d, outdir_str=None):
@@ -3594,6 +3702,13 @@ def main():
     # ★CAND-2026-08-24-203 — daily_order_plan 일별 아카이브(기본 off · env 로 켠다)
     #   ⚠️dry-run·live 양쪽에 적용 — Supabase 전삭제-재적재로 사라지는 이력을 로컬에 남긴다.
     archive_order_plan(data["daily_order_plan"], data["last_date"])
+
+    # ★★[2026-10-31 · CAND-2026-10-31-11 · 해달별님 결정 미결 #5 「적재 전」] 재진입 장부 사이드카 —
+    #   ★plan archive 와 같은 자리(Supabase 적재 ★전). 상태는 simulate() 의 결정론적 산출이라 적재 성공과 무관하다.
+    #   ★off 면 호출조차 안 한다(종전 바이트 동일) · on 이어도 fail-open(쓰기 실패가 EOD rc 를 안 바꾼다).
+    if REENTRY_SIDECAR:
+        write_reentry_sidecar(data, dry_run=args.dry_run, cfg=cfg, base_cap=base_cap,
+                              period_start=period_start)
 
     if args.dry_run:
         dry_run_dump(data, base_cap)
