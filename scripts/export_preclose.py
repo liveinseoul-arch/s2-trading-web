@@ -26,6 +26,18 @@ from notify import telegram_send                # noqa: E402
 
 MKT = {"KOSPI": "KS", "KOSDAQ": "KQ"}
 
+# ★★[CAND-2026-10-20-35 · 해달별님 결정 2026-10-31 「선택지 B」] 「EOD 에서 막힐 후보」 라벨.
+#   ★게이트는 ★`s2_candidates.EOD_LABEL`(`S2_ALARM_EOD_LABEL` · 기본 "0") 하나다.
+#   ★off 면 ★이 dict 가 ★영원히 비어 ★알림 · dry-run 출력이 ★종전 바이트 동일이다.
+#   ⚠️★라벨은 ★Supabase 행(`rows`)에 ★넣지 않는다 — ★`daily_candidates` 에 그 열이 없어 ★POST 가 깨진다(스키마 변경 금지).
+_EOD_BLOCK = {}         # ticker -> [사유, ...]  ★build() 가 채운다(on 일 때만)
+
+
+def _eod_lab(r):
+    """★off 면 빈 문자열 ⇒ ★종전 바이트 동일."""
+    why = _EOD_BLOCK.get(r["ticker"])
+    return f" ⛔EOD차단:{'·'.join(why)}" if why else ""
+
 
 def notify_preclose(target, rows):
     reached = [r for r in rows if r["reached"]]
@@ -35,7 +47,7 @@ def notify_preclose(target, rows):
     if reached:
         lines.append("● 지지선 도달(체결 예상):")
         for r in reached[:10]:
-            lines.append(f"  · {r['name'][:6]} {r['order_price']:,}원 (포트 {r['port_pct']}%)")
+            lines.append(f"  · {r['name'][:6]} {r['order_price']:,}원 (포트 {r['port_pct']}%)" + _eod_lab(r))
     if near:
         # ★★[2026-10-21 · 해달별님 지시] ①종목당 ★한 줄 + ★주문가·비중 병기(도달 줄과 같은 꼴)
         #   ②★가까운 것(덜 내려도 되는 것)부터 — `drop_to_pct` 는 ★음수라 ★내림차순이 가까운 순이다.
@@ -45,9 +57,11 @@ def notify_preclose(target, rows):
         lines.append("○ 근접(더 내리면 체결):")
         for r in sorted(near, key=lambda x: x["drop_to_pct"], reverse=True)[:12]:
             lines.append(f"  · {r['name'][:6]} {r['order_price']:,}원 "
-                         f"({r['drop_to_pct']:.1f}% · 포트 {r['port_pct']}%)")
+                         f"({r['drop_to_pct']:.1f}% · 포트 {r['port_pct']}%)" + _eod_lab(r))
     if not rows:
         lines.append("오늘 신규 진입 후보 없음.")
+    if getattr(sc, "EOD_LABEL", False):     # ★[CAND-2026-10-20-35] off 면 한 줄도 안 붙는다
+        lines.extend(sc.eod_label_footer())
     telegram_send("\n".join(lines))
 
 
@@ -76,6 +90,8 @@ def build(target_date, live):
     fallback = requested_live and not live_out      # 라이브 요청 → 캐시로 떨어졌으면 KRX 실패
     positions, last_exit, cash, _ = sc.reconstruct(px, target, nmap, mmap, cfg, 5e8)
     new_cand, _add, nav, _hv = sc.extract(px, target, positions, last_exit, cash, nmap, mmap, cfg)
+    _EOD_BLOCK.clear()                      # ★[CAND-2026-10-20-35] off 면 `eod_block` 키가 없어 비어 있다
+    _EOD_BLOCK.update({c["tk"]: c["eod_block"] for c in new_cand if c.get("eod_block")})
     now = datetime.now().isoformat()
     rows = [dict(
         d=str(target), ticker=c["tk"], kind="new", name=c["name"],
@@ -129,7 +145,7 @@ def main():
             reach = "●도달" if r["reached"] else f"{r['drop_to_pct']:.1f}%"
             updown = "UP" if r["ma120_above"] else "DOWN"
             print(f"  {r['name'][:6]:<8}{r['market']:<3}{r['ticker']:<8} 현재가 {r['current_price']:>9,} "
-                  f"주문가(지지선) {r['order_price']:>9,} {reach:>7} 포트{r['port_pct']}% {updown}")
+                  f"주문가(지지선) {r['order_price']:>9,} {reach:>7} 포트{r['port_pct']}% {updown}" + _eod_lab(r))
     elif fallback:
         # KRX 실패 → 폴백 데이터는 적재·정상 알림 모두 생략, 실패 알림만 발송
         today_str = str(date.today())
