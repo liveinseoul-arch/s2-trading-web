@@ -71,6 +71,12 @@ $env:S2_ADD_DROP      = "0.07"                                         # 추가�
 #   근거: quant_infra/2026-10/S2_RESISTANCE_SYMMETRY_CENSUS_2026-10-28.md §7·§8
 #         quant_infra/prereg/2026-10-28_S2_MA20_SKIP_HALT_운영이식.md
 $env:S2_MA20_SKIP_HALT = "1"                                   # ★정지봉 오염이 만든 가짜 진입만 차단(정밀)
+# ★★★[2026-10-31 · CAND-2026-10-20-35 · ★해달별님 결정 「선택지 B」 · 견본 확인 후 「푸시」] 「EOD 에서 막힐 후보」 표시(⛔EOD차단:사유).
+#   ★후보는 그대로(정보 손실 0) · ★라벨만 — 보유중 · 권리락 · MA20정지봉 · 정지일.
+#   ★EOD 게이트 값은 run_eod.ps1 을 런타임 파싱(손복사 없음) · ★재진입 장부 축은 표시하지 못한다.
+#   ★되돌리기 — 이 줄을 "0" 으로(기본 off = 종전 바이트 동일 · sha256 대조 확인).
+#   → quant_infra/2026-10/S2_ALARM_EOD_LABEL_2026-10-31.md
+$env:S2_ALARM_EOD_LABEL = "1"                                  # ★EOD 가 막을 후보에 사유 라벨(기본 off)
 & C:\Python314\python.exe "s2-trading-web\scripts\export_preclose.py" *>> $log
 # ★★[2026-08-24 · CAND-2026-08-23-630] rc 를 로그에 남긴다(로그만 더한다 · ps1 rc 불변).
 # ★★★[2026-08-24 신설 · CAND-2026-08-24-520] 아래 [RC] 줄을 ★try/catch 로 감싼다.
