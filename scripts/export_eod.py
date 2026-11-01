@@ -2751,6 +2751,17 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
 #     코드만 넣고 기본 off 로 둔다(해달별님 결정 대기).
 PLAN_ARCHIVE_DIR = os.environ.get("S2_PLAN_ARCHIVE_DIR", "").strip()
 
+# ── ★[2026-11-01 · CAND-2026-10-31-27 · 해달별님 결재 「권고대로 전부」] dry-run 의 plan archive 격리 ──
+#   [왜] 15:10 알람 「⛔보유중」 라벨(s2_candidates._eod_held)과 사이드카 ①-a 대조가 운영 아카이브의
+#     마지막 날 파일을 그날 EOD 보유의 정본으로 읽는다 ⇒ 당일 날짜로 돈 연구 dry-run 한 번이 다음 날
+#     알람 라벨을 다른 세계의 보유로 바꿀 수 있다(OBS-2026-10-31-13 · 2024-12-30.csv 가 10-28 에 쓰인 흔적).
+#   S2_PLAN_ARCHIVE_DRYRUN_ISOLATE = ""(기본 off) — 종전 동작(dry-run 도 S2_PLAN_ARCHIVE_DIR 에 쓴다).
+#     "1" — --dry-run 이면 dry-run 출력 폴더(S2_DRYRUN_DIR 또는 _dryrun) 아래 plan_archive/ 로 돌린다.
+#     ★운영 EOD(비 dry-run)는 on 이어도 바이트 불변 · 9 CSV 무영향(아카이브는 simulate 뒤 기록 전용).
+#   ★되돌리기 — run_eod.ps1 의 S2_PLAN_ARCHIVE_DRYRUN_ISOLATE 한 줄을 지운다.
+PLAN_ARCHIVE_DRYRUN_ISOLATE = os.environ.get("S2_PLAN_ARCHIVE_DRYRUN_ISOLATE", "").strip().lower() in (
+    "1", "true", "yes", "on")
+
 # ── ★★[2026-10-31 · CAND-2026-10-31-11 · 해달별님 결정 「제안대로 착수」] EOD 재진입 장부 사이드카(로컬 기록) ──
 #   [무엇] EOD 가 끝날 때 재진입 장부 4필드(보유 · last_exit · s2_reentry_ct · last_exit_lossrate)와
 #     규칙값 · 런 지문을 로컬 JSON 으로 남긴다 — 15:10 알람(s2_candidates)이 그것으로 재진입을 EOD 규칙 그대로 판정한다.
@@ -2845,6 +2856,9 @@ def archive_order_plan(plan, d, outdir_str=None):
     outdir_str = (PLAN_ARCHIVE_DIR if outdir_str is None else outdir_str).strip()
     if not outdir_str or not plan:
         return
+    if PLAN_ARCHIVE_DRYRUN_ISOLATE and _is_dry:                 # ★CAND-2026-10-31-27 — 운영 아카이브 무접근
+        outdir_str = str(Path(os.environ.get("S2_DRYRUN_DIR", "").strip()
+                              or (Path(__file__).resolve().parent / "_dryrun")) / "plan_archive")
     outdir = Path(outdir_str)
     outdir.mkdir(parents=True, exist_ok=True)
     dest = outdir / f"{d}.csv"

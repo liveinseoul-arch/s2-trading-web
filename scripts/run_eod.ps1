@@ -486,6 +486,13 @@ $env:S2_CA_DB = $null
 #   ★날짜별 새 파일이다 — 기존 파일을 덮어쓰지 않는다(CLAUDE.md §0-4). 매일 한 파일씩 쌓인다.
 #   ★되돌리기: 아래 한 줄을 지운다(빈 문자열 = 종전 동작 = 새 파일을 하나도 안 만듦).
 $env:S2_PLAN_ARCHIVE_DIR = (Join-Path $root "results\daily_order_plan_archive")
+# ★[2026-11-01 · CAND-2026-10-31-27 · 해달별님 결재 「권고대로 전부」] dry-run 의 plan archive 격리
+#   ★왜 — 15:10 알람 「⛔보유중」 라벨과 사이드카 ①-a 대조가 위 폴더의 마지막 날 파일을 그날 EOD 보유로
+#   ★읽는데, 이 런처를 파싱해 env 를 얻는 연구 dry-run 이 같은 폴더에 쓴다(OBS-2026-10-31-13).
+#   ★"1" = --dry-run 이면 dry-run 출력 폴더의 plan_archive/ 로 돌린다. ★이 운영 EOD(비 dry-run)는 바이트 불변.
+#   ★검증 — 결정창 off 재현 9/9 SHA256 동일 · on 에서 운영 폴더(대역) 0파일 · on 9 CSV 9/9 동일.
+#   ★되돌리기: 아래 한 줄을 지운다(종전 = dry-run 도 위 폴더에 쓴다).
+$env:S2_PLAN_ARCHIVE_DRYRUN_ISOLATE = "1"
 
 # ★★★[2026-10-31 · CAND-2026-10-31-11 · ★해달별님 결정 「①-a 점화」] EOD 재진입 장부 사이드카 — ★쓰기만.
 #   ★무엇 — EOD 가 끝날 때 재진입 장부(last_exit · s2_reentry_ct · 손실률 · 보유)를
