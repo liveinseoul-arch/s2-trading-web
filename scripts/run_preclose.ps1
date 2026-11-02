@@ -77,6 +77,15 @@ $env:S2_MA20_SKIP_HALT = "1"                                   # ★정지봉 �
 #   ★되돌리기 — 이 줄을 "0" 으로(기본 off = 종전 바이트 동일 · sha256 대조 확인).
 #   → quant_infra/2026-10/S2_ALARM_EOD_LABEL_2026-10-31.md
 $env:S2_ALARM_EOD_LABEL = "1"                                  # ★EOD 가 막을 후보에 사유 라벨(기본 off)
+# ★★★[2026-11-02 · CAND-2026-10-31-12 · ★★해달별님 결정 「권고대로 1번」] 재진입 판정을 ★EOD 장부 사이드카로(gate).
+#   ★왜 — 15:10 알람은 canonical 「청산 뒤 새 5,000억」(rs > last_exit)으로 거르는데 20:30 EOD 는
+#     채택 §18 완화(RELAX · 재진입 2회 · 신호 리셋 · 쿨다운)로 산다 ⇒ 2026-11-02 알람 「해당 없음」 대 EOD 001820 · 034020 재매수.
+#   ★읽는 것 — 직전 EOD 가 남긴 results/reentry_state/ 사이드카(S2_REENTRY_SIDECAR="1" · run_eod.ps1).
+#   ★off 재현 — V-4 3일 x 4변형 sha 동일 · V-5 60일 E-동치 81/81 · 폴백 16/16(낡음 · sha · 규칙 불일치면 종전 + ⚠ 꼬리말).
+#   ⚠️★「알람 = EOD 100%」 금지 — 과밀일 지지선(CAND-2026-10-31-13) · 15:10 현재가 차이는 남는다(V-5 숨김 8).
+#   ★되돌리기 — 이 줄을 "0" 으로(또는 삭제 · 미설정 = 종전 바이트 동일).
+#   → quant_infra/2026-10/S2_REENTRY_SIDECAR_VERIFY_2026-10-31.md · SPEC_S2_REENTRY_SIDECAR_2026-10-31.md §3
+$env:S2_ALARM_REENTRY_SIDECAR = "gate"                         # ★재진입 판정 = EOD 장부(기본 off)
 & C:\Python314\python.exe "s2-trading-web\scripts\export_preclose.py" *>> $log
 # ★★[2026-08-24 · CAND-2026-08-23-630] rc 를 로그에 남긴다(로그만 더한다 · ps1 rc 불변).
 # ★★★[2026-08-24 신설 · CAND-2026-08-24-520] 아래 [RC] 줄을 ★try/catch 로 감싼다.
