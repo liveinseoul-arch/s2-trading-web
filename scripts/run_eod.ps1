@@ -493,6 +493,13 @@ $env:S2_PLAN_ARCHIVE_DIR = (Join-Path $root "results\daily_order_plan_archive")
 #   ★검증 — 결정창 off 재현 9/9 SHA256 동일 · on 에서 운영 폴더(대역) 0파일 · on 9 CSV 9/9 동일.
 #   ★되돌리기: 아래 한 줄을 지운다(종전 = dry-run 도 위 폴더에 쓴다).
 $env:S2_PLAN_ARCHIVE_DRYRUN_ISOLATE = "1"
+# ★[2026-11-02 · CAND-2026-10-22-29 · 해달별님 「1순위로 올려 착수」] 거래 기록 체결 시각(hhmm)을 분봉 DB 로 채운다
+#   ★왜 — hhmm_cache.pkl 이 2026-07-19 이후 미갱신이라 그 뒤 손절 · 분할매도 시각이 비었다(웹 거래 카드).
+#   ★"fill" = 캐시 우선 · 없으면 루트 hhmm_minute.py 로 복원(종가 체결 다리 = 그날 정규장 마지막 봉 · 그 밖 = 체결가 첫 터치 분).
+#   ★검증(전 구간 dry-run) — off 재현 9/9 SHA256 동일 · on 은 legs.csv 의 hhmm 칸만 바뀐다(다른 칸 차이 0 · 캐시값 덮어씀 0) ·
+#     시각 610 → 2,650(3,540 중) · ★성과 기여 0(표시 전용).
+#   ★되돌리기: 아래 한 줄을 "0" 으로(또는 삭제 = 종전 바이트 동일).
+$env:S2_HHMM_MINUTE = "fill"
 
 # ★★★[2026-10-31 · CAND-2026-10-31-11 · ★해달별님 결정 「①-a 점화」] EOD 재진입 장부 사이드카 — ★쓰기만.
 #   ★무엇 — EOD 가 끝날 때 재진입 장부(last_exit · s2_reentry_ct · 손실률 · 보유)를

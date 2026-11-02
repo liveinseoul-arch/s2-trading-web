@@ -1561,9 +1561,38 @@ except Exception as _e:
     print(f"[hhmm] 캐시 로드 실패(무시): {_e}")
 
 
-def _hhmm(ticker, d, leg_type):
+# ★★[2026-11-02 · CAND-2026-10-22-29 · ★해달별님 「1순위로 올려 착수」] 캐시에 없는 다리의 시각을 ★분봉 DB 에서 복원.
+#   ★왜 — `hhmm_cache.pkl` 은 2026-07-19 이후 미갱신이라 그 뒤 거래는 손절 · 분할매도 시각이 빈다
+#     (★해달별님 「추가매수처럼 필요한 항목에 시:분」). ★pkl 은 덮어쓰지 않는다(§0-3) — 조회만 보탠다.
+#   ★게이트 `S2_HHMM_MINUTE` — "0" · 미설정 = off = ★종전 바이트 동일 · "fill" = 캐시 우선 · 없으면 분봉 복원.
+#   ★규칙 — 루트 `hhmm_minute.py`(종가 체결 다리 buy_new · newlow_stop · 단계 없는 stop = 그날 정규장 마지막 봉 ·
+#     그 밖 = 체결가에 처음 닿은 분 · 스케일 1% 검증 · 못 찾으면 None — 지어내지 않는다).
+#   ★되돌리기 — `run_eod.ps1` 의 이 env 한 줄을 "0" 으로(또는 삭제).
+HHMM_MINUTE = os.environ.get("S2_HHMM_MINUTE", "0").strip().lower() == "fill"
+HHMM_N = {}             # ★발동 카운터 — 캐시 · 분봉 복원 사유별(§4-2d 관문 2)
+_HHMM_RES = [None]
+
+
+def _hhmm(ticker, d, leg_type, stage=None, price=None):
     # 키=(ticker, date, leg_type). 같은날 같은 leg_type 은 유일하므로 가격 불필요(반올림 오차 회피).
-    return _HHMM.get((str(ticker), str(d), leg_type))
+    hm = _HHMM.get((str(ticker), str(d), leg_type))
+    if not HHMM_MINUTE:
+        return hm
+    if hm is not None:
+        HHMM_N["캐시"] = HHMM_N.get("캐시", 0) + 1
+        return hm
+    if price is None:
+        HHMM_N["가격없음"] = HHMM_N.get("가격없음", 0) + 1
+        return None
+    try:
+        if _HHMM_RES[0] is None:
+            import hhmm_minute as _hm
+            _HHMM_RES[0] = _hm.Resolver(ROOT / "stock_cache.db")
+        hm, why = _HHMM_RES[0].resolve(ticker, d, leg_type, stage, price)
+    except Exception as _e:                                   # noqa: BLE001 — ★시각은 표시용이라 런을 멈추지 않는다
+        hm, why = None, "오류(%s)" % type(_e).__name__
+    HHMM_N[why] = HHMM_N.get(why, 0) + 1
+    return hm
 
 
 def load(cfg: Config, end: date, start: date | None = None):
@@ -1773,7 +1802,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
     def leg(p, d, leg_type, stage, price, qty, nav_today):
         p["legs"].append(dict(d=d, leg_type=leg_type, stage=stage, price=round(price), qty=int(qty),
             amount=round(price * qty), port_pct=round(price * qty / nav_today * 100, 2) if nav_today > 0 else None,
-            hhmm=_hhmm(p["tk"], d, leg_type)))
+            hhmm=_hhmm(p["tk"], d, leg_type, stage, price)))
 
     def close_trade(p, d, reason):
         trades.append(dict(_tid=p["tid"], ticker=p["tk"], name=p["name"], market=p["market"],
@@ -3458,6 +3487,8 @@ def main():
     # ★★재진입 차수 상한 · 손절 무장 카운터(2026-09-02 · CAND-2026-09-02-10 · -11)
     #   ★§4-2d 관문 2 — 「0건이라 효과 없음」과 「코드가 안 돌아 0건」을 가른다.
     #   ⚠️★`nl_disabled` 가 0 이 아니면 ★손절기가 꺼진 채로 돈 것이다(NL-GUARD 경고와 짝).
+    if HHMM_MINUTE:
+        print("[HHMM] S2_HHMM_MINUTE=fill · " + " · ".join("%s %d" % kv for kv in sorted(HHMM_N.items())))
     if REENTRY_MAX_BUY is not None or NL_ARM_MODE != "count" or REENTRY_MB_N["nl_disabled"]:
         print(f"[REENTRY_MAXBUY] 상한={REENTRY_MAX_BUY} · 차단 {REENTRY_MB_N['blocked']}건 · "
               f"NL-GUARD 경고 {REENTRY_MB_N['nl_disabled']}건")
