@@ -1072,6 +1072,15 @@ EARLY_STOP_MINBC = int(os.environ.get("S2_EARLY_STOP_MINBC", "1") or 1)
 EARLY_N = {"fired": 0, "D": EARLY_STOP_D, "X": EARLY_STOP_X, "minbc": EARLY_STOP_MINBC}
 # 신저가 손절 트리거 기준: "intraday" = 그날 lo (장중) / "close" = 그날 cl (종가만)
 NEWLOW_TRIGGER = os.environ.get("S2_NEWLOW_TRIGGER", "intraday").lower()
+# ★★[2026-11-02 · CAND-2026-11-02-2 · ★해달별님 「진행」] 같은 날 「신저가 발동」과 「1차 목표 도달」이 겹칠 때.
+#   ★왜 — 신저가손절(종가 전량)을 고가 분할매도보다 먼저 판정해 그날 분할매도를 안 본다. ★실계좌는 지정가
+#     1차가 장중에 체결되고 손절선(1차 목표 x (1−DAY_BUF))이 걸려, ★그 아래로 내려오면 잔량이 그 자리에서 나간다.
+#   ★"stop1" — 고가 >= 1차 목표 ★그리고 종가 < 1차 손절선이면(★터치 뒤 손절선 하향이 일봉으로 확정)
+#     1차 매도(그 단계 수량 · 목표가) + 잔량 손절(손절선)로 청산한다. ★종가 >= 손절선이면 순서가 일봉으로
+#     안 갈려 ★종전(종가 신저가 청산) 그대로 둔다. ★더 높은 단계까지 갔을 수 있으나 ★1차만 본다(하한).
+#   ★기본 "0" = off = 종전 바이트 동일. ★0런 표적 — 결정창 3건 · 2026 1건(results/newlow_vs_target_census_2026-11-02.csv).
+NL_TGT_SAMEBAR = os.environ.get("S2_NL_TGT_SAMEBAR", "0").strip().lower() == "stop1"
+NL_TGT_N = {"fire": 0, "ambig": 0}
 # ★★★[2026-09-02 신설 · CAND-2026-09-01-19] `not bought` 유예 — ★규명 게이트 · 기본 off.
 #   ★무엇인가 — `_nl_cond` 의 `and not bought` 는 「그날 추가매수한 종목은 그날 신저가
 #     손절을 내지 않는다」는 ★설계선이다. 실주문 데몬 kw_watchloop 의 ★배타 규칙 E-2
@@ -2219,6 +2228,31 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     NL_B_N["gdefer_hold"] = NL_B_N.get("gdefer_hold", 0) + 1
             if _nl_cond and not bar_ok:
                 VB_SKIP["newlow"] += 1
+            if _nl_cond and bar_ok and NL_TGT_SAMEBAR:
+                # ★★[CAND-2026-11-02-2] 같은 봉 1차 목표 도달 + 종가 < 1차 손절선 ⇒ 1차 매도 + 잔량 손절선 청산
+                _t1 = _to_tick(p["avg_buy"] * p.get("tgt_mult", 1.0) * (1 + p.get("targets", S)[0]))
+                _s1 = _stop_px(_t1)
+                if hi >= _t1 and cl < _s1:
+                    NL_TGT_N["fire"] += 1
+                    sq = _stage_qty(1, p["total_qty"], p["qty"])
+                    if sq > 0:
+                        _sfill = _slip_fill(p, r, d, _t1, sq, 0.0, "sell")
+                        ex(d, p, "sell_1", 1, _sfill, sq, nav_today)
+                        leg(p, d, "sell_1", 1, _sfill, sq, nav_today)
+                        _net = sq * _sfill * SELL_MULT
+                        cash += _net; p["proc"] += _net
+                        p["qty"] -= sq; p["sell_count"] = 1; p["stop"] = _s1
+                    if p["qty"] > 0:
+                        _spx = _slip_fill(p, r, d, _s1, p["qty"], DAY_BUF, "stop_stage")
+                        ex(d, p, "stop", 1, _spx, p["qty"], nav_today)
+                        leg(p, d, "stop", 1, _spx, p["qty"], nav_today)
+                        _net = p["qty"] * _spx * SELL_MULT
+                        cash += _net; p["proc"] += _net; p["qty"] = 0
+                    close_trade(p, d, "stop"); del positions[tk]; closed.add(tk); last_exit[tk] = d
+                    p["min_low"] = min(p["min_low"], lo)
+                    continue
+                if hi >= _t1:
+                    NL_TGT_N["ambig"] += 1          # ★종가 >= 손절선 — 일봉으로 순서 불명 · 종전대로 종가 청산
             if _nl_cond and bar_ok:
                 # ★slip — ★DAY_BUF 가 구조적으로 못 덮는 구멍이다(sell_count >= 1 요구).
                 #   26건 · 매도액 13.7% 인데 할인 기여 33.07% · 참여율 중앙 0.6256%(전 경로 최고).
@@ -3487,6 +3521,9 @@ def main():
     # ★★재진입 차수 상한 · 손절 무장 카운터(2026-09-02 · CAND-2026-09-02-10 · -11)
     #   ★§4-2d 관문 2 — 「0건이라 효과 없음」과 「코드가 안 돌아 0건」을 가른다.
     #   ⚠️★`nl_disabled` 가 0 이 아니면 ★손절기가 꺼진 채로 돈 것이다(NL-GUARD 경고와 짝).
+    if NL_TGT_SAMEBAR:
+        print("[NL_TGT] S2_NL_TGT_SAMEBAR=stop1 · 1차 매도 + 손절선 청산 %d건 · 종가 >= 손절선(순서 불명 · 종전 유지) %d건"
+              % (NL_TGT_N["fire"], NL_TGT_N["ambig"]))
     if HHMM_MINUTE:
         print("[HHMM] S2_HHMM_MINUTE=fill · " + " · ".join("%s %d" % kv for kv in sorted(HHMM_N.items())))
     if REENTRY_MAX_BUY is not None or NL_ARM_MODE != "count" or REENTRY_MB_N["nl_disabled"]:
