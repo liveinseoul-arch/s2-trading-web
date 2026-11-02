@@ -1619,6 +1619,13 @@ def _hhmm(ticker, d, leg_type, stage=None, price=None):
 INTRADAY_MINUTE = os.environ.get("S2_INTRADAY_MINUTE", "0").strip().lower() in ("1", "true", "yes", "on")
 INTRADAY_D = int((os.environ.get("S2_INTRADAY_STOP_DELAY_MIN", "12") or "12").strip())
 INTRADAY_SAMEBAR = os.environ.get("S2_INTRADAY_SAMEBAR", "stop").strip().lower()
+# ★[2026-11-03 · 해달별님 「5분봉으로 12분 지연을 구현할 수 없지 않나」] 분봉 단위 — "5"(기본 · 종전) | "1"(2024-07-24 부터만 있다)
+#   ★5분봉은 지연이 5분 폭 구간이 된다(D=12 = 실효 10–15분) · 1분봉이면 실효 D−1 – D 분.
+INTRADAY_UNIT = int((os.environ.get("S2_INTRADAY_UNIT", "5") or "5").strip())
+# ★[2026-11-03 · 해달별님 「돌려줘」] 손절 체결가 규약 — "open"(기본 · 규약 B · 종전) | "line"(규약 A · 손절선 가격 · 첫 봉 갭은 시가)
+INTRADAY_STOP_FILL = os.environ.get("S2_INTRADAY_STOP_FILL", "open").strip().lower()
+if INTRADAY_MINUTE and INTRADAY_STOP_FILL not in ("open", "line"):
+    raise SystemExit("★S2_INTRADAY_STOP_FILL 는 open | line 만 — 받은 값 %r" % INTRADAY_STOP_FILL)
 if INTRADAY_MINUTE and INTRADAY_SAMEBAR not in ("stop", "target"):
     raise SystemExit("★S2_INTRADAY_SAMEBAR 는 stop | target 만 — 받은 값 %r" % INTRADAY_SAMEBAR)
 # ★발동 카운터(§4-2d 관문 2) — days = 재생한 포지션-일 · fb_* = 일봉 폴백 사유 · 나머지 = 재생 안 사건 수
@@ -1634,7 +1641,7 @@ def _ir_bars(tk, d, op, hi, lo, cl):
         if _IR_SRC[0] is None:
             import intraday_replay as _irm
             _IR_SRC[1] = _irm
-            _IR_SRC[0] = _irm.BarSource(ROOT / "stock_cache.db", unit_pref=(5,))
+            _IR_SRC[0] = _irm.BarSource(ROOT / "stock_cache.db", unit_pref=(INTRADAY_UNIT,))
         bs, why = _IR_SRC[0].day_bars(tk, d, op, hi, lo, cl, tick_fn=_to_tick)
     except Exception as _e:                                   # noqa: BLE001 — ★읽기 실패는 그날 일봉 폴백
         bs, why = None, "error"
@@ -2323,7 +2330,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     oldtgt_first=OLDTGT_PRIORITY,
                     nl_armed=(p["sell_count"] == 0
                               and (p["buy_count"] >= NL_AFTER or (KNIFE_ON and p.get("knife")))),
-                    min_low=p["min_low"], cb_sell=_irs, cb_stop=_irx, cb_add=_ira)
+                    min_low=p["min_low"], cb_sell=_irs, cb_stop=_irx, cb_add=_ira,
+                    stop_fill=INTRADAY_STOP_FILL)
                 bought = bool(_irr["added"])
                 IR_N["add_close"] += int(_irr["add_close_fill"])
                 IR_N["e1"] += _irr["e1"]; IR_N["e2"] += _irr["e2"]
@@ -3682,6 +3690,7 @@ def main():
     if INTRADAY_MINUTE:
         # ★[CAND-2026-11-02-5] 분봉 재생 발동 카운터 — days 가 0 이면 사문이다(§4-2d 관문 2)
         print("[INTRADAY] S2_INTRADAY_MINUTE=1 · D=%d분 · 같은봉=%s · " % (INTRADAY_D, INTRADAY_SAMEBAR)
+              + ("단위=%d분 · " % INTRADAY_UNIT if INTRADAY_UNIT != 5 else "")
               + " · ".join("%s %d" % (k, v) for k, v in IR_N.items()))
     if REENTRY_MAX_BUY is not None or NL_ARM_MODE != "count" or REENTRY_MB_N["nl_disabled"]:
         print(f"[REENTRY_MAXBUY] 상한={REENTRY_MAX_BUY} · 차단 {REENTRY_MB_N['blocked']}건 · "
