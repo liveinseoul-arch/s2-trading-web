@@ -1604,6 +1604,45 @@ def _hhmm(ticker, d, leg_type, stage=None, price=None):
     return hm
 
 
+# ★★[2026-11-02 · CAND-2026-11-02-5 · ★해달별님 발안 「1–3차 매도 비중 · 검증은 분봉이 있는 기간만」] 분봉 재생 매도 엔진.
+#   ★왜 — 일봉 루프는 같은 날 「목표 도달 · 손절선 하향 · 신저가 · 추가매수」의 ★순서를 모른다
+#     (대우건설 `047040` 11-02 — 시뮬 종가 11,690 대 실계좌 순서 09:57 약 11,330). ★매도 비중의 효과가 그 순서에 달렸다.
+#   ★게이트 `S2_INTRADAY_MINUTE` — "0" · 미설정 = off = ★종전 바이트 동일 · "1" = 그날 그 종목 정규장 5분봉이 있고
+#     스케일 검증(일봉 종가 / 마지막 봉 종가 · 고저 1% 안)을 지나면 ★매도 · 손절 · 신저가 표시 · 추가매수를 ★봉 순서로 판정한다.
+#     ★없으면 그날은 종전 일봉 판정(`S2_NL_TGT_SAMEBAR` 분기 포함) 그대로 — 혼합 세계(사양 §12).
+#   ★`S2_INTRADAY_STOP_DELAY_MIN`(기본 12) — 단계 체결 봉 뒤 손절선 무장 지연(분) · 0 = 다음 봉부터.
+#   ★`S2_INTRADAY_SAMEBAR` — "stop"(기본 · 보수) | "target"(낙관) · 무장 손절선과 다음 목표가 한 봉에서 둘 다 닿을 때.
+#   ★순서기는 루트 `intraday_replay.py`(순수 함수 · 단위 시험 archive/_2026-11-02_intraday_minute_selftest.py) ·
+#     체결 · 현금 · 원장은 ★이 파일의 기존 기계(`_stage_qty` · `_stop_px` · `_slip_fill` · `ex` · `leg` · `close_trade`)가 한다.
+#   ★사양 quant_infra/2026-11/SPEC_S2_INTRADAY_SELLPCT_2026-11-02.md · ★사전등록 quant_infra/prereg/2026-11-02_S2_분봉재생_매도비중.md
+#   ⚠️★연구 게이트다 — 운영 런처(`run_eod.ps1`)에는 넣지 않는다. ★되돌리기 = env 를 지운다.
+INTRADAY_MINUTE = os.environ.get("S2_INTRADAY_MINUTE", "0").strip().lower() in ("1", "true", "yes", "on")
+INTRADAY_D = int((os.environ.get("S2_INTRADAY_STOP_DELAY_MIN", "12") or "12").strip())
+INTRADAY_SAMEBAR = os.environ.get("S2_INTRADAY_SAMEBAR", "stop").strip().lower()
+if INTRADAY_MINUTE and INTRADAY_SAMEBAR not in ("stop", "target"):
+    raise SystemExit("★S2_INTRADAY_SAMEBAR 는 stop | target 만 — 받은 값 %r" % INTRADAY_SAMEBAR)
+# ★발동 카운터(§4-2d 관문 2) — days = 재생한 포지션-일 · fb_* = 일봉 폴백 사유 · 나머지 = 재생 안 사건 수
+IR_N = {"days": 0, "fb_nobars": 0, "fb_coverage": 0, "fb_scale": 0, "fb_error": 0,
+        "stage": 0, "stop": 0, "stop_gap": 0, "nl_close": 0, "nl_cancel": 0, "nl_mismatch": 0,
+        "add": 0, "add_close": 0, "e1": 0, "e2": 0, "samebar": 0, "add_tgt": 0}
+_IR_SRC = [None, None]          # [BarSource, intraday_replay 모듈] — 첫 사용 때 연다(off 면 영원히 None)
+
+
+def _ir_bars(tk, d, op, hi, lo, cl):
+    """★그날 정규장 5분봉(일봉 스케일 · 첫 봉 시가 = 일봉 시가) 또는 None(일봉 폴백 · 사유를 센다)."""
+    try:
+        if _IR_SRC[0] is None:
+            import intraday_replay as _irm
+            _IR_SRC[1] = _irm
+            _IR_SRC[0] = _irm.BarSource(ROOT / "stock_cache.db", unit_pref=(5,))
+        bs, why = _IR_SRC[0].day_bars(tk, d, op, hi, lo, cl, tick_fn=_to_tick)
+    except Exception as _e:                                   # noqa: BLE001 — ★읽기 실패는 그날 일봉 폴백
+        bs, why = None, "error"
+    if bs is None:
+        IR_N["fb_" + why] = IR_N.get("fb_" + why, 0) + 1
+    return bs
+
+
 def load(cfg: Config, end: date, start: date | None = None):
     """전 구간 px(지표 포함) + 이름/시장 맵 + 스파이크 맵 로드.
 
@@ -1808,10 +1847,11 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             amount=round(price * qty), port_pct=round(price * qty / nav_today * 100, 2) if nav_today > 0 else None,
             ma120_above=p["entry_above"], prev_spike_bull=p["entry_bull"], blocked_by_leverage=blocked))
 
-    def leg(p, d, leg_type, stage, price, qty, nav_today):
+    def leg(p, d, leg_type, stage, price, qty, nav_today, hm=None):
+        # ★[CAND-2026-11-02-5] `hm` — 분봉 재생 경로가 ★체결 봉 시각을 직접 준다. ★None(기본 · off 경로)이면 종전대로 `_hhmm`.
         p["legs"].append(dict(d=d, leg_type=leg_type, stage=stage, price=round(price), qty=int(qty),
             amount=round(price * qty), port_pct=round(price * qty / nav_today * 100, 2) if nav_today > 0 else None,
-            hhmm=_hhmm(p["tk"], d, leg_type, stage, price)))
+            hhmm=(hm if hm is not None else _hhmm(p["tk"], d, leg_type, stage, price))))
 
     def close_trade(p, d, reason):
         trades.append(dict(_tid=p["tid"], ticker=p["tk"], name=p["name"], market=p["market"],
@@ -2006,10 +2046,19 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             #   ★오늘 막 무장됐나. ★아래 두 분할매도 경로(시초 op · 장중 hi)에서 True 가 된다.
             #   ★`STOP_ARM_LOW_ONLY` off 면 ★이 변수를 ★읽는 곳이 없어 ★종전과 비트동일이다.
             _sold_today = False
+            # ★★[CAND-2026-11-02-5] 분봉 재생 — 이 포지션-일을 5분봉 순서로 판정할까.
+            #   ★off(`S2_INTRADAY_MINUTE` 미설정)면 `_ird` 는 언제나 None 이라 아래 분기가 전부 종전 그대로다.
+            #   ★on 이고 봉이 있으면 ①이월 손절 ②시초 매도 ③추가매수 체결 ④장중 매도 · 당일 손절 을 일봉 순서 대신
+            #     `intraday_replay.replay_day` 가 정하고(추가매수 ★자격 판정 · 가드는 종전 코드 그대로) ·
+            #     신저가(장 마감 판정) · 기간손절 · 조기손절은 ★재생 뒤 상태로 종전 코드가 그대로 판정한다.
+            _ird = None
+            if INTRADAY_MINUTE and bar_ok and p["qty"] > 0:
+                _ird = _ir_bars(tk, d, op, hi, lo, cl)
+                _ir_add, _ir_add_close, _ir_cf0, _irr = None, False, 0, None
             # 매도단계 후 손절 (장초 갭 포함)
             if p["sell_count"] >= 1 and p["qty"] > 0 and not bar_ok and lo <= p["stop"]:
                 VB_SKIP["stop"] += 1
-            if p["sell_count"] >= 1 and p["qty"] > 0 and bar_ok and lo <= p["stop"]:
+            if _ird is None and p["sell_count"] >= 1 and p["qty"] > 0 and bar_ok and lo <= p["stop"]:
                 px_ = op if op < p["stop"] else p["stop"]
                 if DAY_BUF > 0:                       # ★발동 카운터 (§4-1b #2)
                     DAY_BUF_N["hit_gap" if px_ < p["stop"] else "hit_buf"] += 1
@@ -2028,7 +2077,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             # high/low 순서가 모호한 일봉 시뮬 결함 회피 — 시초 매도 후엔 추가매수 차단(sell_count≥1).
             t = [_to_tick(p["avg_buy"] * p.get("tgt_mult", 1.0) * (1 + s)) for s in p.get("targets", S)]   # 목표가 호가단위 반올림(포지션별)
             for stg in range(p["sell_count"] + 1, N_STAGES + 1):
-                if op >= t[stg - 1] and p["qty"] > 0:
+                if _ird is None and op >= t[stg - 1] and p["qty"] > 0:   # ★[CAND-2026-11-02-5] 재생 일은 순서기가 본다
                     fill = max(op, t[stg - 1])          # 갭업이면 시가, 아니면 목표가
                     sq = _stage_qty(stg, p["total_qty"], p["qty"])
                     # ★slip — 목표가 매도에는 하한이 없다(DAY_BUF 는 손절선 전용). buf_applied = 0
@@ -2048,6 +2097,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             #   보므로 다음 목표는 항상 t[0](:1144 계산, add-buy 전 avg_buy 기준) 하나뿐이다.
             _oldtgt_hit = (OLDTGT_PRIORITY and p["sell_count"] == 0 and p["qty"] > 0
                            and bar_ok and hi >= t[0])
+            if _ird is not None:
+                # ★[CAND-2026-11-02-5] 재생 일은 ★봉 순서가 가른다 — 같은 봉 동시 도달만 OLDTGT 로(`oldtgt_first`)
+                _oldtgt_hit = False
             # ★재진입 차수 상한(CAND-2026-09-02-8) — off(None)면 MAX_BUY 그대로 = 항등.
             _mb = REENTRY_MAX_BUY if (REENTRY_MAX_BUY is not None and p.get("is_reentry")) else MAX_BUY
             if OLDTGT_PRIORITY and p["sell_count"] == 0 and p["buy_count"] < _mb and not (KNIFE_ON and p.get("knife")):
@@ -2066,6 +2118,9 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             if (p["sell_count"] == 0 and p["buy_count"] < _mb and not (KNIFE_ON and p.get("knife"))
                     and not _oldtgt_hit):
                 at = _to_tick(p["last_buy"] * (1 - ADD_DROP))   # 추가매수가 호가단위 반올림
+                if _ird is not None:
+                    # ★[CAND-2026-11-02-5] 아래 가드가 지정가를 ★종가로 바꾸면(ADDBLOCK close 계열 · CLOSEBUY) 종가 매수형이다
+                    _ir_cf0 = ADDBLK_N2["close_fill"] + ADDBLK_N2["close_extra"] + CB_N["fill"]
                 # ★[CAND-2026-09-01-19] 충돌 가드 확대 — off 면 _nl_gate_bc = NL_AFTER 로 항등.
                 _nl_gate_bc = (NL_AFTER - 1) if NL_SKIPADD else NL_AFTER
                 _skip = (p["buy_count"] >= _nl_gate_bc and at <= p["min_low"])
@@ -2156,7 +2211,13 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     _skip = True
                 if not _skip and not bar_ok and lo <= at:
                     VB_SKIP["add"] += 1
-                if not _skip and bar_ok and lo <= at:
+                if _ird is not None:
+                    # ★[CAND-2026-11-02-5] 재생 일 — ★체결은 순서기가 봉 저가로 정한다(아래 블록과 같은 사이징 · `_ira`)
+                    if not _skip:
+                        _ir_add = at
+                        _ir_add_close = (ADDBLK_N2["close_fill"] + ADDBLK_N2["close_extra"]
+                                         + CB_N["fill"]) != _ir_cf0
+                elif not _skip and bar_ok and lo <= at:
                     _amt_a = float(p["tranche"])
                     # ★★[CAND-2026-08-24-240] 추가매수도 같은 상한. LEGS=new 면 건너뛴다.
                     if LIQ_LEGS != "new":
@@ -2189,6 +2250,91 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                         leg(p, d, "buy_add", p["buy_count"], at, sh, nav_today)
                     elif sh > 0:
                         ex(d, p, "buy_add", p["buy_count"] + 1, at, sh, nav_today, blocked=True)
+            if _ird is not None:
+                # ── ★★[CAND-2026-11-02-5] 분봉 재생 실행 ── 콜백 3개가 ★종전 기계로 체결한다.
+                IR_N["days"] += 1
+                _irm = _IR_SRC[1]
+
+                def _irs(stg, px0, tb, gap):
+                    """단계 매도 — 시초 · 장중 매도 블록과 같은 기계(목표가 또는 갭업 시가 · 손절선 = `_stop_px`)."""
+                    nonlocal cash
+                    sq = _stage_qty(stg, p["total_qty"], p["qty"])
+                    _f = _slip_fill(p, r, d, px0, sq, 0.0, "sell")
+                    ex(d, p, f"sell_{stg}", stg, _f, sq, nav_today)
+                    leg(p, d, f"sell_{stg}", stg, _f, sq, nav_today, hm=_irm.hhmm(tb))
+                    _net = sq * _f * SELL_MULT
+                    cash += _net; p["proc"] += _net
+                    p["qty"] -= sq; p["sell_count"] = stg; p["stop"] = _stop_px(t[stg - 1])
+                    IR_N["stage"] += 1
+                    return p["qty"], p["stop"]
+
+                def _irx(px0, tb, gap, sref):
+                    """잔량 손절 — 이월 · 당일 손절 블록과 같은 기계(손절선 체결 = buf DAY_BUF · 갭 시가 = 0)."""
+                    nonlocal cash
+                    if DAY_BUF > 0:
+                        DAY_BUF_N["hit_gap" if px0 < sref else "hit_buf"] += 1
+                    _f = _slip_fill(p, r, d, px0, p["qty"], DAY_BUF if px0 >= sref else 0.0, "stop_stage")
+                    ex(d, p, "stop", p["sell_count"], _f, p["qty"], nav_today)
+                    leg(p, d, "stop", p["sell_count"], _f, p["qty"], nav_today, hm=_irm.hhmm(tb))
+                    _net = p["qty"] * _f * SELL_MULT
+                    cash += _net; p["proc"] += _net; p["qty"] = 0
+                    IR_N["stop"] += 1
+                    if gap:
+                        IR_N["stop_gap"] += 1
+
+                def _ira(at_, tb):
+                    """추가매수 체결 — 위 일봉 블록(`elif not _skip and bar_ok and lo <= at:`)과 ★같은 사이징 · 상한 · 레버.
+                    ⚠️ 두 곳을 함께 고칠 것(일봉 블록을 바꾸면 여기도)."""
+                    nonlocal cash, _ra_pool
+                    _amt_a = float(p["tranche"])
+                    if LIQ_LEGS != "new":
+                        _cap_a = _liq_cap_krw(tk, d)
+                        if _cap_a is not None:
+                            LIQ_N["eval"] += 1
+                            if _amt_a > _cap_a:
+                                LIQ_N["cut"] += 1
+                                if _cap_a <= 0:
+                                    LIQ_N["zero"] += 1
+                                if LIQ_RA_ON:
+                                    _ra_pool += (_amt_a - _cap_a)
+                                    LIQ_N["ra_in"] += 1
+                                _amt_a = _cap_a
+                    sh = int(_amt_a // at_)
+                    if NAME_CAP is not None and sh > 0:
+                        _nc_room = NAME_CAP * nav_today - p["qty"] * at_
+                        sh = min(sh, max(0, int(_nc_room // at_))) if _nc_room > 0 else 0
+                    if sh > 0 and lev_ok(day, sh * at_):
+                        _net = sh * at_ * BUY_MULT
+                        cash -= _net; p["cost"] += _net
+                        p["avg_buy"] = (p["avg_buy"] * p["total_qty"] + at_ * sh) / (p["total_qty"] + sh)
+                        p["total_qty"] += sh; p["qty"] += sh; p["last_buy"] = at_; p["buy_count"] += 1
+                        p["last_buy_idx"] = didx[d]
+                        ex(d, p, "buy_add", p["buy_count"], at_, sh, nav_today)
+                        leg(p, d, "buy_add", p["buy_count"], at_, sh, nav_today, hm=_irm.hhmm(tb))
+                        IR_N["add"] += 1
+                        return True
+                    elif sh > 0:
+                        ex(d, p, "buy_add", p["buy_count"] + 1, at_, sh, nav_today, blocked=True)
+                    return False
+
+                _irr = _irm.replay_day(
+                    _ird, sell_count=p["sell_count"], n_stages=N_STAGES, targets=t, stop=p["stop"],
+                    D=INTRADAY_D, samebar=INTRADAY_SAMEBAR, add_at=_ir_add, add_close=_ir_add_close,
+                    oldtgt_first=OLDTGT_PRIORITY,
+                    nl_armed=(p["sell_count"] == 0
+                              and (p["buy_count"] >= NL_AFTER or (KNIFE_ON and p.get("knife")))),
+                    min_low=p["min_low"], cb_sell=_irs, cb_stop=_irx, cb_add=_ira)
+                bought = bool(_irr["added"])
+                IR_N["add_close"] += int(_irr["add_close_fill"])
+                IR_N["e1"] += _irr["e1"]; IR_N["e2"] += _irr["e2"]
+                IR_N["samebar"] += _irr["samebar"]; IR_N["add_tgt"] += _irr["add_tgt"]
+                IR_N["nl_cancel"] += int(_irr["nl_cancelled"])
+                if _irr["closed_by_stop"]:
+                    close_trade(p, d, "stop"); del positions[tk]; closed.add(tk); last_exit[tk] = d
+                    continue
+                if p["qty"] == 0:
+                    close_trade(p, d, f"sell_{N_STAGES}"); del positions[tk]; closed.add(tk); last_exit[tk] = d
+                    continue
             _trigger_px = lo if NEWLOW_TRIGGER == "intraday" else cl
             # ★★[CAND-2026-09-01-19] `not bought` 유예 — off("hold")면 _nl_defer = bought 로 항등.
             _nl_defer = bought
@@ -2228,7 +2374,14 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     NL_B_N["gdefer_hold"] = NL_B_N.get("gdefer_hold", 0) + 1
             if _nl_cond and not bar_ok:
                 VB_SKIP["newlow"] += 1
-            if _nl_cond and bar_ok and NL_TGT_SAMEBAR:
+            if _ird is not None:
+                # ★[CAND-2026-11-02-5] 신저가는 ★장 마감 판정 — 재생 뒤 상태(`sell_count` · `bought`)로 종전 코드가 정한다.
+                #   ★순서기의 표시(봉 저가 < 직전 최저 · 미매도 · 미추가매수)와 어긋나면 센다(스케일 · 유예 모드 차이 감시).
+                _ir_nl = bool(_nl_cond and bar_ok)
+                IR_N["nl_close"] += int(_ir_nl)
+                if _ir_nl != bool(_irr["nl_close"]):
+                    IR_N["nl_mismatch"] += 1
+            if _nl_cond and bar_ok and NL_TGT_SAMEBAR and _ird is None:   # ★재생 일은 순서기가 대신했다
                 # ★★[CAND-2026-11-02-2] 같은 봉 1차 목표 도달 + 종가 < 1차 손절선 ⇒ 1차 매도 + 잔량 손절선 청산
                 _t1 = _to_tick(p["avg_buy"] * p.get("tgt_mult", 1.0) * (1 + p.get("targets", S)[0]))
                 _s1 = _stop_px(_t1)
@@ -2307,7 +2460,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             # [옵션 B] 추가매수 발생일은 hi 기반 분할매도 검사 보류 —
             # high 가 추가매수 전이었는지 후였는지 일봉으로 알 수 없어 보수적 처리.
             # 시초 매도(op) 와 다음 영업일 hi 기반 매도는 그대로 작동.
-            if not bought:
+            if not bought and _ird is None:          # ★[CAND-2026-11-02-5] 재생 일은 순서기가 이미 봤다
                 # 평단 갱신됐을 수 있으므로 t 재계산
                 t = [_to_tick(p["avg_buy"] * p.get("tgt_mult", 1.0) * (1 + s)) for s in p.get("targets", S)]   # 목표가 호가단위 반올림(포지션별)
                 for stg in range(p["sell_count"] + 1, N_STAGES + 1):
@@ -2335,7 +2488,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                     SAL_N["skip"] += 1
                     SAL_N["skip_qty_amt"] += p["qty"] * p["stop"]
             if (p["sell_count"] >= 1 and p["qty"] > 0 and bar_ok and lo <= p["stop"]
-                    and not (STOP_ARM_LOW_ONLY and _sold_today)):
+                    and not (STOP_ARM_LOW_ONLY and _sold_today) and _ird is None):
                 if DAY_BUF > 0:                       # ★발동 카운터 (§4-1b #2)
                     DAY_BUF_N["hit_buf"] += 1
                 # ★slip — 이 자리는 DAY_BUF 가 이미 박힌 손절선에서의 체결이라 buf_applied = DAY_BUF
@@ -3526,6 +3679,10 @@ def main():
               % (NL_TGT_N["fire"], NL_TGT_N["ambig"]))
     if HHMM_MINUTE:
         print("[HHMM] S2_HHMM_MINUTE=fill · " + " · ".join("%s %d" % kv for kv in sorted(HHMM_N.items())))
+    if INTRADAY_MINUTE:
+        # ★[CAND-2026-11-02-5] 분봉 재생 발동 카운터 — days 가 0 이면 사문이다(§4-2d 관문 2)
+        print("[INTRADAY] S2_INTRADAY_MINUTE=1 · D=%d분 · 같은봉=%s · " % (INTRADAY_D, INTRADAY_SAMEBAR)
+              + " · ".join("%s %d" % (k, v) for k, v in IR_N.items()))
     if REENTRY_MAX_BUY is not None or NL_ARM_MODE != "count" or REENTRY_MB_N["nl_disabled"]:
         print(f"[REENTRY_MAXBUY] 상한={REENTRY_MAX_BUY} · 차단 {REENTRY_MB_N['blocked']}건 · "
               f"NL-GUARD 경고 {REENTRY_MB_N['nl_disabled']}건")
