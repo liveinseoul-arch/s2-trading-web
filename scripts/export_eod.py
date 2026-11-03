@@ -2262,13 +2262,20 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                 IR_N["days"] += 1
                 _irm = _IR_SRC[1]
 
+                def _ir_hm(tb, gap):
+                    """★[#64 · 2026-11-03] 표시 시각 — 그날 ★첫 봉의 시가 갭 체결은 시초 동시호가(봉 시작 · 09:00)로 적는다.
+                    분봉 라벨이 봉 끝(901 · 905)이라 종전엔 09:01 · 09:05 로 찍혔다. ★표시 전용(체결 · 순서 불변)."""
+                    if gap and int(tb) == int(_ird[0][0]):
+                        return _irm.hhmm_start(tb, INTRADAY_UNIT)
+                    return _irm.hhmm(tb)
+
                 def _irs(stg, px0, tb, gap):
                     """단계 매도 — 시초 · 장중 매도 블록과 같은 기계(목표가 또는 갭업 시가 · 손절선 = `_stop_px`)."""
                     nonlocal cash
                     sq = _stage_qty(stg, p["total_qty"], p["qty"])
                     _f = _slip_fill(p, r, d, px0, sq, 0.0, "sell")
                     ex(d, p, f"sell_{stg}", stg, _f, sq, nav_today)
-                    leg(p, d, f"sell_{stg}", stg, _f, sq, nav_today, hm=_irm.hhmm(tb))
+                    leg(p, d, f"sell_{stg}", stg, _f, sq, nav_today, hm=_ir_hm(tb, gap))
                     _net = sq * _f * SELL_MULT
                     cash += _net; p["proc"] += _net
                     p["qty"] -= sq; p["sell_count"] = stg; p["stop"] = _stop_px(t[stg - 1])
@@ -2282,7 +2289,7 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
                         DAY_BUF_N["hit_gap" if px0 < sref else "hit_buf"] += 1
                     _f = _slip_fill(p, r, d, px0, p["qty"], DAY_BUF if px0 >= sref else 0.0, "stop_stage")
                     ex(d, p, "stop", p["sell_count"], _f, p["qty"], nav_today)
-                    leg(p, d, "stop", p["sell_count"], _f, p["qty"], nav_today, hm=_irm.hhmm(tb))
+                    leg(p, d, "stop", p["sell_count"], _f, p["qty"], nav_today, hm=_ir_hm(tb, gap))
                     _net = p["qty"] * _f * SELL_MULT
                     cash += _net; p["proc"] += _net; p["qty"] = 0
                     IR_N["stop"] += 1
