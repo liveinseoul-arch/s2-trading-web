@@ -241,7 +241,13 @@ YF_SUFFIX_FIX = (str(os.environ.get("RS_YF_SUFFIX_FIX", "0")).strip().lower()
 # ★발동 카운터(§4-2d 관문 2) — ★seen 이 0 이면 `symbols()` 를 안 탄 것(사문)이다.
 YF_SUFFIX_N = {"seen": 0, "stripped": 0}
 
-US_SHARES_PKL = "_bt_shares_us.pkl"
+# ★★[2026-11-04 신설 · 해달별님 「게이트만 넣기」] RS_US_SHARES_PKL — US 주식수 파일 경로 스위치.
+#   ★왜 — `_bt_shares_us.pkl`(2026-06-01)에 없는 종목이 시총 결측으로 탈락한다
+#     (`_bt_shares_us_20261025.pkl` 로 바꾸면 26주 게이트 통과 +105/주 · 후보 +1.73/주 · 제거 0
+#      → quant_infra/2026-11/RS_US_SHARES_SWAP_IMPACT_2026-11-04.md).
+#   ★미설정 = "_bt_shares_us.pkl" = ★종전 바이트 동일. 파일명이면 QB_SCREEN_DIR 기준 · 절대경로도 받는다.
+#   ⚠️파일을 덮어써서 바꾸지 말 것(§0-3 · 같은 이름을 읽는 백테스트 6곳이 함께 바뀐다).
+US_SHARES_PKL = (os.environ.get("RS_US_SHARES_PKL") or "").strip() or "_bt_shares_us.pkl"
 JP_SHARES_PKL = "_bt_shares_jp.pkl"
 JP_MKTCAP_YAHOO_PKL = "_jp_mktcap_yahoo.pkl"   # finance.yahoo.co.jp 직접 시총(엔). 우선순위 1.
 JP_MKTCAP_GOOGLE_PKL = "_jp_mktcap_google.pkl" # Google Finance 직접 시총(엔). 우선순위 2.
@@ -318,6 +324,8 @@ def load_us_shares():
     with open(p, "rb") as f:
         d = pickle.load(f)
     print(f"  US shares 캐시: {len(d):,}개 종목")
+    if US_SHARES_PKL != "_bt_shares_us.pkl":   # 게이트가 켜졌을 때만 — off 는 stdout 동일
+        print(f"  ★[RS_US_SHARES_PKL] {p}")
     return d
 
 
