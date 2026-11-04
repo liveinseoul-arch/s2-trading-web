@@ -86,6 +86,15 @@ $env:S2_ALARM_EOD_LABEL = "1"                                  # ★EOD 가 막�
 #   ★되돌리기 — 이 줄을 "0" 으로(또는 삭제 · 미설정 = 종전 바이트 동일).
 #   → quant_infra/2026-10/S2_REENTRY_SIDECAR_VERIFY_2026-10-31.md · SPEC_S2_REENTRY_SIDECAR_2026-10-31.md §3
 $env:S2_ALARM_REENTRY_SIDECAR = "gate"                         # ★재진입 판정 = EOD 장부(기본 off)
+# ★★★[2026-11-04 · CAND-2026-10-31-13 · ★★해달별님 결정 「과밀일이 예측되면 과밀일 기준 메시지를 별도로 표시해서 보낸다」]
+#   ★왜 — 20:30 EOD 는 과밀일에 진입선을 20일선 -15% 로 완화하는데 이 알람은 늘 -20% 라
+#     2026-11-03 EOD 신규 6건 중 5건이 알람에 없었다(금호건설 · 대원전선 · 우리기술 · 성호전자 · LG전자).
+#   ★무엇 — 오늘이 과밀일이면(crowd_today.py · 전 거래일까지 데이터만 · 운영 맵과 168/168 일치) 평소 메시지 뒤에
+#     「과밀일 기준 신규 매수 후보」를 ★별도 메시지로 보낸다. 평소 메시지 · Supabase 적재는 그대로.
+#   ★연속 상한은 EOD 와 같아야 한다(run_eod.ps1 S2_ENV_DENS_STREAK_MAX) — 22번째 연속일부터는 「평소 진입선」 한 줄만.
+#   ★되돌리기 — S2_ALARM_CROWD 를 "0" 으로(또는 삭제 · 미설정 = 종전 바이트 동일).
+$env:S2_ALARM_CROWD = "1"                                      # ★과밀일 기준 별도 메시지(기본 off)
+$env:S2_ENV_DENS_STREAK_MAX = "21"                             # ★= run_eod.ps1 (과밀 연속 상한)
 & C:\Python314\python.exe "s2-trading-web\scripts\export_preclose.py" *>> $log
 # ★★[2026-08-24 · CAND-2026-08-23-630] rc 를 로그에 남긴다(로그만 더한다 · ps1 rc 불변).
 # ★★★[2026-08-24 신설 · CAND-2026-08-24-520] 아래 [RC] 줄을 ★try/catch 로 감싼다.

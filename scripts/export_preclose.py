@@ -32,6 +32,97 @@ MKT = {"KOSPI": "KS", "KOSDAQ": "KQ"}
 #   ⚠️★라벨은 ★Supabase 행(`rows`)에 ★넣지 않는다 — ★`daily_candidates` 에 그 열이 없어 ★POST 가 깨진다(스키마 변경 금지).
 _EOD_BLOCK = {}         # ticker -> [사유, ...]  ★build() 가 채운다(on 일 때만)
 
+# ★★[2026-11-04 · CAND-2026-10-31-13 · ★해달별님 결정 「과밀일이 예측되면 과밀일 기준 메시지를 별도로 표시해서 보낸다」]
+#   ★왜 — 20:30 EOD 는 과밀일에 진입선을 MA20 x 0.85 로 완화하는데(`S2_ENV_DENS_MAP`) 이 알람은 늘 x 0.80 이라
+#     2026-11-03 EOD 신규 6건 중 5건(금호건설 · 대원전선 · 우리기술 · 성호전자 · LG전자)이 알람에 없었다.
+#   ★무엇 — 오늘이 과밀일이면(`crowd_today.judge` · 전 거래일까지의 데이터만 · 운영 맵과 168/168 일치)
+#     과밀일 진입선으로 [A] 를 한 번 더 뽑아 ★별도 텔레그램 메시지로 보낸다. ★평소 기준 메시지 · Supabase 적재는 그대로.
+#   ★게이트 `S2_ALARM_CROWD`(기본 "0") — off 면 아래 블록을 안 타 ★알림 · dry-run 출력이 종전 바이트 동일.
+#   ★되돌리기 = `run_preclose.ps1` 의 `S2_ALARM_CROWD` 줄을 "0" 으로(또는 삭제).
+CROWD_ON = os.environ.get("S2_ALARM_CROWD", "0").strip().lower() in ("1", "true", "yes", "on")
+_CROWD = {}             # ★build() 가 채운다(on 일 때만) — info · rows · block · footer
+
+
+def _to_rows(new_cand, target, now):
+    return [dict(
+        d=str(target), ticker=c["tk"], kind="new", name=c["name"],
+        market=MKT.get(c["market"], c["market"]),
+        current_price=round(c["price"]), order_price=round(c["order"]),
+        port_pct=round(c["pct"], 2), ma120_above=bool(c["above"]),
+        prev_spike_bull=(None if c["bull"] is None else bool(c["bull"])),
+        stage=1, reached=bool(c["reached"]), drop_to_pct=round(c["drop_to"] * 100, 2),
+        snapshot_at=now,
+    ) for c in new_cand]
+
+
+def build_crowd(target, px, nmap, mmap, positions, last_exit, cash, cfg, now):
+    """★on 일 때만 부른다. 과밀일이면 과밀일 진입선으로 [A] 를 다시 뽑는다.
+    ⚠️★`extract()` 는 꼬리말 상태(META)를 덮어쓴다 ⇒ 평소 기준 메시지의 꼬리말이 바뀌지 않게 ★저장 · 복원한다."""
+    import crowd_today as ct
+    _CROWD.clear()
+    info = ct.judge(target)
+    _CROWD["info"] = info
+    if not info.get("crowded"):
+        return
+    keep = [(d, dict(d)) for d in (sc.REENTRY_SIDECAR_META, sc.EOD_LABEL_META, sc._RSC_CUR)]
+    px2 = px.copy()
+    px2["support"] = px2["ma20"] * (1 - info["ep"])
+    try:
+        nc, _a, _n, _h = sc.extract(px2, target, positions, last_exit, cash, nmap, mmap, cfg)
+        foot = []
+        if getattr(sc, "EOD_LABEL", False):
+            foot += sc.eod_label_footer()
+        if getattr(sc, "REENTRY_SIDECAR", "") in ("label", "gate"):
+            foot += sc.reentry_sidecar_footer()
+    finally:
+        for d, v in keep:
+            d.clear()
+            d.update(v)
+    _CROWD["rows"] = _to_rows(nc, target, now)
+    _CROWD["block"] = {c["tk"]: c["eod_block"] for c in nc if c.get("eod_block")}
+    _CROWD["footer"] = foot
+
+
+def _crowd_lab(r):
+    why = _CROWD.get("block", {}).get(r["ticker"])
+    return f" ⛔EOD차단:{'·'.join(why)}" if why else ""
+
+
+def crowd_lines(target, base_rows):
+    """★과밀일 기준 메시지 본문(줄 목록) — 과밀일이 아니면 빈 목록. 판정 실패 · 연속 상한 초과는 한 줄로 알린다."""
+    info = _CROWD.get("info") or {}
+    if info.get("why"):
+        return [f"⚠️ <b>[S2] {target} 과밀일 판정 실패</b> — {info['why']}",
+                "오늘 20:30 EOD 가 과밀일 진입선(20일선 −15%)으로 살 수 있습니다. 위 평소 기준 메시지만으로는 다를 수 있음."]
+    if info.get("capped"):
+        return [f"ⓘ [S2] {target} 과밀 연속 {info['streak']}일째 — 상한 {info['streak_max']}일을 넘어 "
+                "20:30 EOD 도 평소 진입선(20일선 −20%)을 씁니다. 위 평소 기준 메시지 그대로입니다."]
+    if not info.get("crowded"):
+        return []
+    rows = _CROWD.get("rows", [])
+    base = {r["ticker"] for r in base_rows}
+    ep = info["ep"] * 100
+    lines = [f"🟣 <b>[S2] {target} 과밀일 기준 신규 매수 후보 {len(rows)}건</b>",
+             f"오늘은 과밀일(연속 {info['streak']}일째 · 전 거래일 {info['prev_date']}까지로 판정)입니다.",
+             f"20:30 EOD 장부는 진입선을 20일선 −{ep:.0f}%(평소 −20%)로 잡습니다.",
+             f"아래 지정가는 과밀일 진입선입니다 — 위 평소 기준 메시지와 종목·지정가가 다릅니다(★= 과밀일에만 후보)."]
+    reached = [r for r in rows if r["reached"]]
+    near = [r for r in rows if not r["reached"]]
+    star = lambda r: "" if r["ticker"] in base else "★"
+    if reached:
+        lines.append("● 과밀일 진입선 도달(체결 예상):")
+        for r in reached[:12]:
+            lines.append(f"  · {star(r)}{r['name'][:6]} {r['order_price']:,}원 (포트 {r['port_pct']}%)" + _crowd_lab(r))
+    if near:
+        lines.append("○ 근접(더 내리면 체결):")
+        for r in sorted(near, key=lambda x: x["drop_to_pct"], reverse=True)[:12]:
+            lines.append(f"  · {star(r)}{r['name'][:6]} {r['order_price']:,}원 "
+                         f"({r['drop_to_pct']:.1f}% · 포트 {r['port_pct']}%)" + _crowd_lab(r))
+    if not rows:
+        lines.append("과밀일 진입선 기준으로도 신규 진입 후보 없음.")
+    lines.extend(_CROWD.get("footer", []))
+    return lines
+
 
 def _eod_lab(r):
     """★off 면 빈 문자열 ⇒ ★종전 바이트 동일."""
@@ -95,6 +186,8 @@ def build(target_date, live):
     _EOD_BLOCK.clear()                      # ★[CAND-2026-10-20-35] off 면 `eod_block` 키가 없어 비어 있다
     _EOD_BLOCK.update({c["tk"]: c["eod_block"] for c in new_cand if c.get("eod_block")})
     now = datetime.now().isoformat()
+    if CROWD_ON:                            # ★[CAND-2026-10-31-13] off 면 안 탄다 ⇒ 종전 바이트 동일
+        build_crowd(target, px, nmap, mmap, positions, last_exit, cash, cfg, now)
     rows = [dict(
         d=str(target), ticker=c["tk"], kind="new", name=c["name"],
         market=MKT.get(c["market"], c["market"]),
@@ -148,6 +241,10 @@ def main():
             updown = "UP" if r["ma120_above"] else "DOWN"
             print(f"  {r['name'][:6]:<8}{r['market']:<3}{r['ticker']:<8} 현재가 {r['current_price']:>9,} "
                   f"주문가(지지선) {r['order_price']:>9,} {reach:>7} 포트{r['port_pct']}% {updown}" + _eod_lab(r))
+        if CROWD_ON:                        # ★[CAND-2026-10-31-13] off 면 한 줄도 안 찍는다
+            print(f"[dry-run] 과밀일 판정 {_CROWD.get('info')}")
+            for ln in crowd_lines(target, rows):
+                print("  " + ln)
     elif fallback:
         # KRX 실패 → 폴백 데이터는 적재·정상 알림 모두 생략, 실패 알림만 발송
         today_str = str(date.today())
@@ -158,6 +255,10 @@ def main():
         upsert(target, rows)
         if not args.no_notify:
             notify_preclose(target, rows)
+            if CROWD_ON:                    # ★[CAND-2026-10-31-13] 과밀일이면 ★별도 메시지(평소 기준 메시지 뒤)
+                _cl = crowd_lines(target, rows)
+                if _cl:
+                    telegram_send("\n".join(_cl))
     print("DONE")
 
 
