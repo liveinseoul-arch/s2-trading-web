@@ -238,9 +238,16 @@ function StartPyJob($label, [string[]]$pyArgs, $jobLog) {
 "`n===== $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') rs_kr_jp start =====" | Out-File -Append -Encoding utf8 $log
 
 # 18시간 가드
+# ── ★[2026-11-05 신설 · CAND-2026-11-05-1 · OBS-2026-10-26-31] KR ABORT 줄을 「완료」로 읽지 않는다 ──
+#   ⚠️결함 — RS_JP_FAIL_ON_ABORT=1 이면 FinishJP 가 「rs_kr_jp done (JP FAIL · KR ABORT)」를 쓰는데
+#     이 가드가 그 줄을 「완료」로 읽어 18시간 안 수동 재실행이 [SKIP] + exit 0 이 됐다(KR 은 끝나지 않았다).
+#   RS_SKIP_GUARD_STRICT=1 이면 「KR ABORT」 가 든 done 줄을 건너뛴다. 그 밖의 done 줄은 종전 그대로.
+#   ★되돌리기 — 아래 env 한 줄을 "0" 으로 두거나 지운다(미설정 = 종전 비트동일).
+$env:RS_SKIP_GUARD_STRICT = "1"
 $skipHours = 18
 if (Test-Path $log) {
-    $lastDone = (Get-Content $log -ErrorAction SilentlyContinue) | Select-String -Pattern "rs_kr_jp done" -SimpleMatch | Select-Object -Last 1
+    $lastDone = (Get-Content $log -ErrorAction SilentlyContinue) | Select-String -Pattern "rs_kr_jp done" -SimpleMatch |
+        Where-Object { $env:RS_SKIP_GUARD_STRICT -ne "1" -or $_.Line -notmatch 'KR ABORT' } | Select-Object -Last 1
     if ($lastDone) {
         $tsText = $lastDone.Line.Substring(0, 19)
         try {
