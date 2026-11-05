@@ -38,8 +38,9 @@ function Log($m) {
 #   ★되돌리기 - RS_US_STRICT=0 한 줄이면 종전 동작(계속 진행 . 알림 없음 . rc=0).
 #     기본 on 인 이유 - 기본 off 면 다음 주 토요일에 같은 실패가 또 조용히 지나간다.
 $strictUS = ($env:RS_US_STRICT -ne "0")
-$notifyPy = Join-Path $root "s2-trading-web\scripts
-otify_rs_telegram.py"
+# ★[2026-11-06 · CAND-2026-11-04-10 · 해달별님 「권고대로」] ★종전 두 줄은 ★리터럴 개행(`\n` 붕괴)이라
+#   ★경로가 `scripts\r\notify…` 가 되어 ★중단 알림이 ★한 번도 안 나갔다([Errno 22]). ★한 줄로 고친다.
+$notifyPy = Join-Path $root "s2-trading-web\scripts\notify_rs_telegram.py"
 function Notify($msg) {
     try { & C:\Python314\python.exe $notifyPy $msg *>> $log } catch { Log "[notify] FAILED: $_" }
 }

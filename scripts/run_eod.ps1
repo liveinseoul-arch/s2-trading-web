@@ -892,4 +892,21 @@ if ($env:S2_EOD_NAVCAL -ne "0") {
         }
     }
 }
+# ★★★[2026-11-06 · B3 · CAND-2026-09-28-6 · ★★해달별님 결재 「권고대로」(DECISION_BATCH_2026-11-06 B3)]
+#   ★스톱 발동가 대조 감사(`autotrade\kw_stop_audit.py`)를 ★매 EOD 끝에 ★1회 돈다 — ★★읽기 전용(ka10075 조회 · 주문 0).
+#   ★무엇 — ★오늘 플랜(`results\daily_order_plan_archive\<오늘>.csv` · 위 export_eod 가 방금 썼다)의
+#     ★`stop` + `newlow_stop` 행 `trigger_price` 를 ★계좌 미체결의 `stop_pric` 과 맞대고
+#     ★사이드카 `autotrade\results\stop_audit_<오늘>.json` 을 남긴다(종결 = 10개 · experiment_triggers.tsv).
+#   ★★순서가 계약이다 — ★export_eod(플랜 아카이브) ★뒤에 와야 ★당일 플랜과 비교된다.
+#   ⚠️★rc 는 ★EOD rc 에 ★섞지 않는다(-Fatal 없음 · try/catch · 로그만) — ★감사가 실패해도 EOD 는 종전대로 끝난다.
+#   ★★되돌리기 — ★아래 `$env:S2_STOP_AUDIT` 줄 삭제(기본 미설정 = 안 돈다 = 종전 흐름 바이트 동일).
+$env:S2_STOP_AUDIT = "1"                                               # ★스톱 발동가 대조 감사(읽기 전용) · 매 EOD 1회
+if ($env:S2_STOP_AUDIT -eq "1") {
+    try {
+        $auditRc = Invoke-Py -PyArgs @("C:\AI파운더스\autotrade\kw_stop_audit.py") -Tag "kw_stop_audit.py"
+        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] kw_stop_audit.py=$auditRc (EOD rc 와 무관)" | Out-File -Append -Encoding utf8 $log
+    } catch {
+        "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] kw_stop_audit.py 실패: $($_.Exception.Message)" | Out-File -Append -Encoding utf8 $log
+    }
+}
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  ===== eod done =====" | Out-File -Append -Encoding utf8 $log
