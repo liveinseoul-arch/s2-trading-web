@@ -481,8 +481,10 @@ def _missing_report(market_rows, cats):
     return missing, per
 
 
-def _market_presence_gate(week, market_rows, total):
-    """★★[2026-10-25 신설 · CAND-2026-09-27-7 처치 ①] ★3국 사전 게이트.
+def _market_presence_gate(week, market_rows, total, soft=False):
+    """★★[2026-10-25 신설 · CAND-2026-09-27-7 처치 ①] ★3국 사전 게이트. ★반환 True = 통과 · False = (soft) 건너뜀.
+
+    ★[2026-11-06 · 처치 ②] `soft=True`(운영 refill 의 옛 주차)면 ★SystemExit 대신 ★False 를 돌려 ★그 주차만 건너뛴다.
 
     ⚠️★★왜 — ★아래 `total == 0` 은 ★**세 시장 합계가 0 일 때만** 멈춘다.
       ★한 시장이 ★0종목이어도 ★그대로 Gemini 를 호출하고 ★`exit=0` 으로 끝난다.
@@ -502,11 +504,19 @@ def _market_presence_gate(week, market_rows, total):
     ★되돌리기 — ★`run_rs_us.ps1` 의 ★`$env:RS_THEME_MKT_GATE` ★한 줄을 지운다(또는 `=0`).
     """
     if os.environ.get("RS_THEME_MKT_GATE", "0") == "0":
-        return
+        return True
     empty = [mk for mk in MARKETS_ALL if not market_rows.get(mk)]
     if not empty:
-        return
+        return True
     detail = " · ".join(f"{mk} {len(market_rows.get(mk) or [])}" for mk in MARKETS_ALL)
+    if soft:
+        # ★★[2026-11-06 · CAND-2026-09-27-7 처치 ② · 해달별님 결재 B7] ★refill 의 ★옛 주차는 ★soft —
+        #   ★그 주차만 건너뛰고(Gemini 0회 · 적재 0회) ★잡은 계속 간다. ★hard(잡 중단)는 ★최신 주차뿐이다.
+        #   ★왜 — 옛 주차의 시장 실종은 ★상류(수집) 결함이라 ★여기서 잡을 세워도 ★최신 주차까지 같이 죽는다.
+        #   ★`RS_THEME_REFILL_RECENT` 가 0(기본)이면 ★이 분기는 ★도달하지 않는다 = 종전 비트동일.
+        print(f"⚠️★[{week}] ★3국 사전 게이트(soft · refill 옛 주차) — 시장 실종 {', '.join(empty)} · "
+              f"원본 {detail} = 총 {total}종목 → 이 주차만 건너뛴다(Gemini 호출 0회 · 잡은 계속)", flush=True)
+        return False
     raise SystemExit(
         f"⚠️★★[{week}] ★3국 사전 게이트 — 적재하지 않는다(Gemini 호출 0회).\n"
         f"   ★★시장 실종: {', '.join(empty)} · 원본 {detail} = 총 {total}종목\n"
@@ -514,14 +524,16 @@ def _market_presence_gate(week, market_rows, total):
         f"   ★되돌리기: RS_THEME_MKT_GATE=0")
 
 
-def classify_one(req, week):
+def classify_one(req, week, gate_soft=False):
     market_rows = {mk: fetch_top96(req, mk, week) for mk in MARKETS_ALL}
     total = sum(len(v) for v in market_rows.values())
     if total == 0:
         print(f"[{week}] RS96+ 종목 없음 — skip")
         return False
     # ★[CAND-2026-09-27-7 ①] ★Gemini 호출 ★앞에서 ★시장 실종을 막는다(기본 off).
-    _market_presence_gate(week, market_rows, total)
+    #   ★[처치 ②] `gate_soft=True`(refill 옛 주차)면 ★중단 대신 ★그 주차만 건너뛴다.
+    if not _market_presence_gate(week, market_rows, total, soft=gate_soft):
+        return False
     print(f"[{week}] KR={len(market_rows['KR'])} · US={len(market_rows['US'])} · "
           f"JP={len(market_rows['JP'])} = 총 {total}종목 → Gemini 호출", flush=True)
 
@@ -692,6 +704,16 @@ def main():
     Config()
     req = _sb_client()
 
+    # ★★[2026-11-06 · CAND-2026-09-27-7 처치 ② · 해달별님 결재 B7 「권고대로」] ★운영 refill 모드.
+    #   ★`RS_THEME_REFILL_RECENT=N`(기본 "0" = 종전 비트동일)이면 ★`--refill` 이
+    #     ①★최신 N주차 안의 불합격만 대상으로 하고(★Gemini 상한 = N) ②★3국 사전 게이트를 ★최신 주차에만 hard 로,
+    #     ★옛 주차에는 soft(그 주차만 건너뜀)로 걸며 ③★옛 주차의 실패(완전성 관문 등)로는 ★잡을 세우지 않는다.
+    #   ★왜 — 맨 `--refill` 은 ★2026-11-06 --audit 실측 ★불합격 11건을 ★전부 재분류한다(최신 2 + ★2026-02 – 05 의
+    #     「누락 10 – 15%」 9건). ★그 9건은 strict 관문에서 ★또 실패해 ★최신 주차까지 ★잡을 세운다.
+    #   ★되돌리기 — `run_rs_us.ps1` 의 `RS_US_CLASSIFY_REFILL="0"`(런처 인자가 `--weeks 1` 로 돌아간다).
+    recent = int(os.environ.get("RS_THEME_REFILL_RECENT", "0") or 0)
+    latest = None
+
     if args.audit or args.refill:
         rep = audit_weeks(req)
         bad = [r for r in rep if r[1] != "ok"]
@@ -704,6 +726,14 @@ def main():
         if not args.refill:
             print(f"\n★불합격 {len(bad)}건. ★재분류하려면 --refill")
             return
+        if recent > 0:
+            latest = rep[0][0] if rep else None
+            window = {r[0] for r in rep[:recent]}
+            dropped = [r[0] for r in bad if r[0] not in window]
+            bad = [r for r in bad if r[0] in window]
+            print(f"\n★RS_THEME_REFILL_RECENT={recent} — 최신 {recent}주차 안의 불합격만 대상 · "
+                  f"창 밖 {len(dropped)}건 제외"
+                  + (f"({', '.join(dropped[:6])}{' …' if len(dropped) > 6 else ''})" if dropped else ""))
         if not bad:
             print("\n★불합격 0건 — 재분류할 것이 없다.")
             return
@@ -724,10 +754,24 @@ def main():
     print(f"대상 주차 {len(weeks)}개 · 캐논 시드 {len(CANONICAL_THEMES)}개 · model={MODEL_NAME} (★{_mode} 기본값)\n")
 
     total_ok = 0
+    failed = []
     for w in weeks:
-        if classify_one(req, w):
-            total_ok += 1
+        # ★[처치 ②] ★운영 refill 모드의 ★옛 주차(최신이 아닌 것)만 ★soft 다. ★그 밖은 ★전부 종전 경로.
+        older = bool(args.refill) and recent > 0 and latest is not None and w != latest
+        try:
+            if classify_one(req, w, gate_soft=older):
+                total_ok += 1
+        except SystemExit as e:
+            if not older:
+                raise
+            failed.append(w)
+            first = (str(e).splitlines() or [""])[0]
+            print(f"⚠️★[{w}] refill 옛 주차 실패 — 건너뛰고 계속(최신 주차가 아니라 잡을 세우지 않는다): "
+                  f"{first[:160]}", flush=True)
     print(f"\n총 {total_ok}회 통합 분류 완료.")
+    if failed:
+        print(f"⚠️★refill 실패 주차 {len(failed)}건 — 다음 런에서 다시 시도한다(그동안 check_docs 검사 29 가 경고): "
+              f"{', '.join(failed)}", flush=True)
 
 
 if __name__ == "__main__":

@@ -7,9 +7,10 @@
 #   1) 13_RS_US_screen.py             : US 종목·OHLCV·RS 임계값
 #   2) export_rs_weekly --market US --full-universe
 #   3) add_etfs --market US           : US ETF 재적재
-#   4) classify_rs96_gemini --market US --weeks 1   (per-market 테마)
-#   5) classify_global_themes --weeks 1             (한미일 통합)
-#   6) subdivide_global_themes --weeks 1 --min 50   (50+ 테마 세분화)
+#   4) classify_rs96_gemini --market US --weeks N --refill   (per-market 테마 · 최신 N주차 중 미분류만)
+#   5) classify_global_themes --refill                        (한미일 통합 · 최신 N주차 안의 불합격만)
+#   6) subdivide_global_themes --weeks N --refill --min 50   (50+ 테마 세분화 · 최신 N주차 중 미세분화만)
+#   ★[2026-11-06 · B7] ★4–6 은 RS_US_CLASSIFY_REFILL="1" 일 때 위와 같고 "0" 이면 종전 `--weeks 1`(아래 분기).
 #
 # 18시간 가드 — 같은 일과 내 재실행 방지.
 
@@ -120,7 +121,32 @@ RunPy "3 add US ETFs" @("s2-trading-web\scripts\add_etfs.py", "--market", "US", 
 #     ★대기 없이 ★flash 로 내려간다(`FALLBACK_MODEL`). ★즉 캡을 때려도 ★죽지 않는다.
 #   ★되돌리기 — 이 리터럴을 "gemini-2.5-flash" 로. ★또는 $env:GEMINI_MODEL 한 줄.
 $env:GEMINI_MODEL = "gemini-2.5-pro"
-RunPy "4 classify US" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "US", "--weeks", "1")
+# ★★[2026-11-06 · CAND-2026-09-27-7 처치 ② · 해달별님 결재 B7 「권고대로」] ★분류 3단계(4·5·6)를 `--refill` 계열로.
+#   ★무엇 — 종전 `--weeks 1` 은 ★최신 주차만 보므로 ★한 번 빠진 주차는 ★영구 공백이 됐다.
+#     ★실발생 2건 — 10-09(4단계 WinError 10054 ABORT) · 10-30(2단계 swap 57014 ABORT) ⇒ 둘 다 「분류행 없음」(11-06 --audit).
+#   ★--refill 의 뜻(단계별) — 4: 최신 N주차 중 rs_theme_weekly(US) 행이 없는 주차만 ·
+#     5: --audit 불합격 주차 중 최신 N주차 안의 것만(RS_THEME_REFILL_RECENT=N) · 6: 최신 N주차 중 rs_subtheme_global_weekly 행이 없는 주차만.
+#   ★Gemini 상한 — 공백 0 이면 종전과 동일(4: 1회 · 5: 1회+보충≤2 · 6: 50+ 테마 수). 공백 k주차면 ★+k(4) · +k(+보충≤2k)(5) · +k×(50+ 테마 수)(6).
+#     ★N 이 상한이라 ★2026-02 – 05 의 「누락 10 – 15%」 9주차(11-06 --audit 실측)는 ★건드리지 않는다(맨 --refill 이면 11주차 전부 재분류).
+#   ⚠️★RS_THEME_MKT_GATE(처치 ①)와의 충돌 해법 — 5단계 refill 에서 ★게이트는 ★최신 주차에만 hard(잡 중단 + 알림)이고
+#     ★옛 주차는 soft(그 주차만 건너뛰고 계속). ★옛 주차의 완전성 관문 실패도 ★잡을 세우지 않는다(stdout 경고 · check_docs 검사 29 가 잡는다).
+#   ★되돌리기 — 아래 줄을 "0"(또는 삭제) = 종전 `--weeks 1` 세 줄과 ★인자 배열 동일(검증 → OPS_FIX_B7_RS_US_REFILL_2026-11-06.md).
+$env:RS_US_CLASSIFY_REFILL = "1"
+if (-not $env:RS_US_REFILL_RECENT) { $env:RS_US_REFILL_RECENT = "6" }
+# --- B7 args begin (검증 스크립트가 이 구간을 그대로 평가한다 · 마커를 지우지 말 것)
+if ($env:RS_US_CLASSIFY_REFILL -eq "1") {
+    $refillN = $env:RS_US_REFILL_RECENT
+    $env:RS_THEME_REFILL_RECENT = $refillN
+    $args4 = @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "US", "--weeks", $refillN, "--refill")
+    $args5 = @("s2-trading-web\scripts\classify_global_themes.py", "--refill")
+    $args6 = @("s2-trading-web\scripts\subdivide_global_themes.py", "--weeks", $refillN, "--refill", "--min", "50")
+} else {
+    $args4 = @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "US", "--weeks", "1")
+    $args5 = @("s2-trading-web\scripts\classify_global_themes.py", "--weeks", "1")
+    $args6 = @("s2-trading-web\scripts\subdivide_global_themes.py", "--weeks", "1", "--min", "50")
+}
+# --- B7 args end
+RunPy "4 classify US" $args4
 # ★★[2026-10-25 신설 · CAND-2026-09-27-7 처치 ①] ★3국 사전 게이트 — 0종목 시장이면 중단.
 #   ★무엇 — classify_global_themes.py 가 Gemini 를 부르기 ★전에 KR·US·JP 행수를 보고
 #     ★한 시장이라도 0행이면 ★exit=1 로 멈춘다(위 RunPy 가 알림 + 잡 중단).
@@ -129,10 +155,12 @@ RunPy "4 classify US" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--mar
 #     ★분모 b 가 0 인 시장은 세지 않는다. check_docs 검사 29 도 같은 식이라 ★탐지로는 못 메운다.
 #   ★왜 런처에서만 켜나 — 스케줄 경로는 --weeks 1(최신 주차)이라 세 시장이 다 있어야 정상이다.
 #     수동 백필(--refill)은 옛 주차를 훑어 JP·US 0행이 ★정상이므로 코드 기본값은 off 로 둔다.
+#   ★[2026-11-06 · B7] ★런처가 --refill 로 바뀌어도 ★이 게이트는 ★최신 주차에만 hard 다 —
+#     ★옛 주차는 RS_THEME_REFILL_RECENT>0 이면 soft(건너뜀) 라 ★위 「오탐」이 ★잡을 세우지 않는다.
 #   ★되돌리기 — ★이 줄을 지운다(또는 "0"). ★기본 "0" = 종전 비트동일(합성 대조 4/4 stdout 동일).
 $env:RS_THEME_MKT_GATE = "1"
-RunPy "5 classify global" @("s2-trading-web\scripts\classify_global_themes.py", "--weeks", "1")
-RunPy "6 subdivide"   @("s2-trading-web\scripts\subdivide_global_themes.py", "--weeks", "1", "--min", "50")
+RunPy "5 classify global" $args5
+RunPy "6 subdivide"   $args6
 
 Log "===== rs_us done ====="
 exit 0

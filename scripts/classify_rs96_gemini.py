@@ -105,6 +105,19 @@ def fetch_available_weeks(req, market):
     return sorted({r["week_date"] for r in rows}, reverse=True)
 
 
+def fetch_classified_weeks(req, market):
+    """★★[2026-11-06 · CAND-2026-09-27-7 처치 ② · 해달별님 결재 B7] ★그 시장이 ★이미 분류된 주차 집합(`rs_theme_weekly`).
+
+    ★`--refill` 전용 — ★최신 `--weeks N` 주차 중 ★여기 없는 주차만 Gemini 를 부른다.
+    ★왜 — 종전 `--weeks 1` 은 ★최신 주차만 보므로 ★한 번 빠진 주차(10-09 · 10-30 실발생)가 ★영구 공백이 됐다.
+    """
+    path = (f"/rs_theme_weekly?market=eq.{urllib.parse.quote(market)}"
+            f"&select=week_date&order=week_date.desc")
+    rows = req("GET", path, prefer="return=representation",
+               range_header="0-9999") or []
+    return {r["week_date"] for r in rows}
+
+
 # ── Gemini 호출 ─────────────────────────────────────────────
 def build_prompt(market, week, rows):
     lines = [
@@ -258,6 +271,8 @@ def main():
     ap.add_argument("--market", choices=["KR", "US", "JP", "all"], default="all")
     ap.add_argument("--week", default=None, help="특정 주차 YYYY-MM-DD")
     ap.add_argument("--weeks", type=int, default=1, help="최신부터 N개 주차")
+    ap.add_argument("--refill", action="store_true",
+                    help="★최신 --weeks N 주차 중 rs_theme_weekly 에 그 시장 행이 없는 주차만 분류(기본 off = 종전)")
     args = ap.parse_args()
 
     Config()  # .env.local 로드 (SUPABASE_*, GEMINI_API_KEY)
@@ -270,6 +285,13 @@ def main():
             weeks = [args.week]
         else:
             weeks = fetch_available_weeks(req, mk)[: args.weeks]
+            # ★[2026-11-06 · CAND-2026-09-27-7 처치 ②] ★--refill — 기분류 주차는 건너뛴다(Gemini 상한 = N · 보통 1).
+            if args.refill:
+                done = fetch_classified_weeks(req, mk)
+                skipped = [w for w in weeks if w in done]
+                weeks = [w for w in weeks if w not in done]
+                print(f"  [{mk}] --refill — 최신 {args.weeks}주차 중 기분류 {len(skipped)}건 건너뜀 · "
+                      f"대상 {len(weeks)}건: {', '.join(weeks) or '없음'}", flush=True)
         for w in weeks:
             if classify_one(req, mk, w):
                 total += 1

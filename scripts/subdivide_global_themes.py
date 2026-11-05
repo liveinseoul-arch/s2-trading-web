@@ -127,6 +127,17 @@ def fetch_weeks_with_themes(req, weeks_back):
     return list(dict.fromkeys(r["week_date"] for r in rows))[:weeks_back]
 
 
+def fetch_subdivided_weeks(req):
+    """★★[2026-11-06 · CAND-2026-09-27-7 처치 ② · 해달별님 결재 B7] ★세분화 행이 ★이미 있는 주차 집합(`rs_subtheme_global_weekly`).
+
+    ★`--refill` 전용 — ★최신 `--weeks N` 주차 중 ★여기 없는 주차만 다시 본다.
+    ⚠️★50+ 테마가 없던 주차는 ★행이 없는 것이 정상이라 ★매번 다시 보지만 ★그 경우 Gemini 는 0회다(skip 출력만).
+    """
+    path = "/rs_subtheme_global_weekly?select=week_date&order=week_date.desc"
+    rows = req("GET", path, prefer="return=representation") or []
+    return {r["week_date"] for r in rows}
+
+
 def _market_of(tk):
     if tk.endswith(".KS") or tk.endswith(".KQ"):
         return "KR"
@@ -408,6 +419,8 @@ def main():
     ap.add_argument("--week", default=None, help="특정 주차 YYYY-MM-DD")
     ap.add_argument("--weeks", type=int, default=1, help="최신부터 N주차")
     ap.add_argument("--min", type=int, default=DEFAULT_MIN, help="세분화 컷오프 종목 수")
+    ap.add_argument("--refill", action="store_true",
+                    help="★최신 --weeks N 주차 중 rs_subtheme_global_weekly 행이 없는 주차만 본다(기본 off = 종전)")
     args = ap.parse_args()
 
     Config()
@@ -417,6 +430,13 @@ def main():
         weeks = [args.week]
     else:
         weeks = fetch_weeks_with_themes(req, args.weeks)
+        # ★[2026-11-06 · CAND-2026-09-27-7 처치 ②] ★--refill — 세분화 행이 있는 주차는 건너뛴다.
+        if args.refill:
+            done = fetch_subdivided_weeks(req)
+            skipped = [w for w in weeks if w in done]
+            weeks = [w for w in weeks if w not in done]
+            print(f"★--refill — 최신 {args.weeks}주차 중 세분화 기존재 {len(skipped)}건 건너뜀 · "
+                  f"대상 {len(weeks)}건: {', '.join(weeks) or '없음'}", flush=True)
     print(f"대상 주차 {len(weeks)}개 · 컷오프 {args.min}+ · model={MODEL_NAME}\n")
 
     total = 0
