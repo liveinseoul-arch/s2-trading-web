@@ -1580,9 +1580,17 @@ except Exception as _e:
 HHMM_MINUTE = os.environ.get("S2_HHMM_MINUTE", "0").strip().lower() == "fill"
 HHMM_N = {}             # ★발동 카운터 — 캐시 · 분봉 복원 사유별(§4-2d 관문 2)
 _HHMM_RES = [None]
+# ★★[2026-11-06 · CAND-2026-10-22-29 · ★해달별님 결재 B2] 래칫 손절(`stop` · stage 있음)의 분봉 복원 규칙 수리.
+#   ★왜 — 종전 Resolver 는 「그날 첫 접촉」이라 ★무장 전(대부분 09:0x)에 찍혔다. ★옳은 규칙 = ★무장 시각
+#     (같은 날 `sell_{stage}` 체결 시각) ★이후 첫 접촉. ★무장이 전날이면(같은 날 매도 다리 없음) 종전 첫 접촉이 맞다.
+#   ★게이트 `S2_HHMM_STOP_SINCE_ARM` — "0" · 미설정 = off = ★종전 바이트 동일 · "1" = 수리 적용.
+#     ★`S2_HHMM_MINUTE=fill` 일 때만 뜻이 있다(캐시 우선 · 캐시 값은 안 건드린다 · 분봉 재생 `hm` 직접 공급 경로도 무관).
+#   ★무장 시각을 모르면(같은 날 매도 다리의 hhmm 이 None) ★지어내지 않고 None — `HHMM_N["무장시각미상"]` 에 센다.
+#   ★되돌리기 — env 한 줄 "0" 또는 삭제. ★런처 `run_eod.ps1` 에는 ★아직 안 넣었다(메인 세션 결정).
+HHMM_STOP_SINCE_ARM = os.environ.get("S2_HHMM_STOP_SINCE_ARM", "0").strip().lower() in ("1", "true", "yes")
 
 
-def _hhmm(ticker, d, leg_type, stage=None, price=None):
+def _hhmm(ticker, d, leg_type, stage=None, price=None, since=None):
     # 키=(ticker, date, leg_type). 같은날 같은 leg_type 은 유일하므로 가격 불필요(반올림 오차 회피).
     hm = _HHMM.get((str(ticker), str(d), leg_type))
     if not HHMM_MINUTE:
@@ -1597,7 +1605,10 @@ def _hhmm(ticker, d, leg_type, stage=None, price=None):
         if _HHMM_RES[0] is None:
             import hhmm_minute as _hm
             _HHMM_RES[0] = _hm.Resolver(ROOT / "stock_cache.db")
-        hm, why = _HHMM_RES[0].resolve(ticker, d, leg_type, stage, price)
+        if since is None:
+            hm, why = _HHMM_RES[0].resolve(ticker, d, leg_type, stage, price)       # ★종전 호출 그대로(off 비트 동일)
+        else:
+            hm, why = _HHMM_RES[0].resolve(ticker, d, leg_type, stage, price, since=since)
     except Exception as _e:                                   # noqa: BLE001 — ★시각은 표시용이라 런을 멈추지 않는다
         hm, why = None, "오류(%s)" % type(_e).__name__
     HHMM_N[why] = HHMM_N.get(why, 0) + 1
@@ -1856,9 +1867,25 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
 
     def leg(p, d, leg_type, stage, price, qty, nav_today, hm=None):
         # ★[CAND-2026-11-02-5] `hm` — 분봉 재생 경로가 ★체결 봉 시각을 직접 준다. ★None(기본 · off 경로)이면 종전대로 `_hhmm`.
+        if hm is None:
+            _since = None
+            # ★[CAND-2026-10-22-29 · 2026-11-06] 래칫 손절 — 같은 날 `sell_{stage}` 다리가 있으면 그 시각 이후 첫 접촉.
+            #   ★off(`S2_HHMM_STOP_SINCE_ARM` 미설정)면 이 블록이 안 돌아 종전 호출과 바이트 동일.
+            if HHMM_STOP_SINCE_ARM and HHMM_MINUTE and leg_type == "stop" and stage is not None:
+                _arm = next((lg for lg in reversed(p["legs"])
+                             if lg["d"] == d and lg["leg_type"] == f"sell_{stage}"), None)
+                if _arm is None:
+                    HHMM_N["무장전일"] = HHMM_N.get("무장전일", 0) + 1          # 전날 무장 — 종전 첫 접촉이 맞다
+                elif _arm.get("hhmm") is None:
+                    HHMM_N["무장시각미상"] = HHMM_N.get("무장시각미상", 0) + 1
+                    _since = ""                                                   # 지어내지 않는다 → 아래서 None
+                else:
+                    HHMM_N["무장당일"] = HHMM_N.get("무장당일", 0) + 1
+                    _since = str(_arm["hhmm"])
+            hm = None if _since == "" else _hhmm(p["tk"], d, leg_type, stage, price, since=_since)
         p["legs"].append(dict(d=d, leg_type=leg_type, stage=stage, price=round(price), qty=int(qty),
             amount=round(price * qty), port_pct=round(price * qty / nav_today * 100, 2) if nav_today > 0 else None,
-            hhmm=(hm if hm is not None else _hhmm(p["tk"], d, leg_type, stage, price))))
+            hhmm=hm))
 
     def close_trade(p, d, reason):
         trades.append(dict(_tid=p["tid"], ticker=p["tk"], name=p["name"], market=p["market"],
@@ -3693,7 +3720,8 @@ def main():
         print("[NL_TGT] S2_NL_TGT_SAMEBAR=stop1 · 1차 매도 + 손절선 청산 %d건 · 종가 >= 손절선(순서 불명 · 종전 유지) %d건"
               % (NL_TGT_N["fire"], NL_TGT_N["ambig"]))
     if HHMM_MINUTE:
-        print("[HHMM] S2_HHMM_MINUTE=fill · " + " · ".join("%s %d" % kv for kv in sorted(HHMM_N.items())))
+        print("[HHMM] S2_HHMM_MINUTE=fill%s · " % (" · S2_HHMM_STOP_SINCE_ARM=1" if HHMM_STOP_SINCE_ARM else "")
+              + " · ".join("%s %d" % kv for kv in sorted(HHMM_N.items())))
     if INTRADAY_MINUTE:
         # ★[CAND-2026-11-02-5] 분봉 재생 발동 카운터 — days 가 0 이면 사문이다(§4-2d 관문 2)
         print("[INTRADAY] S2_INTRADAY_MINUTE=1 · D=%d분 · 같은봉=%s · " % (INTRADAY_D, INTRADAY_SAMEBAR)
