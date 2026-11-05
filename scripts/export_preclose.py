@@ -24,7 +24,18 @@ import s2_candidates as sc                     # noqa: E402
 from config import Config                       # noqa: E402
 from notify import telegram_send                # noqa: E402
 
-MKT = {"KOSPI": "KS", "KOSDAQ": "KQ"}
+# ★[2026-11-05 · 해달별님 결정 「13:30 추가 실행 · 별도 잡 + 메시지 머리표」] 15:10 판보다 먼저 보는 ★예비 알림.
+#   ★잡 `S2_preclose_1330` → `run_preclose_1330.ps1` 이 이 env 만 더 켜고 `run_preclose.ps1` 을 그대로 부른다.
+#   ★켜면 이 프로세스의 ★모든 텔레그램(평소 · 과밀일 · KRX 실패) 첫 줄에 머리표가 붙는다 · Supabase 는 그대로(15:10 이 날짜별 DELETE 뒤 다시 적재).
+#   ★게이트 `S2_PRECLOSE_LABEL`(기본 "" = off) — off 면 ★종전 바이트 동일.
+PRECLOSE_LABEL = os.environ.get("S2_PRECLOSE_LABEL", "").strip()
+if PRECLOSE_LABEL:
+    _telegram_send_raw = telegram_send
+
+    def telegram_send(text):
+        return _telegram_send_raw(f"⏰ <b>{PRECLOSE_LABEL}</b>\n" + text)
+
+MKT ={"KOSPI": "KS", "KOSDAQ": "KQ"}
 
 # ★★[CAND-2026-10-20-35 · 해달별님 결정 2026-10-31 「선택지 B」] 「EOD 에서 막힐 후보」 라벨.
 #   ★게이트는 ★`s2_candidates.EOD_LABEL`(`S2_ALARM_EOD_LABEL` · 기본 "0") 하나다.
