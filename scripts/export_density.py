@@ -42,7 +42,7 @@ import time
 import urllib.error
 import urllib.request
 
-S2 = r"c:\AI파운더스\s2_method"
+S2 = r"c:\aifounders\s2_method"
 SIDECAR = os.path.join(S2, "results", ".density_export_last.json")
 MAX_ZERO_RATIO = 0.95
 

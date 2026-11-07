@@ -15,7 +15,7 @@
 # 어느 저장소에서 커밋하든 같은 검사를 받는다.
 
 PYTHON="/c/Python314/python.exe"
-CHECK="/c/AI파운더스/quant_infra/check_docs.py"
+CHECK="/c/aifounders/quant_infra/check_docs.py"
 
 if [ ! -f "$CHECK" ]; then
     echo "[pre-commit] check_docs.py 를 찾을 수 없다 — 건너뜀: $CHECK"

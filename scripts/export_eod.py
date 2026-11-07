@@ -284,7 +284,7 @@ PARK_TK  = os.environ.get("S2_CASH_PARK", "").strip()          # "" = off · 예
 PARK_LAG = int(os.environ.get("S2_CASH_PARK_LAG", "0"))        # 0=ETF(당일) · 2=RP(D+2)
 PARK_FEE = float(os.environ.get("S2_CASH_PARK_FEE", "0.0005")) # 잔고 변화분 왕복 비용
 PARK_DIR = os.environ.get("S2_CASH_PARK_DIR",
-                          r"c:\AI파운더스\quant_infra\data\kr_bond_etf")
+                          r"c:\aifounders\quant_infra\data\kr_bond_etf")
 
 
 def load_park_returns(all_dates):

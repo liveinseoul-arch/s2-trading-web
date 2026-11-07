@@ -880,7 +880,7 @@ if ($env:S2_EOD_NAVCAL -ne "0") {
     for ($navTry = 1; $navTry -le $retryMax; $navTry++) {
         $navRc = 1
         try {
-            & powershell -NoProfile -ExecutionPolicy Bypass -File "C:\AI파운더스\autotrade\run_nav_calendar.ps1"
+            & powershell -NoProfile -ExecutionPolicy Bypass -File "C:\aifounders\autotrade\run_nav_calendar.ps1"
             $navRc = $LASTEXITCODE
             "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] run_nav_calendar.ps1=$navRc" | Out-File -Append -Encoding utf8 $log
         } catch {
@@ -911,7 +911,7 @@ if ($env:S2_EOD_NAVCAL -ne "0") {
 $env:S2_STOP_AUDIT = "1"                                               # ★스톱 발동가 대조 감사(읽기 전용) · 매 EOD 1회
 if ($env:S2_STOP_AUDIT -eq "1") {
     try {
-        $auditRc = Invoke-Py -PyArgs @("C:\AI파운더스\autotrade\kw_stop_audit.py") -Tag "kw_stop_audit.py"
+        $auditRc = Invoke-Py -PyArgs @("C:\aifounders\autotrade\kw_stop_audit.py") -Tag "kw_stop_audit.py"
         "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] kw_stop_audit.py=$auditRc (EOD rc 와 무관)" | Out-File -Append -Encoding utf8 $log
     } catch {
         "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] kw_stop_audit.py 실패: $($_.Exception.Message)" | Out-File -Append -Encoding utf8 $log

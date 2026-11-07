@@ -20,7 +20,7 @@ import sys
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", line_buffering=True)
 
 TK = os.environ.get("S2_CASH_PARK", "").strip()
-DIR = os.environ.get("S2_CASH_PARK_DIR", r"c:\AI파운더스\quant_infra\data\kr_bond_etf")
+DIR = os.environ.get("S2_CASH_PARK_DIR", r"c:\aifounders\quant_infra\data\kr_bond_etf")
 START = "2014-01-01"
 
 if not TK:
