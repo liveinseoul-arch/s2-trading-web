@@ -5,6 +5,12 @@ $ErrorActionPreference = "Continue"
 $root = (Get-Item $PSScriptRoot).Parent.Parent.FullName   # s2_method
 Set-Location $root
 $log = Join-Path $PSScriptRoot "rs_kr_only.log"
+# ★★[2026-11-08 · CAND-2026-10-26-32] 로그 인코딩 통일 — run_rs_kr_jp.ps1 같은 자리와 같다(수동 실행용 미러 · 되돌리기 S2_RS_LOG_UTF8=0).
+if ($env:S2_RS_LOG_UTF8 -ne "0") {
+    $env:PYTHONIOENCODING = "utf-8"
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
+}
 $qb  = "C:\quantBacktest"
 $env:BT_OUTPUT_DIR = "$qb\screen"
 $env:FETCH_WORKERS = "8"

@@ -18,6 +18,14 @@ $ErrorActionPreference = "Continue"
 $root = (Get-Item $PSScriptRoot).Parent.Parent.FullName
 Set-Location $root
 $log = Join-Path $PSScriptRoot "rs_us.log"
+# ★★[2026-11-08 · CAND-2026-10-26-32 · 해달별님 「착수」] 로그 인코딩 통일 — run_eod.ps1:6-30(S2_EOD_LOG_UTF8 · f914b46) 이식.
+#   문제 · 세 줄 · 근거는 run_rs_kr_jp.ps1 같은 자리 주석과 같다(헤더 UTF-8 + 파이썬 `*>>` UTF-16LE 혼합 · 실측 NUL 43.7%).
+#   되돌리기 — S2_RS_LOG_UTF8=0 한 줄(종전 동작). ⚠️들여쓰기 의도 — 줄 시작 $env: 개수가 안 바뀌게.
+if ($env:S2_RS_LOG_UTF8 -ne "0") {
+    $env:PYTHONIOENCODING = "utf-8"
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
+}
 $qb  = "C:\quantBacktest"
 $env:BT_OUTPUT_DIR = "$qb\screen"
 $silent = "s2-trading-web\scripts\silent_run.py"

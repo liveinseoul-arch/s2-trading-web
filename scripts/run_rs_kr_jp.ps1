@@ -27,6 +27,21 @@ $ErrorActionPreference = "Continue"
 $root = (Get-Item $PSScriptRoot).Parent.Parent.FullName   # s2_method
 Set-Location $root
 $log = Join-Path $PSScriptRoot "rs_kr_jp.log"
+# ★★[2026-11-08 · CAND-2026-10-26-32 · 해달별님 「착수」] 로그 인코딩 통일 — run_eod.ps1:6-30(S2_EOD_LOG_UTF8 · f914b46) 이식.
+#   ⚠️문제 — 헤더 · Log 는 `Out-File -Encoding utf8`(UTF-8)인데 파이썬 출력은 `*>> $log` 로 붙고
+#     PS5.1 의 `>>` 는 UTF-16LE 로 쓴다 ⇒ 한 파일에 두 인코딩. 파이썬 stdout 은 CP949 라 한글이 한 번 더 깨진다.
+#   실측(2026-10-26) — NUL 비율 rs_kr_jp.log 46.8% · rs_us.log 43.7% · `[supabase-swap]` 이 UTF-8 단독 판독으로 0건(혼합 판독 8 · 4건).
+#   세 줄 — (1) PYTHONIOENCODING 파이썬이 UTF-8 로 뱉게 (2) [Console]::OutputEncoding PS 가 UTF-8 로 읽게 (3) $PSDefaultParameterValues `*>>` 가 UTF-8 로 쓰게.
+#   기본 on 근거 — 기록만 바꾸고 결정 경로를 안 건드린다(RS 파이프라인 파이썬 13개에 subprocess · stdout 인코딩 의존 0 · 2026-11-08 실측 · 선례 S2_EOD_LOG_UTF8).
+#   되돌리기 — S2_RS_LOG_UTF8=0 한 줄(종전 동작 · 프로브로 로그 바이트 동일 확인).
+#   ⚠️들여쓰기 의도 — 줄 시작 $env: 개수(ENV_CARD 검산)가 안 바뀌게(선례와 같다).
+#   ⚠️JP 체인은 별 Job(별 프로세스)이라 그 스크립트블록에 같은 블록을 따로 둔다 — env 는 상속되나 Console 인코딩 · $PSDefaultParameterValues 는 상속되지 않는다.
+#   ⚠️이미 쌓인 로그는 혼합 상태로 남는다 — 앞으로만 고친다(옛 구간 판독은 check_docs 검사 52).
+if ($env:S2_RS_LOG_UTF8 -ne "0") {
+    $env:PYTHONIOENCODING = "utf-8"
+    [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+    $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
+}
 $qb  = "C:\quantBacktest"
 $env:BT_OUTPUT_DIR = "$qb\screen"
 
@@ -288,6 +303,13 @@ if ($env:RS_JP_LOG_RESET -ne "0") {
 $jobJP = Start-Job -Name "JP chain" -ScriptBlock {
     param($wd, $silent2, $qb2, $jobLog2, $gmodel)
     Set-Location $wd
+    # ★★[2026-11-08 · CAND-2026-10-26-32] 로그 인코딩 통일 — 메인 블록(파일 머리 $log 바로 아래)과 같다.
+    #   별 프로세스라 따로 둔다 — S2_RS_LOG_UTF8 env 는 상속되므로 되돌리기 한 줄이 메인 · JP 를 함께 끈다.
+    if ($env:S2_RS_LOG_UTF8 -ne "0") {
+        $env:PYTHONIOENCODING = "utf-8"
+        [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+        $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
+    }
     $env:BT_OUTPUT_DIR = "$qb2\screen"
     $env:RS_MCAP_ROLL  = "1"   # ★CAND-2026-09-05-1 — KR 경로 전용이나 잡에도 명시(§0-5b)
     $env:GEMINI_MODEL  = $gmodel
