@@ -102,6 +102,9 @@ $env:RS_LOG_MCAP_GAP = "1"
 #   ★되돌리기 — ★이 줄(과 다른 2자리)을 지우면 ★기본 "0" = 종전.
 $env:RS_YF_SUFFIX_FIX = "1"
 RunPy "2 export US"   @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "US", "--weeks", "56", "--full-universe")
+# ★★[2026-11-08 · CAND-2026-10-23-25 · ★해달별님 승인] ★ETF 재적재 (시장, 종목) 범위 swap(스테이징 + `rs_universe_ticker_swap` RPC 1회 · 이식 = CAND-2026-10-20-8).
+#   ★선결 — `2026-10-23_rs_universe_ticker_swap.sql` 적용(2026-11-08). ★함수가 없으면 add_etfs 가 멈추고 본표는 종전 그대로다. ★되돌리기 = ★이 줄을 지운다(기본 "0").
+$env:S2_ETF_SWAP = "1"
 RunPy "3 add US ETFs" @("s2-trading-web\scripts\add_etfs.py", "--market", "US", "--weeks", "56")
 
 # ★★[2026-09-18 · 해달별님 지시] ★flash 고정 → ★pro 로 되돌렸다.

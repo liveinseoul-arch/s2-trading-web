@@ -367,6 +367,11 @@ $env:RS_LOG_MCAP_GAP = "1"
 $env:RS_YF_SUFFIX_FIX = "1"
 RunPyGate "4 export KR"  $rsExportPy @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "KR", "--weeks", "56", "--full-universe")
 # export 가 (해당 마켓의) universe 전체 삭제 후 재적재 → KR ETF 재적재 필요 (JP 는 ETF 화이트리스트 없음)
+# ★★[2026-11-08 · CAND-2026-10-23-25 · ★해달별님 승인] ★ETF 재적재를 ★(시장, 종목) 범위 swap 으로 — 종목별 DELETE+POST 사이에 죽으면 그 종목이 빈 채로 남던 경로를
+#   ★스테이징 적재 + `rs_universe_ticker_swap` RPC 1회(한 트랜잭션)로 바꾼다(이식 · off 재현 = CAND-2026-10-20-8).
+#   ★선결 — `supabase/migrations/2026-10-23_rs_universe_ticker_swap.sql` ★해달별님이 2026-11-08 적용. ★함수가 없으면 add_etfs 가 멈추고 본표는 종전 그대로다.
+#   ★ETF 는 메인 프로세스에서만 돈다(JP Job 무관). ★되돌리기 — ★이 줄을 지우면 기본 "0" = 종전 경로.
+$env:S2_ETF_SWAP = "1"
 RunPyGate "6 add KR ETFs" $rsExportPy @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")
 $env:GEMINI_MODEL = "gemini-2.5-pro"
 RunPyGate "7 classify KR" "C:\Python314\python.exe" @("s2-trading-web\scripts\classify_rs96_gemini.py", "--market", "KR", "--weeks", "1") -NonFatal

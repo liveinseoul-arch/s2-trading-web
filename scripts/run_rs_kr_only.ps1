@@ -34,6 +34,9 @@ RunPy "2 14_RS_KR"    @($silent, "$qb\14_RS_KR_pykrx.py")
 #   ★되돌리기 = ★이 줄을 지운다(한 줄).
 $env:S2_RS_SWAP = "1"
 RunPy "4 export KR"   @("s2-trading-web\scripts\export_rs_weekly.py", "--market", "KR", "--weeks", "56", "--full-universe")
+# ★★[2026-11-08 · CAND-2026-10-23-25 · ★해달별님 승인] ★ETF 재적재 (시장, 종목) 범위 swap — 정본 런처(run_rs_kr_jp.ps1 · run_rs_us.ps1)와 동기.
+#   ★선결 — `2026-10-23_rs_universe_ticker_swap.sql` 적용(2026-11-08). ★되돌리기 = ★이 줄을 지운다(기본 "0").
+$env:S2_ETF_SWAP = "1"
 RunPy "6 add KR ETFs" @("s2-trading-web\scripts\add_etfs.py", "--market", "KR", "--weeks", "56")
 # ★★[2026-09-18 · 해달별님 지시] ★이 런처는 ★스케줄러 미등록 = ★수동용이다.
 #   ★그래서 ★flash 를 쓴다 — ★pro 는 ★스케줄 3잡(S2_rs_kr_jp · S2_rs_us)에만.
