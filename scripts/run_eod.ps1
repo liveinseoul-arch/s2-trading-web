@@ -151,6 +151,18 @@ $rcMain = Invoke-Py -PyArgs @("main.py","--no-gsheets") -Tag "main.py" -Fatal   
 try {
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] main.py=$rcMain" | Out-File -Append -Encoding utf8 $log
 } catch { Write-Host "[RC] 로그 기록 실패(main.py): $($_.Exception.Message)" }
+# ★★[2026-11-20 신설 · CAND-2026-11-20-2 · ★★해달별님 「만들어줘」] 기업행위 등록부 증분 갱신.
+#   ★왜 — 정본 corporate_actions.db 는 재현 지문이라 2026-08-06 에서 멈춰 있고(읽기 전용) 그 뒤 사건(분할 · 병합 · 감자)을
+#     운영이 모른다(2026-11-20 실측 — 이음매 의심 163 종목-일 전부 미등재). 이 단계가 그날 상장주식수를 받아
+#     corporate_actions_incr.db 에 쌓고 사건을 뽑는다. 읽는 쪽은 아래 S2_CA_INCR_DB(backtest.py 게이트)다.
+#   ★순서 — main.py(당일 일봉) 뒤 · export_eod.py(사건 사전을 import 시점에 굳힌다) 앞.
+#   ★실패해도 EOD 는 계속한다(rc 만 남긴다 · 사이드카 results\.ca_incr_last.json · 뒤처지면 ca_seam_alert.py 가 알린다).
+#   ★되돌리기 — 아래 Invoke-Py 한 줄과 S2_CA_INCR_DB 한 줄을 지운다(= 정본만 = 종전과 시뮬 CSV 8/8 해시 동일 · 2026-11-20 실측).
+#   근거: quant_infra/2026-11/S2_CA_INCR_OPSCHECK_2026-11-20.md · CA_HANDLING_STATUS_2026-11-20.md
+$rcCaIncr = Invoke-Py -PyArgs @("update_ca_incr.py") -Tag "update_ca_incr.py"   # 기업행위 증분(실패해도 계속)
+try {
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] update_ca_incr.py=$rcCaIncr" | Out-File -Append -Encoding utf8 $log
+} catch { Write-Host "[RC] 로그 기록 실패(update_ca_incr.py): $($_.Exception.Message)" }
 $env:S2_TIME_STOP_DAYS = "15"                                          # 기간 손절 3주
 # ★2026-08-09 채택 — MA120 위 진입분만 +3/+6.5/+10. 아래(진입의 약 65%)는 위 3/5/7 그대로.
 #   되돌리기: 이 한 줄만 지우면 원복(게이트 미설정 = 전 포지션 3/5/7).
@@ -489,6 +501,12 @@ $env:S2_CA_FROM = "2019-03-11"                                         # ★이�
 #   ★연구 셸에서 S2_CA_DB 가 상속·잔류돼도 ★운영 실행에서는 ★항상 지운다. export_eod.py 의
 #   ★소비자 측 가드(§5-2)와 ★짝이다 — ★둘 다 넣는다.
 $env:S2_CA_DB = $null
+# ★★[2026-11-20 신설 · CAND-2026-11-20-2 · ★★해달별님 「만들어줘」] 증분 사건 사전 — 정본 끝(2026-08-06) 뒤의 조정 사건만 덧붙인다.
+#   ★미설정 = 정본만(종전 · 꺼짐 재현 시뮬 CSV 8/8 해시 동일). ★파일이 없으면 backtest.py 가 경고만 찍고 정본만 쓴다.
+#   ★조정 대상은 계수가 일간 가격제한 밖(k < 0.70 또는 k > 1.30)인 사건만이다(update_ca_incr.py 머리말).
+#   ★위 S2_CA_DB(병설 연구 세계)와 다르다 — 이것은 운영 전용 덧붙임이고 S2_CA_DB 가 설정되면 붙지 않는다.
+#   ★되돌리기 — 이 한 줄을 지운다.
+$env:S2_CA_INCR_DB = (Join-Path $root "corporate_actions_incr.db")
 
 # ★★[2026-08-25 채택 · CAND-2026-08-24-203 · 해달별님 결정] daily_order_plan 일별 아카이브
 #   ★왜 — 지금은 daily_order_plan.csv 가 매일 덮어써져 마지막 하루치만 남는다. 실주문 다리를
@@ -871,6 +889,15 @@ $rcEod = $LASTEXITCODE
 try {
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] export_eod.py=$rcEod" | Out-File -Append -Encoding utf8 $log
 } catch { Write-Host "[RC] 로그 기록 실패(export_eod.py): $($_.Exception.Message)" }
+# ★★[2026-11-20 신설 · CAND-2026-11-20-2 · ★★해달별님 「만들어줘」] 미등재 가격 이음매 알림.
+#   ★왜 — 등록부(정본 + 증분)는 주식 수가 그날 바뀐 사건만 안다. 무상 · 유상증자 권리락은 원리적으로 못 잡는다.
+#     최근 3거래일에 가격제한 밖(종가비 0.70 미만 · 1.30 초과)으로 움직였는데 조정 사건으로 등록되지 않은 종목 중
+#     S2 에 닿을 수 있는 것(20일 최대 거래대금 1,000억 이상 또는 그날 주문계획)을 텔레그램으로 알린다(같은 건은 한 번만).
+#   ★읽기 전용 · 실패해도 rc 0 · EOD rc 에 영향 없다. ★되돌리기 — 아래 Invoke-Py 한 줄을 지운다.
+$rcSeam = Invoke-Py -PyArgs @("ca_seam_alert.py") -Tag "ca_seam_alert.py"   # 미등재 이음매 알림(읽기 전용)
+try {
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] ca_seam_alert.py=$rcSeam" | Out-File -Append -Encoding utf8 $log
+} catch { Write-Host "[RC] 로그 기록 실패(ca_seam_alert.py): $($_.Exception.Message)" }
 # ★CAND-2026-09-08-6 E안(2026-09-11 · 해달별님 「권고대로」) — nav 캘린더(autotrade 의 nav_daily.csv)를 ★16:00 고정 시각이 아니라
 #   ★export_eod 완료 직후 ★순차로 갱신한다. ★16:00 이 export_eod 의 전삭제-재적재 창(중앙 5.5분 · 최대 20분)과 겹쳐
 #   0행·부분 달력을 읽던 것을 ★정의상 없앤다. 스케줄러 S2_nav_calendar 는 Disabled(되돌리기 = Enable-ScheduledTask).
