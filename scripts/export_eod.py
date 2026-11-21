@@ -155,6 +155,7 @@ if os.environ.get("S2_CA_ADJUST", "0") == "1":
             f"S2_CA_FROM 을 {_CA_FLOOR} 이상으로 설정할 것.")
 
 from backtest import _prepare, CA_ADJUST, CA_FROM, CA_MAP, format_avg_return  # noqa: E402
+import backtest as _BT                            # noqa: E402  ★[CAND-2026-11-20-3 5b] 게이트 상태 참조(MA_DAYREF_DB · dayref_*) · 꺼짐이면 쓰지 않는다
 from notify import telegram_send                  # noqa: E402
 
 if CA_ADJUST:
@@ -1680,6 +1681,8 @@ def load(cfg: Config, end: date, start: date | None = None):
     px = px.sort_values(["ticker", "date"]).reset_index(drop=True)
     px["ma_long"] = px.groupby("ticker")["close"].transform(
         lambda s: s.rolling(MA_LONG, min_periods=MA_LONG).mean())
+    if _BT.MA_DAYREF_DB:                             # ★[5b · S2_MA_DAYREF_DB · 기본 off] 꺼짐이면 한 줄도 안 탄다
+        _BT.dayref_apply(px, "ma_long", MA_LONG, MA_LONG)
     thr = cfg.min_trading_value_krw
     sm, smy = {}, {}
     for tk, g in px.groupby("ticker"):
@@ -1980,6 +1983,8 @@ def simulate(px, nmap, mmap, period_start, sm, smy, start_cap):
             _s = pd.Series(_np.where(_hl, _np.nan, _cl))
             _ex = (_s.dropna().rolling(_MAP2, min_periods=_MAP2)
                    .mean().reindex(range(_n2)).ffill().to_numpy(dtype=float))
+            if _BT.MA_DAYREF_DB:                                  # ★[5b · 기본 off] 유효봉 MA 도 같은 밑판
+                _ex = _BT.dayref_valid_ex(_tk, _dstr, _hl, _ex, _MAP2)
             with _np.errstate(divide="ignore", invalid="ignore"):
                 _k = _np.where(_ma > 0, _sup / _ma, _np.nan)    # = (1 − ep)
                 _sup_ex = _ex * _k
