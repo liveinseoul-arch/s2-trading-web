@@ -35,6 +35,21 @@ if PRECLOSE_LABEL:
     def telegram_send(text):
         return _telegram_send_raw(f"⏰ <b>{PRECLOSE_LABEL}</b>\n" + text)
 
+# ★[2026-11-23 · 해달별님 지시 「12:30 · 13:30 판은 검출이 안 되는 경우 텔레그램 메시지를 보내지 않는다」]
+#   ★잡 `S2_preclose_1230` · `S2_preclose_1330` 의 런처만 이 env 를 켠다 ⇒ ★15:10 `S2_preclose` 는 「후보 없음」을 종전대로 보낸다.
+#   ★「검출 없음」 = 평소 기준 후보 0건 ★그리고 과밀일 기준 후보 0건(과밀일이 아니면 평소 기준만 본다).
+#     과밀일 후보가 하나라도 있으면 종전대로 두 메시지를 다 보낸다.
+#   ★보내는 것은 그대로 — KRX 실패 알림(검출 없음이 아니라 실패다) · Supabase 적재(15:10 이 날짜별 DELETE 뒤 다시 적재).
+#   ★게이트 `S2_PRECLOSE_SKIP_EMPTY`(기본 "0" = off) — off 면 ★종전 동작 그대로.
+#   ★되돌리기 — `run_preclose_1230.ps1` · `run_preclose_1330.ps1` 의 그 env 줄 삭제.
+SKIP_EMPTY = os.environ.get("S2_PRECLOSE_SKIP_EMPTY", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _nothing_detected(rows):
+    """★평소 기준 후보 0건 그리고 과밀일 기준 후보 0건이면 True."""
+    return (not rows) and (not _CROWD.get("rows"))
+
+
 MKT ={"KOSPI": "KS", "KOSDAQ": "KQ"}
 
 # ★★[CAND-2026-10-20-35 · 해달별님 결정 2026-10-31 「선택지 B」] 「EOD 에서 막힐 후보」 라벨.
@@ -264,7 +279,9 @@ def main():
             notify_preclose_fail(today_str, target)
     else:
         upsert(target, rows)
-        if not args.no_notify:
+        if SKIP_EMPTY and not args.no_notify and _nothing_detected(rows):   # ★[2026-11-23] off 면 안 탄다
+            print(f"[SKIP_EMPTY] {target} 검출 0건(평소 · 과밀일) → 텔레그램 생략")
+        elif not args.no_notify:
             notify_preclose(target, rows)
             if CROWD_ON:                    # ★[CAND-2026-10-31-13] 과밀일이면 ★별도 메시지(평소 기준 메시지 뒤)
                 _cl = crowd_lines(target, rows)

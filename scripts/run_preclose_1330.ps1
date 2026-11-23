@@ -9,4 +9,6 @@
 $log = Join-Path $PSScriptRoot "preclose.log"
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  ===== preclose 13:30 예비 start =====" | Out-File -Append -Encoding utf8 $log
 $env:S2_PRECLOSE_LABEL = "13:30 예비 (장중 가격 기준 · 15:10 판이 최종)"
+# ★[2026-11-23 · 해달별님 지시] 검출 0건(평소 · 과밀일)이면 텔레그램을 보내지 않는다 · 15:10 판은 이 env 가 없어 종전대로 · 되돌리기 = 이 줄 삭제
+$env:S2_PRECLOSE_SKIP_EMPTY = "1"
 & (Join-Path $PSScriptRoot "run_preclose.ps1")
