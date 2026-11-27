@@ -163,6 +163,17 @@ $rcCaIncr = Invoke-Py -PyArgs @("update_ca_incr.py") -Tag "update_ca_incr.py"   
 try {
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] update_ca_incr.py=$rcCaIncr" | Out-File -Append -Encoding utf8 $log
 } catch { Write-Host "[RC] 로그 기록 실패(update_ca_incr.py): $($_.Exception.Message)" }
+# ★★[2026-11-28 · CAND-2026-11-20-3 5a 켜기 · ★★해달별님 「1,2 켜기」 #165] 보유 조정 사전 빌더(R1 · 사건표 v4d3 고정).
+#   ★순서 — main.py(운영 DB 마지막 날 · 내용 지문) · update_ca_incr.py(증분 지문) 뒤 · export_eod.py(import 시점에 사전을 굳힌다) 앞.
+#   ★사건표는 v4d3 를 --ev 로 고정하고 기대 sha256 을 대조한다(빌더 기본값 v4d2 로 조용히 돌아가지 않게 · 결정 17).
+#   ★날짜별 사전(이름 = 운영 DB 끝 · 입력 지문 · 사전 지문) + 사이드카 results\.ca_hold_map_last.json(결정 1 · 전부 보존 · 결정 2).
+#   ★실패해도 EOD 는 계속한다(rc 만 남긴다) — 사이드카 ok=false → 아래 S2_CA_HOLD_MAP 이 없는 경로 → backtest.py 가 현행 사전으로 돈다
+#     → ca_hold_alert.py(export_eod 뒤)가 「가짜 켬」을 알린다. ★소요 약 25 – 45초.
+#   ★되돌리기 — 이 Invoke-Py 줄과 아래 S2_CA_HOLD_* 블록 · ca_hold_alert.py 줄을 지운다(= 꺼짐 = 종전과 시뮬 산출 8/8 해시 동일 · quant_infra/2026-11/S2_5AB_ON_2026-11-28.md).
+$rcHoldMap = Invoke-Py -PyArgs @("build_ca_hold_map.py","--variant","R1","--ev",(Join-Path $root "kr_ca_events_v4d3_2026-11-28.db"),"--ev-sha256","4bbe9d2935636d5793640c97aba4d86bffa43ae326820d7cac76c24563a72a1d","--daily-dir",(Join-Path $root "results\ca_hold_map"),"--sidecar",(Join-Path $root "results\.ca_hold_map_last.json")) -Tag "build_ca_hold_map.py"   # 보유 조정 사전(실패해도 계속)
+try {
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] build_ca_hold_map.py=$rcHoldMap" | Out-File -Append -Encoding utf8 $log
+} catch { Write-Host "[RC] 로그 기록 실패(build_ca_hold_map.py): $($_.Exception.Message)" }
 $env:S2_TIME_STOP_DAYS = "15"                                          # 기간 손절 3주
 # ★2026-08-09 채택 — MA120 위 진입분만 +3/+6.5/+10. 아래(진입의 약 65%)는 위 3/5/7 그대로.
 #   되돌리기: 이 한 줄만 지우면 원복(게이트 미설정 = 전 포지션 3/5/7).
@@ -507,6 +518,34 @@ $env:S2_CA_DB = $null
 #   ★위 S2_CA_DB(병설 연구 세계)와 다르다 — 이것은 운영 전용 덧붙임이고 S2_CA_DB 가 설정되면 붙지 않는다.
 #   ★되돌리기 — 이 한 줄을 지운다.
 $env:S2_CA_INCR_DB = (Join-Path $root "corporate_actions_incr.db")
+# ★★[2026-11-28 · CAND-2026-11-20-3 5a 켜기 · ★★해달별님 「1,2 켜기」 #165] 보유 조정 사전 — 빌더 사이드카가 가리키는 날짜별 CSV(계산식).
+#   ★사이드카를 못 읽거나 ok=false 면 실패 사유별로 다른 없는 경로를 준다(결정 3) → backtest.py 가 경고를 찍고
+#     현행 사전(등록부 정본 + 증분)으로(fail-open · 결정 4 · EOD 중단 없음 · Stop 환경이라 try 필수).
+#   ★게이트 보완(결정 6) — 메타의 사건표 3b sha · 운영 DB 내용 지문(ops_fp)을 backtest.py 가 대조한다(같은 날 가격 정정도 거부).
+#   ★S2_CA_HOLD_USED — backtest.py 가 실제로 쓴 사전 지문을 남기는 사이드카(결정 5 · ca_hold_alert.py 가 읽는다).
+#   ★S2_CA_HOLD_ALERT — "1" 이면 「가짜 켬」 · 켠 첫날 한 줄을 텔레그램으로 · "0" = 로그만(★텔레그램은 외부 전송 — 해달별님 결재 전 "0").
+#   ★되돌리기 — 아래 try 블록과 $env:S2_CA_HOLD_* 세 줄을 지운다(빌더 줄 · ca_hold_alert.py 줄과 함께).
+$holdMapCsv = Join-Path $root "results\ca_hold_map\_NOUSE_sidecar_unreadable.csv"
+try {
+    $hm = Get-Content (Join-Path $root "results\.ca_hold_map_last.json") -Raw -Encoding UTF8 | ConvertFrom-Json
+    if ($hm.ok -and $hm.csv) { $holdMapCsv = [string]$hm.csv }
+    elseif ($hm.reason) { $holdMapCsv = Join-Path $root ("results\ca_hold_map\_NOUSE_" + [string]$hm.reason + ".csv") }
+    else { $holdMapCsv = Join-Path $root "results\ca_hold_map\_NOUSE_sidecar_not_ok.csv" }
+} catch { Write-Host "[hold-map] 사이드카 못 읽음: $($_.Exception.Message)" }
+$env:S2_CA_HOLD_MAP = $holdMapCsv
+$env:S2_CA_HOLD_USED = (Join-Path $root "results\.ca_hold_used_last.json")
+$env:S2_CA_HOLD_ALERT = "0"                                            # ★가짜 켬 경보 텔레그램(0 = 로그만 · 1 = 전송 — 해달별님 결재)
+# ★★[2026-11-28 · CAND-2026-11-20-3 5b 켜기 · ★★해달별님 「1,2 켜기」 #166] 이동평균 그날 기준 환산(운영 구성 C4).
+#   ★MA20(지지선) · MA120(크기 · 매도 사다리 분기) · 정지봉 판정의 유효봉 MA 를 3단계 환산 DB 의 계수(adj_factor · 판 2026-11-20)로 그날 기준 환산.
+#   ★EVDAY=keep — 사건일 당일은 종전 판정(운영은 그날 사건을 모른다). 과밀 맵은 현행 유지(해달별님 2026-11-21 · V2 게이트는 별개 · 꺼짐).
+#   ★ASOF 는 고정 판(2026-11-20) — 그 뒤 새 사건은 환산에 안 들어온다(매일 판 전환은 별도 결재 · 남은 일).
+#   ⚠️DB 가 없으면 export_eod 가 멈춘다(fail-closed · 코드 그대로) — 5a(fail-open)와 정책이 엇갈린다(결정 4 · 해달별님 결정 대기).
+#   ⚠️preclose(12:30 · 13:30 · 15:10 알람)는 이 줄을 안 읽는다 — 알람 후보의 MA20 은 종전 값(EOD 와 어긋날 수 있다 · 단서).
+#   ★되돌리기 — 아래 네 줄을 지운다(= 꺼짐 = 종전과 시뮬 산출 8/8 해시 동일 · S2_5AB_OPS_PORT_2026-11-21.md).
+$env:S2_MA_DAYREF_DB = "kr_price3kind_v3_2026-11-21.db"                # ★5b 환산 DB(3단계 v3 · s2_method 루트 상대)
+$env:S2_MA_DAYREF_FROM = "2019-03-11"                                  # ★이 날짜 앞 행은 종전 값
+$env:S2_MA_DAYREF_EVDAY = "keep"                                       # ★사건일 당일 종전 판정(C4)
+$env:S2_MA_DAYREF_ASOF = "2026-11-20"                                  # ★환산 계수 판 날짜(고정 판)
 
 # ★★[2026-08-25 채택 · CAND-2026-08-24-203 · 해달별님 결정] daily_order_plan 일별 아카이브
 #   ★왜 — 지금은 daily_order_plan.csv 가 매일 덮어써져 마지막 하루치만 남는다. 실주문 다리를
@@ -889,6 +928,12 @@ $rcEod = $LASTEXITCODE
 try {
 "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] export_eod.py=$rcEod" | Out-File -Append -Encoding utf8 $log
 } catch { Write-Host "[RC] 로그 기록 실패(export_eod.py): $($_.Exception.Message)" }
+# ★★[2026-11-28 · 5a 켜기 #165 · 결정 5 · 10] 「가짜 켬」 경보 — S2_CA_HOLD_MAP 이 설정됐는데 익스포터가 사전을 안 썼으면 알린다(+ 켠 첫날 한 줄).
+#   ★읽기 전용 · 항상 rc 0 · 텔레그램은 S2_CA_HOLD_ALERT="1" 일 때만. ★되돌리기 — 아래 Invoke-Py 한 줄을 지운다.
+$rcHoldAlert = Invoke-Py -PyArgs @("ca_hold_alert.py") -Tag "ca_hold_alert.py"   # 5a 사전 사용 점검(읽기 전용)
+try {
+"$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')  [RC] ca_hold_alert.py=$rcHoldAlert" | Out-File -Append -Encoding utf8 $log
+} catch { Write-Host "[RC] 로그 기록 실패(ca_hold_alert.py): $($_.Exception.Message)" }
 # ★★[2026-11-20 신설 · CAND-2026-11-20-2 · ★★해달별님 「만들어줘」] 미등재 가격 이음매 알림.
 #   ★왜 — 등록부(정본 + 증분)는 주식 수가 그날 바뀐 사건만 안다. 무상 · 유상증자 권리락은 원리적으로 못 잡는다.
 #     최근 3거래일에 가격제한 밖(종가비 0.70 미만 · 1.30 초과)으로 움직였는데 조정 사건으로 등록되지 않은 종목 중
