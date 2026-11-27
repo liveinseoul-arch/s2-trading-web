@@ -85,6 +85,13 @@ def build():
     g = px.groupby("ticker", sort=False)
     px["ma20"] = g["close"].transform(lambda s: s.rolling(U.MA, min_periods=U.MA).mean())
     px["tv"] = g["trading_value"].transform(lambda s: s.rolling(U.MA, min_periods=1).max())
+    # ★★[2026-11-28 · CAND-2026-11-21-12 켜기 보완] V2 게이트(S2_ENV_DENS_DAYREF_DB)가 켜져 있으면 생성기와 같은 함수로
+    #   MA20 을 「그날 기준 환산」으로 바꾼다 — 화면 밀도 · 문턱이 실제 맵과 같아진다. 끔(현행) = 이 줄을 안 탄다 = 종전과 같다.
+    dr_name = "raw"
+    if getattr(U, "DAYREF_DB", ""):
+        af, dr_info = U.load_af()
+        px["ma20"] = U.ma_dayref(px, af)
+        dr_name = dr_info["name"]
     px["gap"] = px["close"] / px["ma20"] - 1
     qual = px["ma20"].notna() & (px["tv"] >= U.TV_MIN)
 
@@ -116,6 +123,8 @@ def build():
             "firstYear": first, "db": src["canon"]["db"],
             "defn": {"ma": U.MA, "tv_min": U.TV_MIN, "base_ep": U.BASE_EP,
                      "win": U.WIN, "warm": U.WARM, "topq": U.TOPQ, "relax": U.RELAX}}
+    if dr_name != "raw":                                         # ★켬일 때만 키를 더한다(끔 meta 는 종전과 같다)
+        meta["defn"]["dayref"] = dr_name
     return rows, meta
 
 

@@ -58,8 +58,53 @@ def load_prices(before: str, meta: dict) -> pd.DataFrame:
     return px
 
 
+def _dayref_af(dr: dict) -> pd.DataFrame:
+    """★[2026-11-28 · CAND-2026-11-21-12 켜기 보완] 맵 사이드카 `dayref` 가 가리키는 환산 계수(adj_factor asof).
+    ★DB 경로는 사이드카의 파일 이름을 s2_method 기준으로 푼다(생성기 `update_env_density.load_af` 와 같은 원천 · 같은 asof)."""
+    db = os.path.join(S2, str(dr["db"]))
+    con = sqlite3.connect("file:%s?mode=ro" % db.replace("\\", "/"), uri=True)
+    try:
+        af = pd.read_sql_query("SELECT ticker,date_from,date_to,f_price FROM adj_factor WHERE asof=?",
+                               con, params=[str(dr["asof"])])
+    finally:
+        con.close()
+    if not len(af):
+        raise RuntimeError("adj_factor asof=%s 행 없음 — %s" % (dr["asof"], db))
+    return af
+
+
+def _ma_dayref(px: pd.DataFrame, af: pd.DataFrame, from_date: str) -> pd.Series:
+    """`update_env_density.ma_dayref` 와 같은 식 — FROM 전 = 원주가 MA20 · 뒤 = rolling20(close × f) ÷ f.
+    ★생성기를 import 하지 않는다(그 모듈은 import 때 sys.stdout 을 바꾼다 — 알람 프로세스에서 위험) — `--selfcheck` 가 동일성을 잡는다."""
+    import numpy as np
+    af = af.copy()
+    af["ticker"] = af["ticker"].astype(str).str.zfill(6)
+    af["date_from"] = af["date_from"].astype(str).str[:10]
+    af["date_to"] = af["date_to"].astype(str).str[:10]
+    farr = np.ones(len(px))
+    afg = {k: v.sort_values("date_from") for k, v in af.groupby("ticker")}
+    darr = px["date"].to_numpy()
+    for tk, idx in px.groupby("ticker", sort=False).indices.items():
+        v = afg.get(tk)
+        if v is None:
+            continue
+        idx = np.asarray(idx)
+        dd = darr[idx]
+        fr, to, fp = v["date_from"].to_numpy(), v["date_to"].to_numpy(), v["f_price"].to_numpy(float)
+        pos = np.searchsorted(fr, dd, side="right") - 1
+        ok = pos >= 0
+        pos2 = np.where(ok, pos, 0)
+        inside = ok & (dd <= to[pos2])
+        farr[idx[inside]] = fp[pos2[inside]]
+    f = pd.Series(farr, index=px.index)
+    u = px["close"] * f
+    ma_dr = u.groupby(px["ticker"], sort=False).transform(lambda s: s.rolling(20, min_periods=20).mean()) / f
+    return px["ma20"].where(px["date"] < from_date, ma_dr)
+
+
 def crowded_series(px: pd.DataFrame, meta: dict, extra_date: str | None = None) -> pd.Series:
-    """`update_env_density.build()` 와 같은 식 — 날짜별 과밀 여부(bool). `extra_date` 는 데이터 없는 당일 행을 덧붙인다."""
+    """`update_env_density.build()` 와 같은 식 — 날짜별 과밀 여부(bool). `extra_date` 는 데이터 없는 당일 행을 덧붙인다.
+    ★[2026-11-28] 사이드카에 `dayref`(V2 · 그날 기준 환산 밀도)가 있으면 생성기와 같은 MA20 을 쓴다 — 없으면(현행) 종전 그대로."""
     WIN, WARM = int(meta["win"]), int(meta["warm"])
     TOPQ, TV_MIN, BASE_EP = float(meta["topq"]), float(meta["tv_min"]), float(meta["base_ep"])
     px = px.copy()
@@ -69,6 +114,9 @@ def crowded_series(px: pd.DataFrame, meta: dict, extra_date: str | None = None) 
     g = px.groupby("ticker", sort=False)
     px["ma20"] = g["close"].transform(lambda s: s.rolling(20, min_periods=20).mean())
     px["tv"] = g["trading_value"].transform(lambda s: s.rolling(20, min_periods=1).max())
+    dr = meta.get("dayref")
+    if isinstance(dr, dict) and dr.get("db"):                  # ★V2 맵일 때만(현행 사이드카에는 키가 없다)
+        px["ma20"] = _ma_dayref(px, _dayref_af(dr), str(dr.get("from") or "2019-03-11"))
     px["gap"] = px["close"] / px["ma20"] - 1
     qual = px["ma20"].notna() & (px["tv"] >= TV_MIN)
     dates = sorted(px["date"].unique())
@@ -105,9 +153,12 @@ def judge(target: date | str) -> dict:
         smax = int(smax_raw) if smax_raw else None
         raw = bool(sel.get(t, False))
         capped = bool(raw and smax is not None and k > smax)
-        return dict(crowded=bool(raw and not capped), raw=raw, ep=float(meta["relax"]),
-                    base_ep=float(meta["base_ep"]), streak=k, streak_max=smax, capped=capped,
-                    prev_date=str(max(d for d in sel.index if d < t)), why="")
+        res = dict(crowded=bool(raw and not capped), raw=raw, ep=float(meta["relax"]),
+                   base_ep=float(meta["base_ep"]), streak=k, streak_max=smax, capped=capped,
+                   prev_date=str(max(d for d in sel.index if d < t)), why="")
+        if isinstance(meta.get("dayref"), dict):              # ★[2026-11-28] V2 맵일 때만 키를 더한다(현행 출력은 종전과 같다)
+            res["dayref"] = str(meta["dayref"].get("name", ""))
+        return res
     except Exception as e:                                   # noqa: BLE001 — 알람은 종전대로 나가야 한다
         return dict(crowded=False, raw=False, why="%s: %s" % (type(e).__name__, str(e)[:120]))
 
