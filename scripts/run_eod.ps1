@@ -534,7 +534,7 @@ try {
 } catch { Write-Host "[hold-map] 사이드카 못 읽음: $($_.Exception.Message)" }
 $env:S2_CA_HOLD_MAP = $holdMapCsv
 $env:S2_CA_HOLD_USED = (Join-Path $root "results\.ca_hold_used_last.json")
-$env:S2_CA_HOLD_ALERT = "0"                                            # ★가짜 켬 경보 텔레그램(0 = 로그만 · 1 = 전송 — 해달별님 결재)
+$env:S2_CA_HOLD_ALERT = "1"                                            # ★가짜 켬 경보 텔레그램(0 = 로그만 · 1 = 전송 — 해달별님 결재 2026-11-28 「텔레그램 켜기」)
 # ★★[2026-11-28 · CAND-2026-11-20-3 5b 켜기 · ★★해달별님 「1,2 켜기」 #166] 이동평균 그날 기준 환산(운영 구성 C4).
 #   ★MA20(지지선) · MA120(크기 · 매도 사다리 분기) · 정지봉 판정의 유효봉 MA 를 3단계 환산 DB 의 계수(adj_factor · 판 2026-11-20)로 그날 기준 환산.
 #   ★EVDAY=keep — 사건일 당일은 종전 판정(운영은 그날 사건을 모른다). 과밀 맵은 현행 유지(해달별님 2026-11-21 · V2 게이트는 별개 · 꺼짐).
